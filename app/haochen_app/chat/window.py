@@ -20,6 +20,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -29,10 +30,11 @@ from PyQt6.QtWidgets import (
 
 from ..app_tracking import write_last_user_text
 from ..conversation import SUMMARY_KICK_PREFIX, ConversationController, parse_paired, strip_tags
-from ..engine_client import EngineClient, delete_session, haochen_home
+from ..engine_client import EngineClient, delete_session, haochen_home, restore_session
 from .sidebar import SessionSidebar
 from .theme import FONT, RADIUS_INPUT, C, button_solid
 from .widgets import (
+    ActionBanner,
     AssistantBubble,
     BubbleRow,
     ConfirmBar,
@@ -591,22 +593,87 @@ class ChatWindow(QWidget):
     def _delete_session(self, path: str) -> None:
         if self.ctrl.busy:
             return
-        def really_delete() -> None:
-            self._sessions = [s for s in self._sessions if s["path"] != path]
+        record = next((dict(session) for session in self._sessions if session["path"] == path), None)
+        if record is None:
+            self._add_row(ErrorBanner("删除失败：会话已不存在。", retryable=False), "left")
+            return
+        title = record.get("title") or "新会话"
+        answer = QMessageBox.question(
+            self,
+            "删除会话",
+            f"确定删除“{title}”吗？删除后可以立即撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        original_index = self._sessions.index(next(session for session in self._sessions if session["path"] == path))
+
+        def really_delete() -> bool:
+            deletion = None
             if not self._mock:
                 try:
-                    delete_session(path)
-                except OSError:
-                    pass
+                    deletion = delete_session(path, self.client.home)
+                except (OSError, ValueError) as exc:
+                    self._add_row(ErrorBanner(f"删除失败：{exc}", retryable=False), "left")
+                    self.sidebar.set_status("会话删除失败，原会话仍保留")
+                    return False
+            self._sessions = [session for session in self._sessions if session["path"] != path]
             self._refresh_sidebar()
-        if path == self._current_path:
-            # 契约 §2.8：删除当前会话前必须先 new_session 切走
-            def after_new(_r: dict) -> None:
-                self._rpc(self.client.get_state, self._on_state)
-                really_delete()
-            self._rpc(self.client.new_session, after_new)
-        else:
+            banner = ActionBanner(f"已删除“{title}”", "撤销")
+            self._add_row(banner, "left")
+
+            def undo() -> None:
+                if deletion is not None:
+                    try:
+                        restore_session(deletion, self.client.home)
+                    except (OSError, ValueError) as exc:
+                        self._add_row(ErrorBanner(f"恢复失败：{exc}", retryable=False), "left")
+                        return
+                insert_at = min(original_index, len(self._sessions))
+                self._sessions.insert(insert_at, record)
+                self._refresh_sidebar()
+                banner.mark_done(f"已恢复“{title}”")
+
+            banner.action_requested.connect(undo)
+            return True
+
+        if path != self._current_path:
             really_delete()
+            return
+
+        # 契约 §2.8：删除当前会话前必须成功创建并确认切到新会话。
+        def after_new(resp: dict) -> None:
+            if not resp.get("success") or (resp.get("data") or {}).get("cancelled"):
+                self._add_row(ErrorBanner("删除取消：无法创建替代会话。", retryable=False), "left")
+                return
+
+            def after_state(state_resp: dict) -> None:
+                new_path = (state_resp.get("data") or {}).get("sessionFile")
+                if not state_resp.get("success") or not new_path or new_path == path:
+                    self._add_row(ErrorBanner("删除取消：未确认已切换到新会话。", retryable=False), "left")
+                    return
+                if really_delete():
+                    self._on_state(state_resp)
+                    return
+
+                # The file still exists: return the engine to the original session so
+                # a failed delete never changes the user's active conversation.
+                def after_rollback(rollback_resp: dict) -> None:
+                    if rollback_resp.get("success"):
+                        self._rpc(self.client.get_messages, self._render_history)
+                    else:
+                        self._add_row(
+                            ErrorBanner("原会话仍在，但自动切回失败；请从侧栏重新选择。", retryable=False),
+                            "left",
+                        )
+
+                self._rpc(self.client.switch_session, after_rollback, path)
+
+            self._rpc(self.client.get_state, after_state)
+
+        self._rpc(self.client.new_session, after_new)
 
     # ── 历史渲染（get_messages → 对话流）────────────────────────
 

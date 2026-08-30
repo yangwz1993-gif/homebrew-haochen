@@ -28,6 +28,7 @@ import subprocess
 import sys
 import threading
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -114,6 +115,11 @@ class EngineClient(QObject):
     @property
     def alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
+
+    @property
+    def home(self) -> Path:
+        """Isolated application data root used by this client."""
+        return self._home
 
     def _read_loop(self) -> None:
         proc = self._proc
@@ -215,8 +221,77 @@ def list_sessions(home: Path | None = None) -> list[dict]:
     return out
 
 
-def delete_session(session_path: str, home: Path | None = None) -> None:
-    Path(session_path).unlink(missing_ok=True)
+@dataclass(frozen=True)
+class DeletedSession:
+    """A reversible session deletion kept inside haochen's private data directory."""
+
+    original_path: Path
+    recycled_path: Path
+
+
+def _session_root(home: Path) -> Path:
+    root = home.expanduser() / "pi-sessions"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root.chmod(0o700)
+    if root.is_symlink():
+        raise ValueError("session root must not be a symbolic link")
+    return root.resolve(strict=True)
+
+
+def _validated_session_path(session_path: str, home: Path, *, must_exist: bool) -> Path:
+    root = _session_root(home)
+    raw = Path(session_path).expanduser()
+    if ".." in raw.parts:
+        raise ValueError("session path traversal is not allowed")
+    candidate = raw if raw.is_absolute() else root / raw
+    if candidate.suffix != ".jsonl" or candidate.parent.resolve(strict=False) != root:
+        raise ValueError("session must be a direct .jsonl child of the session directory")
+    if candidate.is_symlink():
+        raise ValueError("symbolic-link sessions are not allowed")
+    if must_exist:
+        resolved = candidate.resolve(strict=True)
+        if resolved.parent != root or resolved != candidate.absolute():
+            raise ValueError("session resolves outside the session directory")
+        if not resolved.is_file():
+            raise ValueError("session path is not a regular file")
+        return resolved
+    return candidate.absolute()
+
+
+def _recycle_root(home: Path) -> Path:
+    root = home.expanduser() / "session-recycle-bin"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root.chmod(0o700)
+    if root.is_symlink():
+        raise ValueError("session recycle bin must not be a symbolic link")
+    return root.resolve(strict=True)
+
+
+def delete_session(session_path: str, home: Path | None = None) -> DeletedSession:
+    """Move one validated session into a private recycle bin and return an undo token."""
+    selected_home = Path(home) if home is not None else haochen_home()
+    original = _validated_session_path(session_path, selected_home, must_exist=True)
+    recycle_root = _recycle_root(selected_home)
+    recycled = recycle_root / f"{original.stem}-{uuid.uuid4().hex}.jsonl"
+    original.replace(recycled)
+    recycled.chmod(0o600)
+    return DeletedSession(original_path=original, recycled_path=recycled)
+
+
+def restore_session(deletion: DeletedSession, home: Path | None = None) -> Path:
+    """Undo a prior deletion without ever replacing a newer session file."""
+    selected_home = Path(home) if home is not None else haochen_home()
+    original = _validated_session_path(str(deletion.original_path), selected_home, must_exist=False)
+    recycle_root = _recycle_root(selected_home)
+    recycled = deletion.recycled_path
+    if recycled.is_symlink() or recycled.parent.resolve(strict=False) != recycle_root:
+        raise ValueError("recycled session is outside the private recycle bin")
+    recycled = recycled.resolve(strict=True)
+    if original.exists():
+        raise FileExistsError(original)
+    recycled.replace(original)
+    original.chmod(0o600)
+    return original
 
 
 # ── 冒烟自检 ─────────────────────────────────────────────────

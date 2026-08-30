@@ -456,6 +456,40 @@ class ConfirmBar(QFrame):
         self.setMinimumWidth(min(360, w))
 
 
+class ActionBanner(QFrame):
+    """Non-destructive status with one explicit recovery action."""
+
+    action_requested = pyqtSignal()
+
+    def __init__(self, text: str, action_text: str, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"""
+            ActionBanner {{
+                background: {C['surface']};
+                border: 1px solid {C['line']};
+                border-radius: {RADIUS_CARD}px;
+            }}
+        """)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 10, 14, 10)
+        self.message = QLabel(text)
+        self.message.setWordWrap(True)
+        self.message.setStyleSheet(f"color: {C['ink']}; font-size: {FONT['body_sm']}px;")
+        lay.addWidget(self.message, 1)
+        self.action_button = QPushButton(action_text)
+        self.action_button.setStyleSheet(button_outline())
+        self.action_button.clicked.connect(self.action_requested)
+        lay.addWidget(self.action_button)
+
+    def mark_done(self, text: str) -> None:
+        self.message.setText(text)
+        self.action_button.hide()
+
+    def set_max_width(self, w: int) -> None:
+        self.setMaximumWidth(w)
+        self.setMinimumWidth(min(360, w))
+
+
 class ErrorBanner(QFrame):
     """错误条（interaction-spec §8.2 / visual-spec §6.4）：color-danger + 重试入口。"""
 
