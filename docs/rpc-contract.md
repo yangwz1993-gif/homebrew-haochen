@@ -20,6 +20,7 @@
 | v1.0.1 | 2026-08-25 | 补注：TS 扩展加载实测通过（§1.1），§9 风险 ① 排除。无协议语义变化 | 无（仅状态更新） |
 | v1.1 | 2026-08-25 | §1.1 冻结数据隔离约定：新增 `PI_CODING_AGENT_DIR` env、模型配置三文件指向 `config/README.md`；运行期换模型命令 `get_available_models`/`set_model` 的说明见 `config/README.md` §6。消息 schema 无变化 | 壳 spawn 参数；配置前端（Agent-D） |
 | v1.2 | 2026-08-30 | 壳侧请求统一 5s 超时；停止/崩溃结算全部 pending；坏 JSON/stderr 仅记录长度与哈希；停止改为后台进程组回收 | EngineClient / supervisor / UI RPC callback |
+| v1.3 | 2026-08-30 | 当前会话和双入口 FIFO 队列统一由 SessionCoordinator 持久化；用户消息到 `message_end(role=user)` 才确认出队；崩溃后需用户重发或取消 | supervisor / chat / pet / recovery UI |
 
 ---
 
@@ -129,8 +130,9 @@ haochen-engine --mode rpc --no-extensions -e <haochen-ext.ts> \
 ### 2.8 会话列表 / 删除 —【壳侧实现，引擎 RPC 不支持】
 
 - **list**：RPC 无 list 命令。壳扫描 `--session-dir` 下 `*.jsonl`，逐文件读首行 `{"type":"session","id","timestamp"}` 与第一条 user 消息做预览（参考 `previous-version/haochen-app/bridge_rpc.py:list_sessions`），按时间倒序。
-- **delete**：RPC 无 delete 命令。壳删除对应 `.jsonl` 文件；**删除当前会话前必须先 `new_session` 切走**。
-- 这两条是**壳侧实现**，三个 UI 不各自实现，由壳的会话服务统一提供。
+- **delete**：RPC 无 delete 命令。壳仅把会话根目录的直接 `.jsonl` 子文件移入私有回收站；**删除当前会话前必须先 `new_session` 并确认状态已切走**。
+- 当前会话路径由唯一 SessionCoordinator 在成功切换/状态确认后原子写入 0600 runtime state；失败切换不得覆盖旧路径。supervisor 重启只恢复该权威路径。
+- 大窗口与气泡的用户输入进入同一 FIFO；RPC `success` 只代表接受，必须等 `message_end(role=user)` 才可从持久队列移除。崩溃时未确认项标记为待处理，不自动重发，用户可明确取消或重发。
 
 ### 2.9 extension_ui_response — 回答扩展 UI 请求（壳 → 引擎）
 

@@ -25,7 +25,8 @@ from PyQt6.QtWidgets import QApplication
 
 from ..app_tracking import write_last_user_text
 from ..conversation import ConversationController
-from ..engine_client import EngineClient, haochen_home
+from ..engine_client import EngineClient
+from ..session_coordinator import QueueItem, SessionCoordinator
 from . import theme as T
 from .bubble import BubbleWindow
 from .hotkey import HOTKEY_LABEL, install_hotkey
@@ -56,7 +57,7 @@ class PetApp(QObject):
         self._last_user_text = ""
         self._aborted = False
         self._status_block = None
-        self._pending_after_restart: str | None = None  # 引擎重启期间暂存的发送
+        self._queue_requests: dict[str, str] = {}
         self._detail_open = False                       # 详情（对话窗口展开模式）打开中
         # v0.1.7 首启问称呼：等待用户输入称呼中 / 本次会话已问过（避免重复问候块）
         self._awaiting_name = False
@@ -67,6 +68,9 @@ class PetApp(QObject):
         # 引擎 + 两步编排（共享模块，只读使用）；P4：注入共享 client/supervisor
         self.supervisor = supervisor
         self.client = client or EngineClient(mock=mock)
+        self.coordinator = (
+            supervisor.coordinator if supervisor is not None else SessionCoordinator(self.client.home, parent=self)
+        )
         self.ctrl = ConversationController(self.client)
         if supervisor is not None:
             supervisor.register(self.ctrl)
@@ -111,6 +115,9 @@ class PetApp(QObject):
         self.ctrl.summary_done.connect(self._on_summary_done)
         self.ctrl.answer_done.connect(self._on_answer_done)
         self.ctrl.failed.connect(self._on_failed)
+        self.ctrl.request_committed.connect(self._on_request_committed)
+        self.ctrl.request_failed.connect(self._on_request_failed)
+        self.coordinator.queue_changed.connect(lambda _queue: QTimer.singleShot(0, self._drain_queue))
 
         # ── 引擎事件（确认/感知/崩溃）──
         self.client.event.connect(self._on_engine_event)
@@ -275,41 +282,54 @@ class PetApp(QObject):
                 self._handle_name_reply(text)
                 return
             self._awaiting_name = False
-        if self.ctrl.busy:
-            # ConversationController（共享只读）一轮未完不接受新 prompt；
-            # 引擎契约的 followUp 追加（§3 生成中可追问）需共享层支持，P4 跟进。
-            if self._status_block is not None:
-                self._status_block.set_text("正在生成中，Esc 打断后可继续追问…")
-            self._reopen_input(text)
-            return
-        if self.supervisor is not None and self.supervisor.busy_except(self.ctrl):
-            # P4 双入口仲裁：对话窗口正在生成 → 提示并还回输入（对话窗口侧会自动排队）
-            if self._status_block is not None:
-                self._status_block.set_text("haochen 正在对话窗口回答中…")
-            self._reopen_input(text)
-            return
-        if self.supervisor is not None and not self.client.alive:
-            # P4：引擎重启期间发送 → 暂存，重启成功后自动补发
-            self._pending_after_restart = text
-            self.bubble.add_user_message(text)
-            self._status_block = self.bubble.add_status("引擎重启中，稍后自动发送…")
-            if not self.supervisor._restarting:
-                self.supervisor.restart_now()
-            return
-        self.ensure_engine()  # 引擎已崩则先重启（不白屏，interaction-spec §8.2）
-        self._aborted = False
-        self._last_user_text = text
-        # 仅落盘派生的看图意图 boolean，绝不持久化用户原文
-        write_last_user_text(haochen_home(), text)
+        item = self.coordinator.enqueue(text, "pet")
         self.bubble.add_user_message(text)
+        if self.ctrl.busy or (self.supervisor is not None and self.supervisor.busy_except(self.ctrl)):
+            self._status_block = self.bubble.add_status("消息已排队，可在完整窗口取消")
+            return
+        if not self.client.alive:
+            self._status_block = self.bubble.add_status("引擎重启中，消息已安全保留…")
+            if self.supervisor is not None:
+                if not self.supervisor._restarting:
+                    self.supervisor.restart_now()
+                return
+            self.ensure_engine()
+        self._send_queued_item(item)
+
+    def _send_queued_item(self, item: QueueItem) -> None:
+        if self.ctrl.busy or (self.supervisor is not None and self.supervisor.busy_except(self.ctrl)):
+            return
+        self._aborted = False
+        self._last_user_text = item.text
+        write_last_user_text(self.client.home, item.text)
         self._status_block = self.bubble.add_status(STATUS_LINE[PetState.THINK])
         self._set_state(PetState.THINK)
         self.bubble.set_busy(True)
-        self.ctrl.send(text)
+        request_id = self.ctrl.send(item.text)
+        if request_id is None:
+            self.coordinator.hold_item_for_review(item.id)
+            return
+        self._queue_requests[request_id] = item.id
+        self.coordinator.mark_inflight(item.id, request_id)
 
-    def _reopen_input(self, text: str) -> None:
-        self.bubble.input.setPlainText(text)
-        self.bubble.input.setFocus()
+    def _drain_queue(self) -> None:
+        if not self.client.alive or self.ctrl.busy:
+            return
+        if self.supervisor is not None and self.supervisor.busy_except(self.ctrl):
+            return
+        item = self.coordinator.next_ready("pet")
+        if item is not None:
+            self._send_queued_item(item)
+
+    def _on_request_committed(self, request_id: str) -> None:
+        if request_id in self._queue_requests:
+            self._queue_requests.pop(request_id, None)
+            self.coordinator.acknowledge(request_id)
+
+    def _on_request_failed(self, request_id: str, _error: str) -> None:
+        if request_id in self._queue_requests:
+            self._queue_requests.pop(request_id, None)
+            self.coordinator.hold_for_review(request_id)
 
     def abort(self) -> None:
         if self._confirm_id:
@@ -324,8 +344,9 @@ class PetApp(QObject):
 
     def _on_busy_changed(self, busy: bool) -> None:
         self.bubble.set_busy(busy)
-        if not busy and self._state not in (PetState.IDLE,):
-            if self._state is not PetState.AWAKE:
+        if not busy:
+            QTimer.singleShot(0, self._drain_queue)
+            if self._state not in (PetState.IDLE,) and self._state is not PetState.AWAKE:
                 self._set_state(PetState.AWAKE if self.bubble.summoned else PetState.IDLE)
 
     def _on_answer_done(self, answer: str) -> None:
@@ -362,13 +383,23 @@ class PetApp(QObject):
         self._set_state(PetState.AWAKE)
 
     def _on_retry(self) -> None:
-        if self._last_user_text and not self.ctrl.busy:
+        if self.ctrl.busy:
+            return
+        pending = next(
+            (item for item in self.coordinator.queue if item.source == "pet" and item.needs_review),
+            None,
+        )
+        if pending is not None:
+            self.coordinator.retry(pending.id)
+        elif self._last_user_text:
             self.send(self._last_user_text)
 
     # ── 读屏确认 / 感知提示 ───────────────────────────────────
 
     def _on_engine_event(self, ev: dict) -> None:
         t = ev.get("type")
+        if t == "agent_end" and not self.ctrl.busy:
+            QTimer.singleShot(0, self._drain_queue)
         # P4 双入口：确认/感知事件只由「本轮发起方」处理（另一入口静默）
         if (self.supervisor is not None and t in (
                 "extension_ui_request", "tool_execution_start", "tool_execution_end")
@@ -471,9 +502,7 @@ class PetApp(QObject):
 
     def _on_sup_restarted(self) -> None:
         self.bubble.add_status("引擎已自动重启 ✓ 会话已恢复")
-        pending, self._pending_after_restart = self._pending_after_restart, None
-        if pending:  # 补发重启期间暂存的消息
-            self.send(pending)
+        QTimer.singleShot(0, self._drain_queue)
 
     def _on_sup_restart_failed(self) -> None:
         self._status_block = None

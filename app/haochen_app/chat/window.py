@@ -30,7 +30,8 @@ from PyQt6.QtWidgets import (
 
 from ..app_tracking import write_last_user_text
 from ..conversation import SUMMARY_KICK_PREFIX, ConversationController, parse_paired, strip_tags
-from ..engine_client import EngineClient, delete_session, haochen_home, restore_session
+from ..engine_client import EngineClient, delete_session, restore_session
+from ..session_coordinator import QueueItem, SessionCoordinator
 from .sidebar import SessionSidebar
 from .theme import FONT, RADIUS_INPUT, C, button_solid
 from .widgets import (
@@ -39,6 +40,7 @@ from .widgets import (
     BubbleRow,
     ConfirmBar,
     ErrorBanner,
+    QueueRecoveryBanner,
     StatusBubble,
     ToolCard,
     UserBubble,
@@ -109,7 +111,11 @@ class ChatWindow(QWidget):
         self._pending_rpc: dict[str, callable] = {}
         self._sessions: list[dict] = []        # [{path, title}]，新→旧
         self._current_path: str | None = None
-        self._queue: list[str] = []            # 生成中排队的问题（§3 不被覆盖）
+        self.coordinator = (
+            supervisor.coordinator if supervisor is not None else SessionCoordinator(self.client.home, parent=self)
+        )
+        self._queue_requests: dict[str, str] = {}  # request id -> queue item id
+        self._queue_banners: dict[str, QueueRecoveryBanner] = {}
         self._last_user_text = ""
         self._stream_row: BubbleRow | None = None
         self._stream_buf = ""
@@ -127,6 +133,7 @@ class ChatWindow(QWidget):
 
         self._build_ui()
         self._wire()
+        self._sync_queue_banners()
 
         # ⌘W：详情模式 = 收起；正常模式不拦截（行为不变）
         sc = QShortcut(QKeySequence.StandardKey.Close, self)
@@ -184,6 +191,7 @@ class ChatWindow(QWidget):
         self.sidebar.session_selected.connect(self._switch_session)
         self.sidebar.rename_requested.connect(self._rename_session)
         self.sidebar.delete_requested.connect(self._delete_session)
+        self.coordinator.queue_changed.connect(lambda _queue: self._on_queue_changed())
         if self._supervisor is not None:
             # P4：崩溃/重启由 supervisor 统一编排；镜像/泄流挂钩总线
             sup = self._supervisor
@@ -200,6 +208,8 @@ class ChatWindow(QWidget):
         if old is not None:
             try:
                 self.client.event.disconnect(old._on_event)
+                self.client.response.disconnect(old._on_response)
+                self.client.crashed.disconnect(old._on_crashed)
             except TypeError:
                 pass
             if self._supervisor is not None:
@@ -211,6 +221,8 @@ class ChatWindow(QWidget):
         self.ctrl.summary_done.connect(self._on_summary_done)
         self.ctrl.failed.connect(self._on_failed)
         self.ctrl.busy_changed.connect(self._on_busy_changed)
+        self.ctrl.request_committed.connect(self._on_request_committed)
+        self.ctrl.request_failed.connect(self._on_request_failed)
         if self._supervisor is not None:
             self._supervisor.register(self.ctrl)
 
@@ -241,6 +253,8 @@ class ChatWindow(QWidget):
         path = data.get("sessionFile") or ""
         model = (data.get("model") or {}).get("id", "")
         self.sidebar.set_status(f"模型：{model}")
+        if path:
+            self.coordinator.set_current_session(path)
         if path and path != self._current_path:
             self._current_path = path
             if not any(s["path"] == path for s in self._sessions):
@@ -297,17 +311,25 @@ class ChatWindow(QWidget):
             self._answer_confirm(text.lower() == "y")
             return
         self._add_row(UserBubble(text), "right")
-        if self.ctrl.busy or self._foreign_busy():
-            self._queue.append(text)          # §3：生成期间可继续输入（排队不丢）
-            return
-        self._send_now(text)
+        self.coordinator.enqueue(text, "chat")
+        self._drain_queue()
 
-    def _send_now(self, text: str) -> None:
-        self._last_user_text = text
+    @property
+    def _queue(self) -> list[str]:
+        """Compatibility view for existing verification scripts."""
+        return self.coordinator.texts("chat")
+
+    def _send_queued_item(self, item: QueueItem) -> None:
+        self._last_user_text = item.text
         # 仅落盘派生的看图意图 boolean，绝不持久化用户原文
-        write_last_user_text(haochen_home(), text)
-        self._auto_title(text)
-        self.ctrl.send(text)
+        write_last_user_text(self.client.home, item.text)
+        self._auto_title(item.text)
+        request_id = self.ctrl.send(item.text)
+        if request_id is None:
+            self.coordinator.hold_item_for_review(item.id)
+            return
+        self._queue_requests[request_id] = item.id
+        self.coordinator.mark_inflight(item.id, request_id)
 
     def _on_stop(self) -> None:
         if self._confirm:
@@ -437,9 +459,51 @@ class ChatWindow(QWidget):
             QTimer.singleShot(0, self._drain_queue)
 
     def _drain_queue(self) -> None:
-        if (self._queue and not self.ctrl.busy and not self._engine_crashed
-                and not self._foreign_busy()):
-            self._send_now(self._queue.pop(0))
+        if self.ctrl.busy or self._engine_crashed or self._foreign_busy() or not self.client.alive:
+            return
+        item = self.coordinator.next_ready("chat")
+        if item is not None:
+            self._send_queued_item(item)
+
+    def _on_request_committed(self, request_id: str) -> None:
+        if request_id in self._queue_requests:
+            self._queue_requests.pop(request_id, None)
+            self.coordinator.acknowledge(request_id)
+
+    def _on_request_failed(self, request_id: str, _error: str) -> None:
+        if request_id in self._queue_requests:
+            self._queue_requests.pop(request_id, None)
+            self.coordinator.hold_for_review(request_id)
+
+    def _on_queue_changed(self) -> None:
+        self._sync_queue_banners()
+        QTimer.singleShot(0, self._drain_queue)
+
+    def _sync_queue_banners(self) -> None:
+        for item in self.coordinator.queue:
+            if not item.needs_review or item.id in self._queue_banners:
+                continue
+            preview = item.text if len(item.text) <= 80 else item.text[:80] + "…"
+            banner = QueueRecoveryBanner(preview)
+            self._queue_banners[item.id] = banner
+            self._add_row(banner, "left")
+
+            def resend(item_id=item.id, recovery_banner=banner) -> None:
+                try:
+                    self.coordinator.retry(item_id)
+                except KeyError:
+                    return
+                recovery_banner.mark_done("已选择重新发送")
+
+            def cancel(item_id=item.id, recovery_banner=banner) -> None:
+                try:
+                    self.coordinator.cancel(item_id)
+                except KeyError:
+                    return
+                recovery_banner.mark_done("已取消未发送消息")
+
+            banner.resend_requested.connect(resend)
+            banner.cancel_requested.connect(cancel)
 
     def _on_answer_delta(self, delta: str) -> None:
         self._drop_thinking()
@@ -479,8 +543,22 @@ class ChatWindow(QWidget):
         self._drop_status()
         self._stream_row = None
         banner = ErrorBanner(f"{err}")
-        banner.retry.connect(lambda: self._send_now(self._last_user_text))
+        banner.retry.connect(self._retry_last_message)
         self._add_row(banner, "left")
+
+    def _retry_last_message(self) -> None:
+        pending = next(
+            (
+                item
+                for item in self.coordinator.queue
+                if item.source == "chat" and item.needs_review and item.text == self._last_user_text
+            ),
+            None,
+        )
+        if pending is not None:
+            self.coordinator.retry(pending.id)
+        elif self._last_user_text:
+            self.coordinator.enqueue(self._last_user_text, "chat")
 
     def _drop_thinking(self) -> None:
         if self._thinking_row:
@@ -569,6 +647,7 @@ class ChatWindow(QWidget):
         def done(resp: dict) -> None:
             if resp.get("success") and not (resp.get("data") or {}).get("cancelled"):
                 self._current_path = path
+                self.coordinator.set_current_session(path)
                 self._refresh_sidebar()
                 self._rpc(self.client.get_messages, self._render_history)
         self._rpc(self.client.switch_session, done, path)
@@ -585,6 +664,7 @@ class ChatWindow(QWidget):
             def after_switch(resp: dict) -> None:
                 if resp.get("success"):
                     self._current_path = path
+                    self.coordinator.set_current_session(path)
                     self._refresh_sidebar()
                     self._rpc(self.client.get_messages, self._render_history)
                     self._rpc(self.client.set_session_name, apply, name)
@@ -730,11 +810,13 @@ class ChatWindow(QWidget):
         self._thinking_row = self._status_row = self._stream_row = None
         self._confirm = None
         self._tool_cards.clear()
+        self._queue_banners.clear()
         while self.flow.count() > 1:
             item = self.flow.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
+        QTimer.singleShot(0, self._sync_queue_banners)
 
     # ── P4：双入口镜像 / supervisor 重启联动 ─────────────────────
 
@@ -779,7 +861,7 @@ class ChatWindow(QWidget):
         self._engine_crashed = True
         self._drop_thinking()
         self._drop_status()
-        self._queue.clear()
+        self._sync_queue_banners()
         if self._supervisor is not None:
             banner = ErrorBanner(f"引擎已退出（代码 {code}），自动重启中…", retryable=False)
         else:

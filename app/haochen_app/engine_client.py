@@ -115,6 +115,7 @@ class EngineClient(QObject):
         if self._mock:
             argv = [sys.executable, str(self._engine)]
             env, cwd = dict(os.environ), PROJECT_ROOT / "mock-engine"
+            env["HAOCHEN_HOME"] = str(self._home)
         else:
             argv, env, cwd = spawn_argv(self._engine, self._ext, self._home)
         proc = subprocess.Popen(

@@ -490,6 +490,48 @@ class ActionBanner(QFrame):
         self.setMinimumWidth(min(360, w))
 
 
+class QueueRecoveryBanner(QFrame):
+    """Recovered unsent input with explicit resend/cancel choices."""
+
+    resend_requested = pyqtSignal()
+    cancel_requested = pyqtSignal()
+
+    def __init__(self, preview: str, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"""
+            QueueRecoveryBanner {{
+                background: {C['surface']};
+                border: 1px solid {C['warn']};
+                border-radius: {RADIUS_CARD}px;
+            }}
+        """)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(14, 10, 14, 10)
+        self.message = QLabel(f"有一条未确认发送的消息：{preview}")
+        self.message.setWordWrap(True)
+        lay.addWidget(self.message)
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self.cancel_button = QPushButton("取消")
+        self.cancel_button.setStyleSheet(button_outline())
+        self.cancel_button.clicked.connect(self.cancel_requested)
+        actions.addWidget(self.cancel_button)
+        self.resend_button = QPushButton("重新发送")
+        self.resend_button.setStyleSheet(button_outline())
+        self.resend_button.clicked.connect(self.resend_requested)
+        actions.addWidget(self.resend_button)
+        lay.addLayout(actions)
+
+    def mark_done(self, text: str) -> None:
+        self.message.setText(text)
+        self.cancel_button.hide()
+        self.resend_button.hide()
+
+    def set_max_width(self, w: int) -> None:
+        self.setMaximumWidth(w)
+        self.setMinimumWidth(min(360, w))
+
+
 class ErrorBanner(QFrame):
     """错误条（interaction-spec §8.2 / visual-spec §6.4）：color-danger + 重试入口。"""
 

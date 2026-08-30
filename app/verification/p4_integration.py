@@ -152,24 +152,32 @@ def main() -> int:
     check("S5 气泡回合结束后窗口排队自动泄流", ok)
     check("S5 全程同一会话", chat._current_path == session_at_start)
 
+    print("── S5b 反向并发仲裁（窗口生成中，气泡输入排队）──", flush=True)
+    chat.input.setPlainText("窗口先发送")
+    chat._on_send()
+    chat_busy = wait_until(lambda: chat.ctrl.busy, 5, "窗口回合进行中")
+    pet.send("气泡排队的问题")
+    check("S5b 气泡消息在窗口回合中进入共享队列",
+          chat_busy and "气泡排队的问题" in sup.coordinator.texts("pet"))
+    ok = wait_until(
+        lambda: not sup.coordinator.queue and not chat.ctrl.busy and not pet.ctrl.busy,
+        40,
+        "反向排队泄流",
+    )
+    check("S5b 窗口回合结束后气泡队列自动泄流", ok)
+
     # ── S6 崩溃 → 自动重启 → 会话恢复 ──────────────────────────
     print("── S6 引擎崩溃 → 自动重启 → 会话恢复 ──", flush=True)
     path_before = chat._current_path
     restarted = {"n": 0}
     sup.restarted.connect(lambda: restarted.__setitem__("n", restarted["n"] + 1))
-    from unittest.mock import patch as _patch
-    with _patch.object(sup.client, "switch_session",
-                       wraps=sup.client.switch_session) as spy_switch:
-        sup.client._proc.kill()
-        ok = wait_until(lambda: restarted["n"] >= 1, 20, "自动重启完成")
-        check("S6 崩溃后自动重启成功", ok)
-        # 壳行为断言：重启后向引擎发出了「恢复崩溃前会话」的 switch_session。
-        # （真引擎会话是磁盘 jsonl，可真正切回——端到端恢复由真链路验收覆盖；
-        #   mock 会话纯内存、进程重启即失，这里只验证壳的行为正确。）
-        restore_attempted = any(c.args and c.args[0] == path_before
-                                for c in spy_switch.call_args_list)
-        check("S6 重启后发出会话恢复（switch_session 回崩溃前）",
-              restore_attempted, f"target={path_before}")
+    sup.client._proc.kill()
+    ok = wait_until(lambda: restarted["n"] >= 1, 20, "自动重启完成")
+    check("S6 崩溃后自动重启成功", ok)
+    # mock 会话现也持久化：验证恢复结果，而非只验证发过 switch_session。
+    restored_path = sup.coordinator.current_session
+    check("S6 重启后恢复崩溃前会话", restored_path == path_before,
+          f"target={path_before} actual={restored_path}")
     ok = wait_until(lambda: chat._current_path is not None, 10, "窗口状态刷新")
     check("S6 窗口崩溃标记已清除", ok and not chat._engine_crashed)
     pet.send("自我介绍")

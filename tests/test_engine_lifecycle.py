@@ -61,9 +61,14 @@ def test_stop_kills_engine_descendants_in_same_process_group(tmp_path: Path) -> 
     client = EngineClient(engine=script, mock=True, home=tmp_path / "home", shutdown_timeout_s=0.1)
     client.start()
     deadline = time.monotonic() + 2
-    while not child_pid_file.exists() and time.monotonic() < deadline:
+    child_pid_text = ""
+    while time.monotonic() < deadline:
+        if child_pid_file.exists():
+            child_pid_text = child_pid_file.read_text()
+            if child_pid_text:
+                break
         time.sleep(0.01)
-    child_pid = int(child_pid_file.read_text())
+    child_pid = int(child_pid_text)
 
     client.stop()
     assert client.wait_stopped(timeout=3)

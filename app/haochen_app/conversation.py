@@ -95,6 +95,9 @@ class ConversationController(QObject):
     summary_done = pyqtSignal(str)    # 短结完成（解析值或兜底抽取）
     failed = pyqtSignal(str)          # 回合错误（stopReason=error 等）
     busy_changed = pyqtSignal(bool)   # 是否在一轮对话中
+    request_accepted = pyqtSignal(str)
+    request_committed = pyqtSignal(str)
+    request_failed = pyqtSignal(str, str)
 
     def __init__(self, client: EngineClient, parent=None):
         super().__init__(parent)
@@ -102,20 +105,35 @@ class ConversationController(QObject):
         self._phase = ""              # "" | "answer" | "summary"
         self._answer_buf = ""
         self._answer_text = ""
+        self._requests: dict[str, str] = {}
+        self._answer_request_id: str | None = None
+        self._answer_accepted = False
+        self._user_message_seen = False
         client.event.connect(self._on_event)
+        client.response.connect(self._on_response)
+        client.crashed.connect(self._on_crashed)
 
     @property
     def busy(self) -> bool:
         return bool(self._phase)
 
-    def send(self, text: str) -> None:
+    def send(self, text: str) -> str | None:
         if self.busy:
             self.failed.emit("上一轮尚未结束")
-            return
+            return None
         self._phase = "answer"
         self._answer_buf = ""
         self.busy_changed.emit(True)
-        self.client.prompt(text)
+        try:
+            request_id = self.client.prompt(text)
+        except RuntimeError as exc:
+            self._finish_error(str(exc))
+            return None
+        self._requests[request_id] = "answer"
+        self._answer_request_id = request_id
+        self._answer_accepted = False
+        self._user_message_seen = False
+        return request_id
 
     def abort(self) -> None:
         if self.busy:
@@ -123,11 +141,46 @@ class ConversationController(QObject):
 
     # ── 引擎事件 ──────────────────────────────────────────────
 
+    def _on_response(self, resp: dict) -> None:
+        request_id = str(resp.get("id", ""))
+        phase = self._requests.pop(request_id, None)
+        if phase is None:
+            return
+        if resp.get("success"):
+            self.request_accepted.emit(request_id)
+            if phase == "answer":
+                self._answer_accepted = True
+                self._maybe_emit_committed()
+            return
+        error = str(resp.get("error") or "引擎未接受请求")
+        self.request_failed.emit(request_id, error)
+        if phase == "answer":
+            self._answer_request_id = None
+        if self._phase == phase:
+            self._finish_error(error)
+
+    def _maybe_emit_committed(self) -> None:
+        if self._answer_request_id and self._answer_accepted and self._user_message_seen:
+            request_id, self._answer_request_id = self._answer_request_id, None
+            self.request_committed.emit(request_id)
+
+    def _on_crashed(self, code: int) -> None:
+        if not self.busy:
+            return
+        if self._answer_request_id is not None:
+            self.request_failed.emit(self._answer_request_id, f"引擎退出（代码 {code}）")
+            self._answer_request_id = None
+        self._requests.clear()
+        self._finish_error(f"引擎退出（代码 {code}）")
+
     def _on_event(self, ev: dict) -> None:
         if not self._phase:
             return
         t = ev.get("type")
-        if t == "message_update" and self._phase == "answer":
+        if t == "message_end" and self._phase == "answer" and (ev.get("message") or {}).get("role") == "user":
+            self._user_message_seen = True
+            self._maybe_emit_committed()
+        elif t == "message_update" and self._phase == "answer":
             ame = ev.get("assistantMessageEvent") or {}
             if ame.get("type") == "text_delta":
                 delta = ame.get("delta", "")
@@ -168,7 +221,12 @@ class ConversationController(QObject):
         kick = SUMMARY_KICK_TEMPLATE.format(answer=answer[:8000])
         self._phase = "summary"
         self.summarizing.emit()
-        self.client.prompt(kick)
+        try:
+            request_id = self.client.prompt(kick)
+        except RuntimeError as exc:
+            self._finish_error(str(exc))
+            return
+        self._requests[request_id] = "summary"
 
     def _end_summary_round(self, msgs: list) -> None:
         raw = self._final_text(msgs)

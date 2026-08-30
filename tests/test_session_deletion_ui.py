@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import tempfile
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -14,6 +15,7 @@ window_module = importlib.import_module("haochen_app.chat.window")
 ChatWindow = window_module.ChatWindow
 ActionBanner = window_module.ActionBanner
 ErrorBanner = window_module.ErrorBanner
+SessionCoordinator = importlib.import_module("haochen_app.session_coordinator").SessionCoordinator
 
 
 class FakeClient(QObject):
@@ -25,7 +27,7 @@ class FakeClient(QObject):
         super().__init__()
         self._mock = mock
         self._next = 0
-        self.home = Path("/tmp/haochen-ui-test")
+        self.home = Path(tempfile.mkdtemp(prefix="haochen-ui-test-"))
 
     @property
     def alive(self) -> bool:
@@ -34,6 +36,12 @@ class FakeClient(QObject):
     def _id(self, prefix: str) -> str:
         self._next += 1
         return f"{prefix}-{self._next}"
+
+    def prompt(self, _text: str) -> str:
+        return self._id("prompt")
+
+    def abort(self) -> str:
+        return self._id("abort")
 
     def new_session(self) -> str:
         return self._id("new")
@@ -69,6 +77,69 @@ def make_window(qtbot, *, mock: bool = True):
     window._current_path = "/sessions/a.jsonl"
     window._refresh_sidebar()
     return window
+
+
+def test_recovered_queue_can_be_cancelled_from_ui(qtbot) -> None:
+    client = FakeClient()
+    coordinator = SessionCoordinator(client.home)
+    item = coordinator.enqueue("recover me", "chat")
+    coordinator.mark_inflight(item.id, "old-request")
+
+    window = ChatWindow(client)
+    qtbot.addWidget(window)
+    window._clear_flow()
+    qtbot.waitUntil(lambda: bool(window.findChildren(window_module.QueueRecoveryBanner)), timeout=1000)
+    banner = window.findChildren(window_module.QueueRecoveryBanner)[-1]
+    banner.cancel_button.click()
+
+    assert window.coordinator.queue == ()
+    assert "已取消" in banner.message.text()
+
+
+def test_recovered_queue_is_resent_only_after_explicit_action(qtbot) -> None:
+    client = FakeClient()
+    coordinator = SessionCoordinator(client.home)
+    item = coordinator.enqueue("recover me", "chat")
+    coordinator.mark_inflight(item.id, "old-request")
+
+    window = ChatWindow(client)
+    qtbot.addWidget(window)
+    recovered = window.coordinator.queue[0]
+    assert recovered.needs_review and recovered.request_id is None
+    banner = window.findChildren(window_module.QueueRecoveryBanner)[0]
+    banner.resend_button.click()
+
+    qtbot.waitUntil(lambda: window.coordinator.queue[0].request_id is not None, timeout=1000)
+    request_id = window.coordinator.queue[0].request_id
+    client.response.emit({"id": request_id, "success": True, "type": "response"})
+    assert window.coordinator.queue  # acceptance alone is not durable enough
+    getattr(client, "event").emit({"type": "message_end", "message": {"role": "user"}})
+    qtbot.waitUntil(lambda: not window.coordinator.queue, timeout=1000)
+    assert "已选择重新发送" in banner.message.text()
+
+
+def test_failed_session_switch_keeps_ui_and_coordinator_on_original(qtbot) -> None:
+    window = make_window(qtbot)
+    window.coordinator.set_current_session("/sessions/a.jsonl")
+
+    window._switch_session("/sessions/b.jsonl")
+    request_id = next(key for key in window._pending_rpc if key.startswith("switch-"))
+    window._on_response({"id": request_id, "success": False, "error": "failed"})
+
+    assert window._current_path == "/sessions/a.jsonl"
+    assert window.coordinator.current_session == "/sessions/a.jsonl"
+
+
+def test_successful_session_switch_updates_shared_coordinator(qtbot) -> None:
+    window = make_window(qtbot)
+    window.coordinator.set_current_session("/sessions/a.jsonl")
+
+    window._switch_session("/sessions/b.jsonl")
+    request_id = next(key for key in window._pending_rpc if key.startswith("switch-"))
+    window._on_response({"id": request_id, "success": True, "data": {"cancelled": False}})
+
+    assert window._current_path == "/sessions/b.jsonl"
+    assert window.coordinator.current_session == "/sessions/b.jsonl"
 
 
 def test_delete_requires_confirmation(qtbot, monkeypatch) -> None:

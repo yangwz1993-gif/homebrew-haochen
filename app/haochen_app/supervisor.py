@@ -26,6 +26,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from .engine_client import EngineClient
+from .session_coordinator import SessionCoordinator
 
 log = logging.getLogger("haochen.supervisor")
 
@@ -52,8 +53,8 @@ class EngineSupervisor(QObject):
             home=home,
             request_timeout_s=request_timeout_s,
         )
+        self.coordinator = SessionCoordinator(self.client.home, parent=self)
         self._pending: dict[str, callable] = {}
-        self._restore_path: str | None = None
         self._ctrls: list = []
         self._attempt = 0
         self._restarting = False
@@ -181,15 +182,22 @@ class EngineSupervisor(QObject):
         current = (resp.get("data") or {}).get("sessionFile") or ""
         # 恢复崩溃前会话（追问不丢上下文，跨重启也成立）
         # mock 会话是 mock-session:// 伪路径（非文件），存在性检查仅对真实文件路径
-        restore_ok = (self._restore_path and current != self._restore_path
-                      and ("://" in self._restore_path
-                           or Path(self._restore_path).exists()))
+        restore_path = self.coordinator.current_session
+        restore_ok = (restore_path and current != restore_path
+                      and ("://" in restore_path or Path(restore_path).exists()))
         if restore_ok:
-            log.info("restoring session %s", self._restore_path)
-            self._rpc(self.client.switch_session,
-                      lambda _r: self._finish_restart(), self._restore_path)
+            log.info("restoring session %s", restore_path)
+            self._rpc(self.client.switch_session, self._restore_session_done, restore_path)
         else:
             self._finish_restart()
+
+    def _restore_session_done(self, resp: dict) -> None:
+        if resp.get("success") and not (resp.get("data") or {}).get("cancelled"):
+            self._finish_restart()
+            return
+        self._restarting = False
+        log.error("engine restarted but session restore failed")
+        self.restart_failed.emit()
 
     def _cancel_probe(self) -> None:
         if self._probe_timer:
@@ -244,7 +252,7 @@ class EngineSupervisor(QObject):
         data = resp.get("data") or {}
         path = data.get("sessionFile") or ""
         if path:
-            self._restore_path = path
+            self.coordinator.set_current_session(path)
         self.state_changed.emit(data)
 
     # ── 自家 RPC（id 关联，契约 §1.2）──────────────────────────

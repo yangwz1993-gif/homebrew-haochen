@@ -23,6 +23,7 @@ import select
 import sys
 import time
 import uuid
+from pathlib import Path
 
 TICK = max(0, int(os.environ.get("MOCK_TICK_MS", "30"))) / 1000.0
 MOCK_MODEL = "mock/mock-v1"
@@ -88,8 +89,14 @@ class _StdinLines:
 
 class MockEngine:
     def __init__(self) -> None:
+        home = os.environ.get("HAOCHEN_HOME")
+        self._state_path = Path(home) / "mock-engine-state.json" if home else None
         self.sessions: dict[str, dict] = {}
-        self.current = self._new_session()
+        self.current = ""
+        self._load_state()
+        if not self.current or self.current not in self.sessions:
+            self.current = self._new_session()
+            self._save_state()
         self.aborted = False
         self.inbox: list[dict] = []  # 流式中收到的命令，回合间处理
         self._stdin = _StdinLines()
@@ -143,6 +150,34 @@ class MockEngine:
         return self.aborted
 
     # ---------- 会话状态 ----------
+    def _load_state(self) -> None:
+        if self._state_path is None or not self._state_path.exists():
+            return
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+            sessions = data.get("sessions")
+            current = data.get("current")
+            if isinstance(sessions, dict) and isinstance(current, str):
+                self.sessions = sessions
+                self.current = current
+        except (OSError, ValueError, json.JSONDecodeError):
+            self.sessions = {}
+            self.current = ""
+
+    def _save_state(self) -> None:
+        if self._state_path is None:
+            return
+        self._state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._state_path.parent.chmod(0o700)
+        temporary = self._state_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps({"current": self.current, "sessions": self.sessions}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temporary.chmod(0o600)
+        temporary.replace(self._state_path)
+        self._state_path.chmod(0o600)
+
     def _new_session(self) -> str:
         sid = uuid.uuid4().hex[:8]
         path = f"mock-session://{sid}.jsonl"
@@ -429,6 +464,7 @@ class MockEngine:
             pass  # 未在确认等待中到达的响应，忽略
         else:
             self.respond(rid, str(t), error=f"Unknown command: {t}")
+        self._save_state()
 
     def run(self) -> None:
         while True:
