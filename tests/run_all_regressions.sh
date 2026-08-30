@@ -25,9 +25,9 @@ bash -c "cd '$APP' && QT_QPA_PLATFORM=offscreen '$VENV' haochen_app/chat/verific
 check "L1 mock driver (45) + ext 看图模式 (21) + markdown 清洗 (11)"
 
 # L2
-run_name "L2 settings selfcheck (26)"
-bash -c "cd '$APP' && QT_QPA_PLATFORM=offscreen '$VENV' -m haochen_app.settings.selfcheck 2>/dev/null | tail -1 | grep -q '26/26'"
-check "L2 settings selfcheck (26)"
+run_name "L2 settings selfcheck (27)"
+bash -c "cd '$APP' && HAOCHEN_MOCK=1 QT_QPA_PLATFORM=offscreen '$VENV' -m haochen_app.settings.selfcheck 2>/dev/null | tail -1 | grep -q '27/27'"
+check "L2 settings selfcheck (27)"
 
 # L3
 run_name "L3 M-C chat (5)"
@@ -39,7 +39,7 @@ bash -c "MOCK_TICK_MS=20 QT_QPA_PLATFORM=offscreen '$VENV' '$APP/haochen_app/pet
 check "L3 M-E pet (17)"
 
 run_name "L3 P4 集成 (25)"
-bash -c "HAOCHEN_MOCK=1 MOCK_TICK_MS=30 QT_QPA_PLATFORM=offscreen HAOCHEN_HOME=/tmp/haochen-p6-test HAOCHEN_AUTO_IMPORT_KEY=1 HAOCHEN_AUTO_RESTART=1 '$VENV' '$APP/verification/p4_integration.py' 2>/dev/null | grep -q '27/27'"
+bash -c "HAOCHEN_MOCK=1 MOCK_TICK_MS=30 QT_QPA_PLATFORM=offscreen HAOCHEN_HOME=/tmp/haochen-p6-test HAOCHEN_AUTO_IMPORT_KEY=1 HAOCHEN_AUTO_RESTART=1 '$VENV' '$APP/verification/p4_integration.py' 2>/dev/null | grep -q '28/28'"
 check "L3 P4 集成 (25)"
 
 if [ "$REAL" = "1" ]; then

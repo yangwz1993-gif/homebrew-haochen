@@ -174,7 +174,6 @@ class PetApp(QObject):
             self.bubble.summon()
             if self._state is PetState.IDLE:
                 self._set_state(PetState.AWAKE)
-            self._maybe_ask_name()
 
     # ── 首启问称呼（v0.1.7）───────────────────────────────────
 

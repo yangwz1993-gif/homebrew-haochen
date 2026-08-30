@@ -7,7 +7,7 @@
 - 引擎以 `0077` umask 启动，确保新会话和运行文件默认不向 group/other 开放。
 - 用户提问、API Key、屏幕正文不得写入诊断日志。
 - 看图意图只保存 `{ "visual": true|false }`，不保存用户原始提问；升级后首次提问会删除旧 `last-user-text.txt`。
-- API Key 当前仍位于权限为 `0600` 的隔离 `auth.json`；迁移到 macOS Keychain 属于 task-4a。
+- API Key 只存于 macOS Keychain；`auth.json` 仅保留 `$HAOCHEN_<PROVIDER>_API_KEY` 引用，引擎启动时经环境变量注入。
 
 ## 远程图片
 

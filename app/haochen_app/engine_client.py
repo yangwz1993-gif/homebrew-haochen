@@ -37,6 +37,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from . import paths
+from .keychain import CredentialStore, KeychainStore, MemoryCredentialStore, export_keychain_credentials
 from .secure_storage import ensure_private_directory, ensure_private_file
 
 PROJECT_ROOT = paths.PROJECT_ROOT
@@ -51,7 +52,12 @@ def haochen_home() -> Path:
         "HAOCHEN_HOME", Path.home() / "Library" / "Application Support" / "haochen"))
 
 
-def spawn_argv(engine: Path, ext: Path | None, home: Path) -> tuple[list[str], dict, Path]:
+def spawn_argv(
+    engine: Path,
+    ext: Path | None,
+    home: Path,
+    credentials: CredentialStore | None = None,
+) -> tuple[list[str], dict, Path]:
     """契约 §1.1 冻结的启动约定：返回 (argv, env, cwd)。"""
     env = dict(os.environ)
     env["PI_CODING_AGENT_DIR"] = str(home / "agent")
@@ -70,6 +76,8 @@ def spawn_argv(engine: Path, ext: Path | None, home: Path) -> tuple[list[str], d
     cwd = ensure_private_directory(home / "pi-home")
     ensure_private_directory(home / "pi-sessions")
     ensure_private_directory(home / "logs")
+    if credentials is not None:
+        export_keychain_credentials(home / "agent" / "auth.json", env, credentials)
     return argv, env, cwd
 
 
@@ -84,11 +92,13 @@ class EngineClient(QObject):
 
     def __init__(self, engine: Path | None = None, mock: bool | None = None,
                  ext: Path | None = DEFAULT_EXT, home: Path | None = None, parent=None,
-                 request_timeout_s: float = 5.0, shutdown_timeout_s: float = 0.5):
+                 request_timeout_s: float = 5.0, shutdown_timeout_s: float = 0.5,
+                 credentials: CredentialStore | None = None):
         super().__init__(parent)
         if mock is None:
             mock = os.environ.get("HAOCHEN_MOCK") == "1"
         self._mock = mock
+        self.credentials = credentials or (MemoryCredentialStore() if mock else KeychainStore())
         self._engine = Path(engine) if engine else (DEFAULT_MOCK if mock else DEFAULT_ENGINE)
         self._ext = None if mock else ext
         self._home = Path(home) if home else haochen_home()
@@ -117,7 +127,7 @@ class EngineClient(QObject):
             env, cwd = dict(os.environ), PROJECT_ROOT / "mock-engine"
             env["HAOCHEN_HOME"] = str(self._home)
         else:
-            argv, env, cwd = spawn_argv(self._engine, self._ext, self._home)
+            argv, env, cwd = spawn_argv(self._engine, self._ext, self._home, self.credentials)
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,

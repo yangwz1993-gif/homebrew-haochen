@@ -55,7 +55,10 @@ def test_config_store_repairs_directory_and_file_modes(tmp_path: Path, monkeypat
     (templates / "auth.json.template").write_text('{}', encoding="utf-8")
     monkeypatch.setattr(config_store, "TEMPLATE_DIR", templates)
 
-    store = config_store.ConfigStore(tmp_path / "home")
+    store = config_store.ConfigStore(
+        tmp_path / "home",
+        keychain=engine_client.MemoryCredentialStore(),
+    )
     created = store.ensure_initialized()
 
     assert mode(store.home) == 0o700

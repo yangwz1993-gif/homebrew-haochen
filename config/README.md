@@ -40,8 +40,9 @@ env PI_CODING_AGENT_DIR="$HAOCHEN_HOME/agent" \
 壳的职责（P4 实现，此处冻结约定）：
 
 1. `HAOCHEN_HOME/agent/` 不存在 → 用本目录三个模板初始化。
-2. **key 导入**：若 `~/.pi/agent/auth.json` 存在且用户同意，**只读**复制其中 `deepseek` 条目到 haochen 的 `auth.json`；绝不写 `~/.pi`。用户也可在配置面板手填。
+2. **key 存储**：只存于 macOS Keychain（service `com.haochen.app.api-key`）。`auth.json` 中仅写 `"$HAOCHEN_<PROVIDER>_API_KEY"` 环境引用，壳 spawn 引擎时通过 `export_keychain_credentials` 把实际值注入子进程环境。写入前先经固定安全端点验证，失败不覆盖旧 Key。**不读取也不导入全局 `~/.pi` 凭据。**
 3. `models.json` 直接用本目录模板（已含 deepseek 三个模型定义，含默认的 `deepseek-v4-flash-vision-exp`）。
+4. 首次启动由单一可续办向导（`app/haochen_app/onboarding.py`）依次完成欢迎→Key 验证→按需权限→试问；向导状态存 `HAOCHEN_HOME/onboarding-state.json`（0600）。
 
 ## 3. `auth.json` schema
 
@@ -52,7 +53,7 @@ env PI_CODING_AGENT_DIR="$HAOCHEN_HOME/agent" \
 ```
 
 - `providerId` 须与 `models.json` 的 provider 键一致（内建 provider 如 `deepseek` 直接用内建 baseUrl）。
-- `key` 支持间接引用（pi 原生，`resolve-config-value.ts`）：`"$ENV_VAR"` 从环境变量读；`"!command"` 执行命令取 stdout。**配置 UI 写明文 key 即可**；间接引用留给高级用户。
+- `key` 支持间接引用（pi 原生，`resolve-config-value.ts`）：`"$ENV_VAR"` 从环境变量读；`"!command"` 执行命令取 stdout。**配置 UI 通过 Keychain 写入，`auth.json` 只保存 haochen 托管的 `$HAOCHEN_*_API_KEY` 引用**；外部间接引用留给高级用户手动维护，面板只读展示。
 - OAuth 型：`{"type":"oauth","access","refresh","expires"}`（haochen 本期不用）。
 
 ## 4. `models.json` schema（换 provider 只改这里）

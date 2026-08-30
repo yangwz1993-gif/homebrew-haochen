@@ -3,7 +3,7 @@
 
 用法（仓库根目录）：
     HAOCHEN_MOCK=1 MOCK_TICK_MS=30 QT_QPA_PLATFORM=offscreen \
-    HAOCHEN_HOME=/tmp/haochen-p4-test HAOCHEN_AUTO_IMPORT_KEY=1 HAOCHEN_AUTO_RESTART=1 \
+    HAOCHEN_HOME=/tmp/haochen-p4-test HAOCHEN_SKIP_ONBOARDING=1 HAOCHEN_AUTO_RESTART=1 \
         app/.venv/bin/python app/verification/p4_integration.py
 
 产物：app/verification/p4-*.png + 断言全 PASS。
@@ -84,10 +84,10 @@ def main() -> int:
                     15, "引擎启动 + get_state")
     check("S0 引擎单进程启动并就绪", ok and chat.client._proc is pet.client._proc)
 
-    imported_key = shell.store.get_key("deepseek") or ""
-    check("S0 首启 key 导入（占位→真 key，只读 ~/.pi）",
-          bool(imported_key) and not imported_key.startswith("sk-在此填入"),
-          "(无 ~/.pi key 时本断言为环境依赖)")
+    check("S0 首启不出现向导（HAOCHEN_SKIP_ONBOARDING）",
+          not hasattr(shell, "onboarding"))
+    check("S0 auth.json 只含模板占位符（无明文 key）",
+          "在此填入" in (HOME / "agent" / "auth.json").read_text(encoding="utf-8"))
 
     # ── S1 气泡入口发起回合 ────────────────────────────────────
     print("── S1 气泡提问（窗口隐藏）──", flush=True)

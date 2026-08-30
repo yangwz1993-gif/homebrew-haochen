@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from haochen_app.keychain import MemoryCredentialStore  # noqa: E402
 from haochen_app.settings.config_store import (  # noqa: E402
     EFFECT_IMMEDIATE,
     EFFECT_RESTART,
@@ -44,7 +45,8 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="haochen-settings-selfcheck-"))
     try:
-        store = ConfigStore(tmp)
+        credentials = MemoryCredentialStore()
+        store = ConfigStore(tmp, keychain=credentials)
         agent = tmp / "agent"
 
         # ── 1. 模板初始化 ─────────────────────────────────────
@@ -70,8 +72,9 @@ def main() -> int:
         check("写 key 返回「重启引擎后生效」", effect == EFFECT_RESTART)
         check("key_status = 已配置", store.key_status("deepseek")[0])
         on_disk = json.loads((agent / "auth.json").read_text(encoding="utf-8"))
-        check("auth.json 落盘内容正确",
-              on_disk["deepseek"] == {"type": "api_key", "key": "sk-test-123456"})
+        check("auth.json 只落盘 Keychain 环境引用",
+              on_disk["deepseek"] == {"type": "api_key", "key": "$HAOCHEN_DEEPSEEK_API_KEY"})
+        check("Keychain backend 保存 key", credentials.get("deepseek") == "sk-test-123456")
         check("间接引用 $ENV 状态标注",
               ConfigStore.key_status.__call__ and (lambda: (
                   store.set_key("deepseek", "$DEEPSEEK_API_KEY"),

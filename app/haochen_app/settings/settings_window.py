@@ -16,6 +16,7 @@ P4 集成入口：
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -32,6 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..key_validation import validate_api_key
 from . import theme
 from .config_store import (
     EFFECT_IMMEDIATE,
@@ -69,10 +71,18 @@ class SettingsWindow(QWidget):
     modelChanged = pyqtSignal(str, str)      # 同 provider 换模型 → 接 engine.set_model
     thinkingLevelChanged = pyqtSignal(str)   # 默认思考档变化
     restartRequired = pyqtSignal(str)        # 改动需重启引擎生效（原因描述）
+    keyValidationFinished = pyqtSignal(str, str, bool, str)
 
-    def __init__(self, home: Path | None = None, parent: QWidget | None = None):
+    def __init__(
+        self,
+        home: Path | None = None,
+        parent: QWidget | None = None,
+        store: ConfigStore | None = None,
+    ):
         super().__init__(parent)
-        self.store = ConfigStore(home)
+        self.store = store or ConfigStore(home)
+        self._pending_key_validations: dict[str, tuple[str, QLineEdit, QLabel, QPushButton]] = {}
+        self.keyValidationFinished.connect(self._on_key_validation_finished)
         self.setWindowTitle("haochen 设置")
         self.setMinimumWidth(520)
         self.resize(560, 640)
@@ -213,8 +223,7 @@ class SettingsWindow(QWidget):
     def _keys_card(self, providers) -> QFrame:
         card, lay = _card(
             "API Key",
-            "输入后回车即保存。也支持间接引用：$ENV_VAR 从环境变量读取、!command 执行命令获取"
-            "（高级用法，已配置的间接引用会锁定为只读）。",
+            "新 Key 会先验证连接，成功后才保存到 macOS Keychain；失败不会覆盖当前 Key。",
         )
         for p in providers:
             configured, status = self.store.key_status(p.id)
@@ -230,34 +239,72 @@ class SettingsWindow(QWidget):
             row = QHBoxLayout()
             edit = QLineEdit()
             edit.setEchoMode(QLineEdit.EchoMode.Password)
-            edit.setPlaceholderText("sk-…（未配置）")
-            if key is not None:
-                edit.setText(key)
-            if key and is_indirect_reference(key):
+            edit.setPlaceholderText("已安全存储，输入新 Key 可替换" if configured else "输入 API Key")
+            managed_reference = bool(key and key.startswith("$HAOCHEN_") and key.endswith("_API_KEY"))
+            if key and is_indirect_reference(key) and not managed_reference:
                 edit.setReadOnly(True)
-                edit.setToolTip("间接引用由高级用户手工维护，面板不覆盖")
+                edit.setToolTip("外部间接引用由高级用户维护，面板不覆盖")
             eye = QToolButton(text="显示")
             eye.setCheckable(True)
             eye.toggled.connect(
                 lambda on, e=edit: e.setEchoMode(
                     QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
+            save = QPushButton("保存并验证")
+            save.setObjectName("primaryBtn")
+            save.setEnabled(not edit.isReadOnly())
+            save.clicked.connect(lambda _checked=False, pid=p.id, e=edit, b=badge, s=save: self._save_key(pid, e, b, s))
             row.addWidget(edit, 1)
             row.addWidget(eye)
+            row.addWidget(save)
             lay.addLayout(row)
-
-            edit.editingFinished.connect(
-                lambda e=edit, pid=p.id, b=badge, orig=(key or ""): self._save_key(pid, e, b, orig))
         return card
 
-    def _save_key(self, provider: str, edit: QLineEdit, badge: QLabel, orig: str) -> None:
-        text = edit.text().strip()
-        if text == orig:
+    def _save_key(self, provider: str, edit: QLineEdit, badge: QLabel, save: QPushButton) -> None:
+        candidate = edit.text().strip()
+        if not candidate:
+            self.store.set_key(provider, "")
+            configured, status = self.store.key_status(provider)
+            self._update_key_badge(badge, configured, status)
+            edit.setPlaceholderText("输入 API Key")
+            self._announce(f"{provider} 的 API Key 已清除", EFFECT_IMMEDIATE)
+            self.restartRequired.emit(f"{provider} 的 API Key 已清除")
             return
-        effect = self.store.set_key(provider, text)
-        configured, status = self.store.key_status(provider)
+        save.setEnabled(False)
+        save.setText("验证中…")
+        self._pending_key_validations[provider] = (candidate, edit, badge, save)
+
+        def validate() -> None:
+            result = validate_api_key(provider, candidate)
+            self.keyValidationFinished.emit(provider, candidate, result.ok, result.message)
+
+        threading.Thread(target=validate, name=f"haochen-key-check-{provider}", daemon=True).start()
+
+    @staticmethod
+    def _update_key_badge(badge: QLabel, configured: bool, status: str) -> None:
         badge.setText(status)
         badge.setObjectName("badgeOk" if configured else "badgeOff")
-        badge.setStyleSheet("")  # 触发 QSS 重算
+        badge.setStyleSheet("")
+
+    def _on_key_validation_finished(self, provider: str, candidate: str, ok: bool, message: str) -> None:
+        pending = self._pending_key_validations.get(provider)
+        if pending is None or pending[0] != candidate:
+            return
+        self._pending_key_validations.pop(provider, None)
+        _candidate, edit, badge, save = pending
+        save.setEnabled(True)
+        save.setText("保存并验证")
+        if not ok:
+            self._set_status(f"验证失败：{message}；原 Key 未更改", ok=False)
+            return
+        try:
+            effect = self.store.set_key(provider, candidate)
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(f"Keychain 保存失败：{exc}", ok=False)
+            return
+        edit.clear()
+        edit.setPlaceholderText("已安全存储，输入新 Key 可替换")
+        configured, status = self.store.key_status(provider)
+        self._update_key_badge(badge, configured, status)
         self._announce(f"{provider} 的 API Key", effect)
         self.restartRequired.emit(f"{provider} 的 API Key 已更新")
 

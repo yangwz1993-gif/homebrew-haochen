@@ -26,6 +26,7 @@ from pathlib import Path
 
 from haochen_app import paths
 from haochen_app.engine_client import haochen_home
+from haochen_app.keychain import CredentialStore, KeychainStore, credential_env_name
 from haochen_app.secure_storage import atomic_write_private, ensure_private_directory, ensure_private_file
 
 TEMPLATE_DIR = paths.config_templates()
@@ -73,9 +74,10 @@ class ProviderInfo:
 class ConfigStore:
     """三个配置文件的读写门面。所有写操作立即落盘（原子替换）。"""
 
-    def __init__(self, home: Path | None = None):
+    def __init__(self, home: Path | None = None, keychain: CredentialStore | None = None):
         self.home = Path(home) if home else haochen_home()
         self.agent_dir = self.home / "agent"
+        self.keychain = keychain or KeychainStore()
 
     # ── 初始化 / 重置 ─────────────────────────────────────────
 
@@ -95,6 +97,7 @@ class ConfigStore:
                 created.append(target)
             else:
                 ensure_private_file(target)
+        self._migrate_plaintext_keys()
         return created
 
     def reset_to_default(self, name: str) -> Path:
@@ -104,6 +107,32 @@ class ConfigStore:
         ensure_private_directory(self.home)
         ensure_private_directory(self.agent_dir)
         return atomic_write_private(target, template.read_text(encoding="utf-8"))
+
+    def _migrate_plaintext_keys(self) -> None:
+        """Move legacy plaintext keys into Keychain, changing disk only after read-back succeeds."""
+        path = self.agent_dir / AUTH_FILE
+        if not path.exists():
+            return
+        try:
+            auth = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return
+        changed = False
+        for provider, entry in auth.items() if isinstance(auth, dict) else ():
+            if not isinstance(provider, str) or not isinstance(entry, dict):
+                continue
+            secret = entry.get("key")
+            if not isinstance(secret, str) or not secret or secret == _PLACEHOLDER_KEY:
+                continue
+            if is_indirect_reference(secret):
+                continue
+            self.keychain.set(provider, secret)
+            if self.keychain.get(provider) != secret:
+                raise RuntimeError("Keychain read-back verification failed")
+            entry["key"] = f"${credential_env_name(provider)}"
+            changed = True
+        if changed:
+            self._save(AUTH_FILE, auth)
 
     # ── 底层读写 ──────────────────────────────────────────────
 
@@ -206,6 +235,9 @@ class ConfigStore:
         key = self.get_key(provider)
         if key is None:
             return False, "未配置"
+        expected = f"${credential_env_name(provider)}"
+        if key == expected:
+            return (True, "已安全存储在 Keychain") if self.keychain.get(provider) else (False, "Keychain 中缺少凭据")
         if key.startswith("$"):
             return True, f"已配置（环境变量 {key}）"
         if key.startswith("!"):
@@ -213,13 +245,20 @@ class ConfigStore:
         return True, "已配置"
 
     def set_key(self, provider: str, key: str) -> str:
-        """写明文 API key。返回 EFFECT_RESTART（凭证在引擎启动时加载）。"""
+        """Store a pre-validated key in Keychain and persist only an environment reference."""
         key = key.strip()
         auth = self._load(AUTH_FILE)
-        if key:
+        if key and is_indirect_reference(key):
+            self.keychain.delete(provider)
             auth[provider] = {"type": "api_key", "key": key}
+        elif key:
+            self.keychain.set(provider, key)
+            if self.keychain.get(provider) != key:
+                raise RuntimeError("Keychain read-back verification failed")
+            auth[provider] = {"type": "api_key", "key": f"${credential_env_name(provider)}"}
         else:
-            auth.pop(provider, None)  # 清空 = 删除条目，回到未配置
+            self.keychain.delete(provider)
+            auth.pop(provider, None)
         self._save(AUTH_FILE, auth)
         return EFFECT_RESTART
 

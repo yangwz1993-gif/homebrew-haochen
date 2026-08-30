@@ -7,18 +7,17 @@ P4 集成验证脚本共用本装配，保证「测的就是跑的」。
 - 唯一引擎：EngineSupervisor 持有唯一 EngineClient，三 UI 共用 → 引擎侧同一会话；
 - 双入口联动：气泡「展开详细」→ 对话窗口从气泡 rect 动画展开为详情（v0.1.4 hotfix）；桌宠右键「设置」→ 设置面板；
 - 配置生效链：modelChanged → set_model 热切换；restartRequired → 询问重启引擎；
-- 首启引导：配置缺失 → 模板初始化；key 未配 → 经用户同意从 ~/.pi 只读导入 / 展开设置页。
+- 首启引导：单一可续办向导依次完成 Keychain 验证、按需权限和试问；不读取全局 pi 凭据。
 
 环境变量：
-    HAOCHEN_MOCK=1            用 mock 引擎（联调/测试）
-    HAOCHEN_HOME=<path>       数据目录（测试隔离）
-    HAOCHEN_AUTO_IMPORT_KEY=1 key 导入免询问（自动化/无头环境）
-    HAOCHEN_AUTO_RESTART=1    配置要求重启引擎时免询问直接重启（自动化）
+    HAOCHEN_MOCK=1             用 mock 引擎（联调/测试）
+    HAOCHEN_HOME=<path>        数据目录（测试隔离）
+    HAOCHEN_SKIP_ONBOARDING=1  自动化环境不显示首启向导
+    HAOCHEN_AUTO_RESTART=1     配置要求重启引擎时免询问直接重启（自动化）
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -34,19 +33,17 @@ from .supervisor import EngineSupervisor
 
 log = logging.getLogger("haochen.shell")
 
-PLACEHOLDER_PREFIX = "sk-在此填入"
-
 
 class AppShell:
     """集成 App 装配体（不持有 QApplication，由入口负责）。"""
 
     def __init__(self, mock: bool | None = None, home: Path | None = None):
         self.supervisor = EngineSupervisor(mock=mock, home=home)
+        self.store = ConfigStore(home, keychain=self.supervisor.client.credentials)
         self.chat = ChatWindow(client=self.supervisor.client, supervisor=self.supervisor)
         self.chat.setStyleSheet(app_stylesheet())
         self.pet = PetApp(client=self.supervisor.client, supervisor=self.supervisor)
-        self.settings = SettingsWindow(home=home)
-        self.store = ConfigStore(home)
+        self.settings = SettingsWindow(home=home, store=self.store)
         self._wire()
 
     # ── 接线 ──────────────────────────────────────────────────
@@ -120,51 +117,44 @@ class AppShell:
     # ── 首启引导 ───────────────────────────────────────────────
 
     def first_run_setup(self, parent: QWidget | None = None) -> None:
-        """配置初始化 + key 导入 + 无 key 引导（config/README §2）。"""
+        """Show one resumable wizard; never read credentials from global pi config."""
         created = self.store.ensure_initialized()
         if created:
-            log.info("config initialized: %s", [p.name for p in created])
-        imported = self.maybe_import_key(parent=parent)
-        if not self.any_key_configured() and not imported:
-            log.info("no API key configured → open settings for guidance")
-            self.settings._set_status("首次使用：请先在下方填入 API Key（如 DeepSeek）", ok=False)
-            self.show_settings()
+            log.info("config initialized: %s", [path.name for path in created])
+        from .onboarding import KEY_PAGE, OnboardingState, OnboardingWizard
+
+        state = OnboardingState(self.store.home)
+        if os.environ.get("HAOCHEN_SKIP_ONBOARDING") == "1":
+            return
+        if state.completed and self.any_key_configured():
+            return
+        if state.completed:
+            state.completed = False
+            state.page = KEY_PAGE
+            state.save()
+        self.onboarding = OnboardingWizard(self.store, parent=parent)
+        self.onboarding.permission_requested.connect(self._request_onboarding_permission)
+        self.onboarding.trial_requested.connect(self._send_onboarding_trial)
+        self.onboarding.show()
 
     def any_key_configured(self) -> bool:
         try:
-            return any(self.store.key_status(p.id)[0] for p in self.store.providers())
+            return any(self.store.key_status(provider.id)[0] for provider in self.store.providers())
         except Exception:  # noqa: BLE001 — 配置损坏时不阻塞启动
             return False
 
-    def maybe_import_key(self, parent: QWidget | None = None) -> bool:
-        """key 还是模板占位 → 经用户同意，从 ~/.pi/agent/auth.json 只读导入 deepseek。
+    def _request_onboarding_permission(self, permission: str) -> None:
+        from .permissions import request_accessibility, request_screen_recording
 
-        返回是否发生了导入。绝不写 ~/.pi（隔离原则）。
-        """
-        current = self.store.get_key("deepseek")
-        if current and not current.startswith(PLACEHOLDER_PREFIX):
-            return False  # 已有真 key
-        pi_auth = Path.home() / ".pi" / "agent" / "auth.json"
-        try:
-            with pi_auth.open(encoding="utf-8") as f:
-                key = (json.load(f).get("deepseek") or {}).get("key", "")
-        except Exception:  # noqa: BLE001 — 没有全局 pi / 无 deepseek 条目
-            return False
-        if not key or key.startswith(PLACEHOLDER_PREFIX):
-            return False
-        auto = os.environ.get("HAOCHEN_AUTO_IMPORT_KEY") == "1"
-        if not auto:
-            box = QMessageBox(parent or self.settings)
-            box.setWindowTitle("导入 API Key")
-            box.setText("检测到本机 pi 已配置 DeepSeek API Key。")
-            box.setInformativeText("是否只读复制到 haochen？（不会修改全局 pi 任何文件）")
-            box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            box.setDefaultButton(QMessageBox.StandardButton.Yes)
-            if box.exec() != QMessageBox.StandardButton.Yes:
-                return False
-        self.store.set_key("deepseek", key)
-        log.info("deepseek key imported from ~/.pi (read-only)")
-        return True
+        if permission == "accessibility":
+            request_accessibility()
+        elif permission == "screen":
+            request_screen_recording()
+
+    def _send_onboarding_trial(self, prompt: str) -> None:
+        if not self.pet.bubble.summoned:
+            self.pet._toggle_bubble()
+        self.pet.send(prompt)
 
     # ── 生命周期 ───────────────────────────────────────────────
 
@@ -174,7 +164,6 @@ class AppShell:
         self.chat.start()         # 拉 get_state 就绪（窗口默认不显示）
         self._install_app_tracker()
         self._reconcile_tcc()
-        self._guide_permissions()
 
     def _reconcile_tcc(self) -> None:
         """构建指纹检查（v0.1.4 hotfix）：版本/签名变更 → 清历史 TCC 记录，强制重新授权。
@@ -196,27 +185,6 @@ class AppShell:
         from .app_tracking import install_tracker
         from .engine_client import haochen_home
         install_tracker(haochen_home())
-
-    def _guide_permissions(self) -> None:
-        """首启权限引导（DoD#5）：未授权辅助功能/屏幕录制 → 直接触发系统授权（v0.1.4 §0）。"""
-        if getattr(self.supervisor.client, "_mock", False):
-            return  # mock 联调不读屏
-        if os.environ.get("HAOCHEN_SKIP_PERMISSION_GUIDE") == "1":
-            return  # 自动化/无头测试
-        from PyQt6.QtCore import QTimer
-
-        from .permissions import accessibility_granted, screen_recording_granted
-        ax = accessibility_granted()
-        sr = screen_recording_granted()
-        log.info("permissions at startup: accessibility=%s screen_recording=%s", ax, sr)
-        if not (ax and sr):
-            QTimer.singleShot(1200, lambda: self._first_run_guide())
-
-    def _first_run_guide(self) -> None:
-        """Request system permissions; release signing is handled before distribution."""
-        from .permissions import ensure_permissions
-
-        ensure_permissions(self.settings)
 
     def stop(self) -> None:
         self.supervisor.stop()
