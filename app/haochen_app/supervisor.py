@@ -34,6 +34,7 @@ class EngineSupervisor(QObject):
     MAX_ATTEMPTS = 3
     BACKOFF_MS = [1000, 2000, 5000]
     PROBE_TIMEOUT_MS = 8000
+    HEARTBEAT_MS = 30_000
 
     crashed = pyqtSignal(int)
     restarting = pyqtSignal(int)
@@ -42,9 +43,15 @@ class EngineSupervisor(QObject):
     state_changed = pyqtSignal(dict)
 
     def __init__(self, mock: bool | None = None, engine: Path | None = None,
-                 home: Path | None = None, parent: QObject | None = None):
+                 home: Path | None = None, parent: QObject | None = None,
+                 request_timeout_s: float = 5.0):
         super().__init__(parent)
-        self.client = EngineClient(mock=mock, engine=engine, home=home)
+        self.client = EngineClient(
+            mock=mock,
+            engine=engine,
+            home=home,
+            request_timeout_s=request_timeout_s,
+        )
         self._pending: dict[str, callable] = {}
         self._restore_path: str | None = None
         self._ctrls: list = []
@@ -53,6 +60,10 @@ class EngineSupervisor(QObject):
         self._stopping = False
         self._started_once = False
         self._probe_timer: QTimer | None = None
+        self._heartbeat_pending = False
+        self._heartbeat_timer = QTimer(self)
+        self._heartbeat_timer.setInterval(self.HEARTBEAT_MS)
+        self._heartbeat_timer.timeout.connect(self._heartbeat)
 
         self.client.response.connect(self._on_response)
         self.client.event.connect(self._on_event)
@@ -90,12 +101,16 @@ class EngineSupervisor(QObject):
                 self._schedule_restart()
             return
         self._started_once = True
-        self._ask_state(self._stash_state)
+        self._heartbeat_timer.start()
+        self._ask_state(self._initial_state)
 
     def stop(self) -> None:
         self._stopping = True
         if self._probe_timer:
             self._probe_timer.stop()
+        self._heartbeat_timer.stop()
+        self._heartbeat_pending = False
+        self._pending.clear()
         self.client.stop()
 
     def restart_now(self) -> None:
@@ -109,6 +124,7 @@ class EngineSupervisor(QObject):
     # ── 崩溃 → 自动重启 ───────────────────────────────────────
 
     def _on_crashed(self, code: int) -> None:
+        self._heartbeat_pending = False
         if self._stopping:
             return
         log.warning("engine exited code=%s (restarting=%s)", code, self._restarting)
@@ -183,6 +199,7 @@ class EngineSupervisor(QObject):
     def _finish_restart(self) -> None:
         self._restarting = False
         self._attempt = 0
+        self._heartbeat_timer.start()
         self._ask_state(self._stash_state)
         log.info("engine restarted ok")
         self.restarted.emit()
@@ -192,6 +209,34 @@ class EngineSupervisor(QObject):
     def _on_event(self, ev: dict) -> None:
         if ev.get("type") == "agent_end" and self.client.alive and not self._restarting:
             self._ask_state(self._stash_state)  # 每轮结束刷新当前会话路径
+
+    def _initial_state(self, resp: dict) -> None:
+        if resp.get("success"):
+            self._stash_state(resp)
+        elif resp.get("errorCode") == "timeout":
+            self._handle_unresponsive()
+
+    def _heartbeat(self) -> None:
+        if self._stopping or self._restarting or self._heartbeat_pending or not self.client.alive:
+            return
+        self._heartbeat_pending = True
+        self._ask_state(self._heartbeat_result)
+
+    def _heartbeat_result(self, resp: dict) -> None:
+        self._heartbeat_pending = False
+        if resp.get("success"):
+            self._stash_state(resp)
+        elif resp.get("errorCode") == "timeout":
+            self._handle_unresponsive()
+
+    def _handle_unresponsive(self) -> None:
+        if self._stopping or self._restarting:
+            return
+        log.error("engine heartbeat timed out")
+        self.client.stop()
+        self.crashed.emit(-1)
+        self._attempt = 0
+        self._schedule_restart()
 
     def _stash_state(self, resp: dict) -> None:
         if not resp.get("success"):
@@ -204,15 +249,16 @@ class EngineSupervisor(QObject):
 
     # ── 自家 RPC（id 关联，契约 §1.2）──────────────────────────
 
-    def _rpc(self, sender, callback, *args) -> None:
+    def _rpc(self, sender, callback, *args) -> str | None:
         try:
             rid = sender(*args)
         except RuntimeError:
-            return
+            return None
         self._pending[rid] = callback
+        return rid
 
-    def _ask_state(self, callback) -> None:
-        self._rpc(self.client.get_state, callback)
+    def _ask_state(self, callback) -> str | None:
+        return self._rpc(self.client.get_state, callback)
 
     def _on_response(self, resp: dict) -> None:
         cb = self._pending.pop(resp.get("id", ""), None)

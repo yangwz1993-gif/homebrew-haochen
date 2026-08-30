@@ -19,6 +19,7 @@
 | v1.0 | 2026-08-25 | 初始冻结 | — |
 | v1.0.1 | 2026-08-25 | 补注：TS 扩展加载实测通过（§1.1），§9 风险 ① 排除。无协议语义变化 | 无（仅状态更新） |
 | v1.1 | 2026-08-25 | §1.1 冻结数据隔离约定：新增 `PI_CODING_AGENT_DIR` env、模型配置三文件指向 `config/README.md`；运行期换模型命令 `get_available_models`/`set_model` 的说明见 `config/README.md` §6。消息 schema 无变化 | 壳 spawn 参数；配置前端（Agent-D） |
+| v1.2 | 2026-08-30 | 壳侧请求统一 5s 超时；停止/崩溃结算全部 pending；坏 JSON/stderr 仅记录长度与哈希；停止改为后台进程组回收 | EngineClient / supervisor / UI RPC callback |
 
 ---
 
@@ -49,9 +50,10 @@ haochen-engine --mode rpc --no-extensions -e <haochen-ext.ts> \
 ### 1.3 心跳与崩溃检测
 
 - 协议**无内建心跳**。约定：
-  - 壳每 30s 发一次 `get_state` 探活（开销极小）；超时 5s 无响应视为引擎卡死。
+  - 壳每 30s 发一次 `get_state` 探活（开销极小）；所有 RPC 请求统一 5s 超时，探针超时视为引擎卡死并触发自动重启。
   - **崩溃检测**：引擎进程退出 / stdout EOF 即崩溃。壳必须感知并：提示用户 + 自动重启引擎（重启后当前会话可用 `switch_session` 恢复到崩溃前会话文件），不得白屏（interaction-spec §8.2）。
-- **正常关闭**：壳关闭 stdin → 引擎自行退出（`stdin end` 触发 shutdown）；或发 SIGTERM（退出码 143）。
+- **正常关闭**：壳在后台关闭 stdin 并向独立进程组发 SIGTERM；超时后 SIGKILL 整个进程组。Qt 主线程不得调用同步 `wait()`，解释器退出前由非 daemon reaper 保证无孤儿进程。
+- **异常输出**：stdout 非 JSON、非对象或 EOF 半行会发脱敏协议错误；stderr 只落长度与 SHA-256 摘要的 0600 轮转日志，不记录原始正文。引擎停止或退出时，所有未完成请求会收到 `success:false` 及 `errorCode`（`timeout` / `engine_stopped` / `engine_exited`）。
 
 ---
 

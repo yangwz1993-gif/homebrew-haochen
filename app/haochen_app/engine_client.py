@@ -22,11 +22,14 @@ mock 模式：EngineClient(mock=True) 启动 mock-engine/mock_engine.py（确定
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +37,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from . import paths
-from .secure_storage import ensure_private_directory
+from .secure_storage import ensure_private_directory, ensure_private_file
 
 PROJECT_ROOT = paths.PROJECT_ROOT
 DEFAULT_ENGINE = paths.engine_binary()
@@ -76,9 +79,12 @@ class EngineClient(QObject):
     event = pyqtSignal(dict)      # 引擎事件（无 id 的推送：message_update / tool_* / extension_ui_request …）
     response = pyqtSignal(dict)   # 命令响应（{"id","type":"response","command","success",...}）
     crashed = pyqtSignal(int)     # 引擎进程退出（退出码）
+    protocol_error = pyqtSignal(str)  # 脱敏的 stdout 协议错误元数据
+    diagnostic = pyqtSignal(str)      # 脱敏的 stderr/transport 诊断元数据
 
     def __init__(self, engine: Path | None = None, mock: bool | None = None,
-                 ext: Path | None = DEFAULT_EXT, home: Path | None = None, parent=None):
+                 ext: Path | None = DEFAULT_EXT, home: Path | None = None, parent=None,
+                 request_timeout_s: float = 5.0, shutdown_timeout_s: float = 0.5):
         super().__init__(parent)
         if mock is None:
             mock = os.environ.get("HAOCHEN_MOCK") == "1"
@@ -88,32 +94,65 @@ class EngineClient(QObject):
         self._home = Path(home) if home else haochen_home()
         self._proc: subprocess.Popen | None = None
         self._reader: threading.Thread | None = None
+        self._stderr_reader: threading.Thread | None = None
         self._write_lock = threading.Lock()
+        self._pending_lock = threading.Lock()
+        self._diagnostic_lock = threading.Lock()
+        self._pending_requests: dict[str, tuple[str, threading.Timer]] = {}
+        self._request_timeout_s = request_timeout_s
+        self._shutdown_timeout_s = shutdown_timeout_s
+        self._stopped = threading.Event()
+        self._stopped.set()
 
     # ── 生命周期 ─────────────────────────────────────────────
 
     def start(self) -> None:
-        if self._proc:
+        if self._proc is not None and self._proc.poll() is None:
             return
+        self._proc = None
+        ensure_private_directory(self._home)
+        ensure_private_directory(self._home / "logs")
         if self._mock:
             argv = [sys.executable, str(self._engine)]
             env, cwd = dict(os.environ), PROJECT_ROOT / "mock-engine"
         else:
             argv, env, cwd = spawn_argv(self._engine, self._ext, self._home)
-        self._proc = subprocess.Popen(
-            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env, cwd=str(cwd), umask=0o077)
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=env,
+            cwd=str(cwd),
+            umask=0o077,
+            start_new_session=True,
+        )
+        self._proc = proc
+        self._stopped.clear()
+        self._reader = threading.Thread(target=self._read_loop, args=(proc,), daemon=True)
+        self._stderr_reader = threading.Thread(target=self._stderr_loop, args=(proc,), daemon=True)
         self._reader.start()
+        self._stderr_reader.start()
 
     def stop(self) -> None:
+        """Begin shutdown and return immediately; a non-daemon reaper guarantees cleanup."""
         proc, self._proc = self._proc, None
-        if proc:
-            try:
-                proc.terminate()
-                proc.wait(timeout=3)
-            except Exception:
-                proc.kill()
+        self._fail_all_pending("engine_stopped", "engine stopped")
+        if proc is None:
+            self._stopped.set()
+            return
+        reader, stderr_reader = self._reader, self._stderr_reader
+        reaper = threading.Thread(
+            target=self._shutdown_process,
+            args=(proc, reader, stderr_reader),
+            name="haochen-engine-reaper",
+            daemon=False,
+        )
+        reaper.start()
 
     @property
     def alive(self) -> bool:
@@ -124,25 +163,126 @@ class EngineClient(QObject):
         """Isolated application data root used by this client."""
         return self._home
 
-    def _read_loop(self) -> None:
-        proc = self._proc
-        assert proc and proc.stdout
-        for line in proc.stdout:
-            line = line.strip()
+    def _read_loop(self, proc: subprocess.Popen) -> None:
+        assert proc.stdout
+        for raw_line in proc.stdout:
+            line = raw_line.strip()
             if not line:
                 continue
             try:
                 msg = json.loads(line)
             except json.JSONDecodeError:
+                metadata = self._record_diagnostic("stdout-invalid-json", raw_line)
+                self.protocol_error.emit(metadata)
+                continue
+            if not isinstance(msg, dict):
+                metadata = self._record_diagnostic("stdout-non-object", raw_line)
+                self.protocol_error.emit(metadata)
                 continue
             if msg.get("type") == "response":
+                self._complete_request(str(msg.get("id", "")))
                 self.response.emit(msg)
             else:
                 self.event.emit(msg)
         code = proc.wait()
         if self._proc is proc:      # stop() 主动关的不算崩溃
             self._proc = None
+            self._fail_all_pending("engine_exited", f"engine exited with code {code}")
+            self._stopped.set()
             self.crashed.emit(code)
+
+    def _stderr_loop(self, proc: subprocess.Popen) -> None:
+        assert proc.stderr
+        for line in proc.stderr:
+            if line.strip():
+                self.diagnostic.emit(self._record_diagnostic("stderr", line))
+
+    def _record_diagnostic(self, source: str, content: str) -> str:
+        encoded = content.encode("utf-8", errors="replace")
+        metadata = f"{source} bytes={len(encoded)} sha256={hashlib.sha256(encoded).hexdigest()[:16]}"
+        log_path = self._home / "logs" / "engine.log"
+        with self._diagnostic_lock:
+            ensure_private_directory(log_path.parent)
+            if log_path.exists() and log_path.stat().st_size >= 1_000_000:
+                rotated = log_path.with_suffix(".log.1")
+                rotated.unlink(missing_ok=True)
+                log_path.replace(rotated)
+                rotated.chmod(0o600)
+            with open(  # noqa: PTH123 - opener is required to enforce 0600 at creation
+                log_path,
+                "a",
+                encoding="utf-8",
+                opener=lambda path, flags: os.open(path, flags, 0o600),
+            ) as handle:
+                handle.write(metadata + "\n")
+            ensure_private_file(log_path)
+        return metadata
+
+    @staticmethod
+    def _signal_group(proc: subprocess.Popen, sig: signal.Signals) -> None:
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            try:
+                proc.send_signal(sig)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _group_exists(group_id: int) -> bool:
+        try:
+            os.killpg(group_id, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def _shutdown_process(
+        self,
+        proc: subprocess.Popen,
+        reader: threading.Thread | None,
+        stderr_reader: threading.Thread | None,
+    ) -> None:
+        try:
+            if proc.stdin:
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
+            self._signal_group(proc, signal.SIGTERM)
+            try:
+                proc.wait(timeout=self._shutdown_timeout_s)
+            except subprocess.TimeoutExpired:
+                self._signal_group(proc, signal.SIGKILL)
+                proc.wait(timeout=2)
+            # The engine may have spawned helpers that outlive the group leader.
+            deadline = time.monotonic() + self._shutdown_timeout_s
+            while self._group_exists(proc.pid) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            if self._group_exists(proc.pid):
+                self._signal_group(proc, signal.SIGKILL)
+        finally:
+            for stream in (proc.stdout, proc.stderr):
+                if stream:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+            current = threading.current_thread()
+            for thread in (reader, stderr_reader):
+                if thread and thread is not current:
+                    thread.join(timeout=0.2)
+            self._stopped.set()
+
+    def wait_stopped(self, timeout: float | None = None) -> bool:
+        """Wait for background cleanup in tests/CLI shutdown; never call from the Qt UI thread."""
+        return self._stopped.wait(timeout)
+
+    @property
+    def pending_request_count(self) -> int:
+        with self._pending_lock:
+            return len(self._pending_requests)
 
     # ── 命令（契约 §2）────────────────────────────────────────
 
@@ -150,11 +290,53 @@ class EngineClient(QObject):
         if not self.alive:
             raise RuntimeError("engine not running")
         msg.setdefault("id", uuid.uuid4().hex[:12])
-        with self._write_lock:
-            assert self._proc and self._proc.stdin
-            self._proc.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
-            self._proc.stdin.flush()
-        return msg["id"]
+        request_id = str(msg["id"])
+        command = str(msg.get("type", "unknown"))
+        timer = threading.Timer(self._request_timeout_s, self._request_timed_out, args=(request_id,))
+        timer.daemon = True
+        with self._pending_lock:
+            self._pending_requests[request_id] = (command, timer)
+        timer.start()
+        try:
+            with self._write_lock:
+                assert self._proc and self._proc.stdin
+                self._proc.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                self._proc.stdin.flush()
+        except (OSError, ValueError) as exc:
+            self._settle_request(request_id, "write_failed", str(exc))
+            raise RuntimeError("failed to write to engine") from exc
+        return request_id
+
+    def _complete_request(self, request_id: str) -> None:
+        with self._pending_lock:
+            pending = self._pending_requests.pop(request_id, None)
+        if pending:
+            pending[1].cancel()
+
+    def _settle_request(self, request_id: str, error_code: str, error: str) -> None:
+        with self._pending_lock:
+            pending = self._pending_requests.pop(request_id, None)
+        if not pending:
+            return
+        command, timer = pending
+        timer.cancel()
+        self.response.emit({
+            "id": request_id,
+            "type": "response",
+            "command": command,
+            "success": False,
+            "errorCode": error_code,
+            "error": error,
+        })
+
+    def _request_timed_out(self, request_id: str) -> None:
+        self._settle_request(request_id, "timeout", "engine request timed out")
+
+    def _fail_all_pending(self, error_code: str, error: str) -> None:
+        with self._pending_lock:
+            request_ids = list(self._pending_requests)
+        for request_id in request_ids:
+            self._settle_request(request_id, error_code, error)
 
     def prompt(self, message: str) -> str:
         return self._send({"type": "prompt", "message": message})
