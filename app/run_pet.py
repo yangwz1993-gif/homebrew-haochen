@@ -14,9 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # app/ 上 sys.path
 
-from PyQt6.QtWidgets import QApplication
-
 from haochen_app.pet import PetApp
+from PyQt6.QtWidgets import QApplication
 
 
 def main() -> int:

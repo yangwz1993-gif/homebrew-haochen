@@ -3,7 +3,7 @@
 # 用法: bash tests/run_all_regressions.sh [--real]
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 APP="$ROOT/app"
 VENV="$APP/.venv/bin/python"
 REAL=0; [ "${1:-}" = "--real" ] && REAL=1

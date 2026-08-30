@@ -12,10 +12,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from PyQt6.QtWidgets import QApplication
-
 from haochen_app.chat import ChatWindow
 from haochen_app.chat.theme import app_stylesheet
+from PyQt6.QtWidgets import QApplication
 
 
 def main() -> int:

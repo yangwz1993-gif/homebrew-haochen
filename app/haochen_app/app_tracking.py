@@ -12,8 +12,8 @@ v0.1.8 另管一个 sidecar：last-user-text.txt —— pet/chat 发送时把用
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 from pathlib import Path
 
 log = logging.getLogger("haochen.apptrack")

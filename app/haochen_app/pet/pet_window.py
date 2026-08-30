@@ -12,16 +12,15 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from pathlib import Path
 
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QPixmap
 from PyQt6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLabel, QMenu, QVBoxLayout, QWidget
 
-from .theme import ANIM_POSE_MS
 from .. import paths
 from ..engine_client import haochen_home
+from .theme import ANIM_POSE_MS
 
 log = logging.getLogger("haochen.pet.window")
 

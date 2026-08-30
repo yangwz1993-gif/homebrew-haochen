@@ -1,0 +1,15 @@
+cask "haochen" do
+  version "@VERSION@"
+  sha256 "@SHA256@"
+
+  url "https://github.com/yangwz1993-gif/homebrew-haochen/releases/download/v#{version}/haochen-#{version}.dmg"
+  name "haochen"
+  desc "桌面 AI 伙伴（读屏/看图/聊天的桌宠）"
+  homepage "https://github.com/yangwz1993-gif/homebrew-haochen"
+
+  app "haochen.app"
+
+  zap trash: [
+    "~/Library/Application Support/haochen"
+  ]
+end

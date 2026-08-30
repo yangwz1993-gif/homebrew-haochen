@@ -27,8 +27,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from haochen_app.engine_client import haochen_home
 from haochen_app import paths
+from haochen_app.engine_client import haochen_home
 
 TEMPLATE_DIR = paths.config_templates()
 

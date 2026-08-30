@@ -1,0 +1,81 @@
+[project]
+name = "haochen"
+version = "0.2.0.dev1"
+description = "haochen macOS desktop agent"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "pillow>=12.0,<13",
+  "pyobjc-core>=12.0,<13",
+  "pyobjc-framework-ApplicationServices>=12.0,<13",
+  "pyobjc-framework-Cocoa>=12.0,<13",
+  "pyobjc-framework-CoreText>=12.0,<13",
+  "pyobjc-framework-Quartz>=12.0,<13",
+  "PyQt6>=6.10,<6.12",
+]
+
+[dependency-groups]
+dev = [
+  "pyinstaller>=6.18,<7",
+  "pyright>=1.1.400,<2",
+  "pytest>=9,<10",
+  "pytest-cov>=7,<8",
+  "pytest-qt>=4.5,<5",
+  "ruff>=0.14,<1",
+  "shellcheck-py>=0.10.0.1,<0.11",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [
+  "pi-source",
+  "packaging/spike",
+  "**/verification",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/run_*.py" = ["E402"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+# PyQt/PyObjC expose dynamic APIs that pyright cannot model reliably. Start with
+# deterministic infrastructure modules; newly refactored core modules are added
+# to this allowlist as typed boundaries are introduced.
+include = [
+  "scripts",
+  "app/haochen_app/version.py",
+  "tests",
+]
+exclude = [
+  "**/verification",
+  "pi-source",
+  "packaging/spike",
+]
+venvPath = "app"
+venv = ".venv"
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+qt_api = "pyqt6"
+
+[tool.coverage.run]
+branch = true
+source = ["app/haochen_app", "app/reader"]
+omit = ["**/verification/**"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]

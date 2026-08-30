@@ -205,7 +205,7 @@ class AppShell:
             return  # 自动化/无头测试
         from PyQt6.QtCore import QTimer
 
-        from .permissions import accessibility_granted, ensure_permissions, screen_recording_granted
+        from .permissions import accessibility_granted, screen_recording_granted
         ax = accessibility_granted()
         sr = screen_recording_granted()
         log.info("permissions at startup: accessibility=%s screen_recording=%s", ax, sr)

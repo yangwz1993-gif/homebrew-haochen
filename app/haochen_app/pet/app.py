@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 from ..app_tracking import write_last_user_text

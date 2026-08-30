@@ -10,9 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from PyQt6.QtWidgets import QApplication
-
 from haochen_app.settings import SettingsWindow
+from PyQt6.QtWidgets import QApplication
 
 
 def main() -> int:

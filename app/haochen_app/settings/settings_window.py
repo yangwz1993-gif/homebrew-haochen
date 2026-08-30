@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .config_store import (
     EFFECT_IMMEDIATE,
     EFFECT_LABEL,
@@ -41,7 +42,6 @@ from .config_store import (
     ConfigStore,
     is_indirect_reference,
 )
-from . import theme
 
 _THINKING_LABELS = {
     "off": "关闭", "minimal": "极简", "low": "低", "medium": "中",
@@ -299,7 +299,7 @@ class SettingsWindow(QWidget):
 
     def _signature_card(self) -> QFrame:
         """P8：签名与授权（一键修复）+ 权限状态。"""
-        from ..app_signing_repair import is_stable_signed, app_bundle
+        from ..app_signing_repair import app_bundle, is_stable_signed
 
         card, lay = _card("签名与权限", "用稳定签名后，辅助功能/屏幕录制授权跨构建持久（无需密码一键完成）。")
         stable = bool(app_bundle() is not None and is_stable_signed())
@@ -317,7 +317,6 @@ class SettingsWindow(QWidget):
         from PyQt6.QtWidgets import QApplication
 
         # 触发壳层签名修复（经 app_shell 或独立调用 repair + quit）
-        from ..app_shell import AppShell
         # 复用当前运行中的 shell（若已被某处持有）；否则独立修
         shell = getattr(QApplication.instance(), "_haochen_shell", None)
         if shell is not None:

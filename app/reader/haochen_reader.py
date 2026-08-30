@@ -36,6 +36,7 @@ from ApplicationServices import (
     AXUIElementSetAttributeValue,
     AXUIElementSetMessagingTimeout,
 )
+from CoreFoundation import CFDataCreateMutable, CFDataGetBytes, CFDataGetLength, CFRangeMake
 from Quartz import (
     CGEventCreate,
     CGEventCreateScrollWheelEvent,
@@ -45,10 +46,10 @@ from Quartz import (
     CGImageDestinationCreateWithData,
     CGImageDestinationFinalize,
     CGPreflightScreenCaptureAccess,
+    CGRectNull,
+    CGWarpMouseCursorPosition,
     CGWindowListCopyWindowInfo,
     CGWindowListCreateImage,
-    CGWarpMouseCursorPosition,
-    CGRectNull,
     kCGHIDEventTap,
     kCGScrollEventUnitLine,
     kCGWindowImageBoundsIgnoreFraming,
@@ -56,7 +57,6 @@ from Quartz import (
     kCGWindowListOptionIncludingWindow,
     kCGWindowListOptionOnScreenOnly,
 )
-from CoreFoundation import CFDataCreateMutable, CFDataGetBytes, CFDataGetLength, CFRangeMake
 
 TEXT_VALUE_ROLES = {"AXStaticText", "AXTextArea", "AXTextField", "AXHeading"}
 TITLE_ROLES = {"AXButton", "AXLink", "AXCheckBox", "AXRadioButton", "AXTab", "AXCell"}
@@ -417,7 +417,7 @@ def _download_as_data_url(url: str) -> str | None:
         return None
 
 
-def prepare_images(content: WindowContent, max_images: int = MAX_IMAGES) -> dict[int, "str | None"]:
+def prepare_images(content: WindowContent, max_images: int = MAX_IMAGES) -> dict[int, str | None]:
     """并发下载窗口内容中的图片，返回 {block_index: data_url 或 None}。
 
     按可见尺寸/面积**从大到小**排序（大而显眼的人物图优先下载，让识人拿到最相关原图）。

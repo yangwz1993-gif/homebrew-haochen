@@ -5,11 +5,16 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QPushButton,
-    QVBoxLayout, QWidget,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
 
-from .theme import BORDER, C, FONT, RADIUS_BTN, RADIUS_CARD, button_solid
+from .theme import BORDER, FONT, RADIUS_BTN, C, button_solid
 
 
 class SessionSidebar(QWidget):

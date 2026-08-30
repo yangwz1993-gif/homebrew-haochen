@@ -33,12 +33,14 @@ _ANSWER_PAIR = re.compile(r"(?:【answer】|==answer==)\s*(.*?)\s*(?:【/answer�
 _SUMMARY_PAIR = re.compile(r"(?:【summary】|==summary==)\s*(.*?)\s*(?:【/summary】|==/summary==)", re.S)
 _ANY_TAG = re.compile(r"【/?(?:answer|summary)】|==/?(?:answer|summary)==")
 
-SUMMARY_KICK_TEMPLATE = """haochen-summary-phase
-下面是详答。请只输出短结：严格【summary】…【/summary】；篇幅 80～160 字；结构=1 句结论 + 最多 2～3 要点；禁止元评论/括号旁白/大段引用；不要工具、不要再写 answer。
-
-【answer】
-{answer}
-【/answer】"""
+SUMMARY_KICK_TEMPLATE = (
+    "haochen-summary-phase\n"
+    "下面是详答。请只输出短结：严格【summary】…【/summary】；篇幅 80～160 字；"
+    "结构=1 句结论 + 最多 2～3 要点；禁止元评论/括号旁白/大段引用；不要工具、不要再写 answer。\n\n"
+    "【answer】\n"
+    "{answer}\n"
+    "【/answer】"
+)
 
 
 def strip_tags(text: str) -> str:
@@ -185,7 +187,9 @@ class ConversationController(QObject):
 
 if __name__ == "__main__":
     import sys
+
     from PyQt6.QtCore import QCoreApplication, QTimer
+
     from .engine_client import EngineClient
 
     app = QCoreApplication(sys.argv)

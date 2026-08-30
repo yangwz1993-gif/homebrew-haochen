@@ -15,7 +15,6 @@
 
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "$DIR/.." && pwd)"
 IDENTITY="haochen Local Signing"
 KEYCHAIN="$HOME/Library/Keychains/haochen-signing.keychain-db"
 KC_PW_FILE="$DIR/signing.keychain-pw"

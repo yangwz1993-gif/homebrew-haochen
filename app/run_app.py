@@ -17,9 +17,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # app/ 上 sys.path
 
-from PyQt6.QtWidgets import QApplication
-
 from haochen_app.app_shell import AppShell
+from haochen_app.version import __version__
+from PyQt6.QtWidgets import QApplication
 
 
 def _setup_file_logging() -> None:
@@ -42,6 +42,7 @@ def main() -> int:
     log = logging.getLogger("haochen.main")
     app = QApplication(sys.argv)
     app.setApplicationName("haochen")
+    app.setApplicationVersion(__version__)
     app.setQuitOnLastWindowClosed(False)  # 桌宠常驻：关窗不退出
 
     from haochen_app import paths

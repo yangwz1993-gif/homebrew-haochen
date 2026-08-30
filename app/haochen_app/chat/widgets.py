@@ -8,15 +8,27 @@ from __future__ import annotations
 import re
 
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QPropertyAnimation, Qt, QTimer, pyqtSignal,
+    QEasingCurve,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+    pyqtSignal,
 )
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton,
-    QSizePolicy, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
+    QFrame,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QTextBrowser,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
-from .theme import ANIM_FADE_MS, BORDER, C, FONT, RADIUS_BTN, RADIUS_CARD, button_outline
+from .theme import ANIM_FADE_MS, BORDER, FONT, RADIUS_BTN, RADIUS_CARD, C, button_outline
 
 # 两步协议标记（流式渲染时做部分标记抑制，与 conversation.py 的冻结标记一致）
 _KNOWN_TAGS = ("【answer】", "【/answer】", "【summary】", "【/summary】")

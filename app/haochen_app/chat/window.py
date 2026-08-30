@@ -18,17 +18,27 @@ import os
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QApplication, QHBoxLayout, QPlainTextEdit, QPushButton, QScrollArea,
-    QVBoxLayout, QWidget,
+    QApplication,
+    QHBoxLayout,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..app_tracking import write_last_user_text
 from ..conversation import SUMMARY_KICK_PREFIX, ConversationController, parse_paired, strip_tags
-from ..engine_client import EngineClient, delete_session, haochen_home, list_sessions
+from ..engine_client import EngineClient, delete_session, haochen_home
 from .sidebar import SessionSidebar
-from .theme import C, FONT, RADIUS_INPUT, button_solid
+from .theme import FONT, RADIUS_INPUT, C, button_solid
 from .widgets import (
-    AssistantBubble, BubbleRow, ConfirmBar, ErrorBanner, StatusBubble, ToolCard,
+    AssistantBubble,
+    BubbleRow,
+    ConfirmBar,
+    ErrorBanner,
+    StatusBubble,
+    ToolCard,
     UserBubble,
 )
 
@@ -531,7 +541,6 @@ class ChatWindow(QWidget):
             return
         rid, row = self._confirm
         self._confirm = None
-        bar = row.content
         if confirmed is None:
             self.client.respond_ui(rid, cancelled=True)
             note, kind = "已取消读屏", "notice"

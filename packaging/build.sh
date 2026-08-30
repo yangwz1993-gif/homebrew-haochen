@@ -14,15 +14,23 @@ ROOT="$(cd "$DIR/.." && pwd)"                # 仓库根
 APP_DIR="$ROOT/app"
 VENV="$APP_DIR/.venv"
 APP_NAME="haochen"
-# 版本：默认 0.1.10；可用 HAOCHEN_VERSION 覆盖（dmg 名与 Info.plist 版本需一致，勿手改其一）
-VERSION="${HAOCHEN_VERSION:-0.1.10}"
+VERSION_FILE="$ROOT/VERSION"
+ENGINE_MANIFEST="$ROOT/engine/package.json"
+VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+MARKETING_VERSION="${VERSION%%-*}"
+BUNDLE_BUILD="${HAOCHEN_BUILD_NUMBER:-$(printf '%s' "$VERSION" | sed -nE 's/.*\.(\d+)$/\1/p')}"
+BUNDLE_BUILD="${BUNDLE_BUILD:-0}"
 DIST="$DIR/dist"
 STAGE="$DIST/stage"
 
-echo "==> [1/6] 构建环境（复用 app/.venv，装 pyinstaller）"
+echo "==> [1/6] 验证锁定的构建环境与版本元数据"
 UV="${UV:-$HOME/.local/bin/uv}"
-"$UV" pip install --python "$VENV/bin/python" pyinstaller >/dev/null
+export UV_PROJECT_ENVIRONMENT="$VENV"
+"$UV" sync --frozen >/dev/null
+"$VENV/bin/python" "$ROOT/scripts/version.py" check
 PYI="$VENV/bin/pyinstaller"
+test -x "$PYI"
+test -f "$ENGINE_MANIFEST"
 
 echo "==> [2/6] 冻结读屏执行体 haochen-reader（onefile）"
 "$PYI" --noconfirm --clean --onefile \
@@ -64,6 +72,7 @@ echo "==> [4/6] PyInstaller onedir 直出 haochen.app"
     --add-data "$APP_DIR/assets:assets" \
     --add-data "$ROOT/config:config" \
     --add-data "$APP_DIR/ext:ext" \
+    --add-data "$VERSION_FILE:." \
     --distpath "$DIST" --workpath "$DIR/build/app" --specpath "$DIR/build" \
     "$APP_DIR/run_app.py"
 
@@ -74,6 +83,7 @@ echo "==> [4/6] 内嵌引擎 + 读屏执行体 → Contents/Resources/"
 mkdir -p "$APP/Contents/Resources/engine"
 cp "$ROOT/engine/haochen-engine" "$APP/Contents/Resources/engine/haochen-engine"
 chmod +x "$APP/Contents/Resources/engine/haochen-engine"
+cp "$ENGINE_MANIFEST" "$APP/Contents/Resources/engine/package.json"
 cp "$DIST/reader/haochen-reader" "$APP/Contents/Resources/haochen-reader"
 chmod +x "$APP/Contents/Resources/haochen-reader"
 
@@ -81,8 +91,10 @@ echo "==> [5/6] Info.plist（LSUIElement / 版本 / 图标）+ 签名"
 PLIST="$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Delete :LSUIElement" "$PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$PLIST"
-/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$PLIST" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $MARKETING_VERSION" "$PLIST" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUNDLE_BUILD" "$PLIST" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_BUILD" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string haochen" "$PLIST" 2>/dev/null || true
 
 # 签名：默认用「自签受信任」稳定身份（DR 固定→授权跨构建持久）；无稳定身份才回落 ad-hoc。

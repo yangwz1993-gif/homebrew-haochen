@@ -5,8 +5,15 @@
 set -euo pipefail
 
 ENGINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PI_SOURCE="$ENGINE_DIR/../pi-source"
+ROOT="$(cd "$ENGINE_DIR/.." && pwd)"
+PI_SOURCE="$ROOT/pi-source"
 CODING_AGENT="$PI_SOURCE/packages/coding-agent"
+VERSION_FILE="$ROOT/VERSION"
+ENGINE_MANIFEST="$ENGINE_DIR/package.json"
+
+python3 "$ROOT/scripts/version.py" check
+test -s "$VERSION_FILE"
+test -s "$ENGINE_MANIFEST"
 
 export PATH="$HOME/homebrew/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
@@ -17,8 +24,8 @@ fi
 echo "==> bun $(bun --version)"
 
 if [ ! -d "$PI_SOURCE/node_modules" ]; then
-    echo "==> 安装 pi-source 依赖 (npm install --ignore-scripts)..."
-    (cd "$PI_SOURCE" && npm install --ignore-scripts)
+    echo "==> 安装 pi-source 锁定依赖 (npm ci --ignore-scripts)..."
+    (cd "$PI_SOURCE" && npm ci --ignore-scripts)
 fi
 
 # 模型数据（packages/ai/src/providers/data/*.json + *.models.ts + models.generated.ts）
