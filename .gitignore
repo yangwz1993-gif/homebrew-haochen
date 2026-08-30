@@ -1,0 +1,48 @@
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+.python/
+
+# Node / Bun
+node_modules/
+*.tsbuildinfo
+
+# Build and release outputs
+build/
+dist/
+*.spec
+*.app
+*.dmg
+engine/haochen-engine
+
+# Runtime data and logs
+*.log
+*.pid
+.dev-loop-done
+
+# Secrets and signing material
+.env
+.env.*
+!.env.example
+auth.json
+!auth.json.template
+*.pem
+*.p12
+*.key
+*.keychain-pw
+packaging/signing-*
+
+# Local test artifacts
+verification/*.tmp

@@ -1,0 +1,6 @@
+{
+  "deepseek": {
+    "type": "api_key",
+    "key": "sk-在此填入你的-DeepSeek-Key"
+  }
+}

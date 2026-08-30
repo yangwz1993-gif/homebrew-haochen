@@ -1,0 +1,83 @@
+
+===== 初始（模板初始化后） =====
+--- settings.json ---
+{
+  "defaultProvider": "deepseek",
+  "defaultModel": "deepseek-v4-flash-vision-exp",
+  "defaultThinkingLevel": "high",
+  "theme": "dark",
+  "enableInstallTelemetry": false,
+  "enableAnalytics": false,
+  "quietStartup": true
+}
+
+--- auth.json ---
+{
+  "deepseek": {
+    "type": "api_key",
+    "key": "sk-在此填入你的-DeepSeek-Key"
+  }
+}
+
+
+===== 填写 deepseek key 后 =====
+--- settings.json ---
+{
+  "defaultProvider": "deepseek",
+  "defaultModel": "deepseek-v4-flash-vision-exp",
+  "defaultThinkingLevel": "high",
+  "theme": "dark",
+  "enableInstallTelemetry": false,
+  "enableAnalytics": false,
+  "quietStartup": true
+}
+
+--- auth.json ---
+{
+  "deepseek": {
+    "type": "api_key",
+    "key": "sk-screenshot-test-key"
+  }
+}
+
+
+===== 切换默认模型为 deepseek-v4-pro 后 =====
+--- settings.json ---
+{
+  "defaultProvider": "deepseek",
+  "defaultModel": "deepseek-v4-pro",
+  "defaultThinkingLevel": "high",
+  "theme": "dark",
+  "enableInstallTelemetry": false,
+  "enableAnalytics": false,
+  "quietStartup": true
+}
+
+--- auth.json ---
+{
+  "deepseek": {
+    "type": "api_key",
+    "key": "sk-screenshot-test-key"
+  }
+}
+
+
+===== 思考档改为 medium 后 =====
+--- settings.json ---
+{
+  "defaultProvider": "deepseek",
+  "defaultModel": "deepseek-v4-pro",
+  "defaultThinkingLevel": "medium",
+  "theme": "dark",
+  "enableInstallTelemetry": false,
+  "enableAnalytics": false,
+  "quietStartup": true
+}
+
+--- auth.json ---
+{
+  "deepseek": {
+    "type": "api_key",
+    "key": "sk-screenshot-test-key-v2"
+  }
+}

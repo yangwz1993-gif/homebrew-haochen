@@ -1,0 +1,48 @@
+[PASS] 普通对话: prompt 受理成功
+[PASS] 普通对话: agent_start 开头 — ['agent_start', 'turn_start', 'message_start']
+[PASS] 普通对话: 含 turn_start/turn_end
+[PASS] 普通对话: 含 message_start/message_end
+[PASS] 普通对话: 有流式 message_update
+[PASS] 普通对话: answer 含【answer】标记
+[PASS] 普通对话: agent_end.willRetry=false
+[PASS] summary 回合: prompt 受理成功
+[PASS] summary 回合: agent_start 开头 — ['agent_start', 'turn_start', 'message_start']
+[PASS] summary 回合: 含 turn_start/turn_end
+[PASS] summary 回合: 含 message_start/message_end
+[PASS] summary 回合: 有流式 message_update
+[PASS] summary 回合: agent_end.willRetry=false
+[PASS] summary 回合: 含【summary】标记 — 【summary】
+结论：mock 引擎按契约完成两步输出。要点：answer 回合携带【answer】标记；本回合由壳
+[PASS] 读屏: prompt 受理成功
+[PASS] 读屏: tool_execution_start(read_screen)
+[PASS] 读屏: confirm 标题/文案符合契约
+[PASS] 读屏: 授权后工具成功（isError=false）
+[PASS] 读屏: 工具结果含屏幕文本
+[PASS] 读屏: agent_start 开头
+[PASS] 读屏: agent_end.willRetry=false
+[PASS] 读屏: answer 含【answer】标记
+[PASS] 读屏后 summary 回合: prompt 受理成功
+[PASS] 读屏后 summary 回合: agent_start 开头 — ['agent_start', 'turn_start', 'message_start']
+[PASS] 读屏后 summary 回合: 含 turn_start/turn_end
+[PASS] 读屏后 summary 回合: 含 message_start/message_end
+[PASS] 读屏后 summary 回合: 有流式 message_update
+[PASS] 读屏后 summary 回合: agent_end.willRetry=false
+[PASS] 读屏后 summary: 含【summary】标记
+[PASS] 错误: assistant stopReason=error + errorMessage — mock 引擎注入的错误：模型服务不可用（演示错误路径）。
+[PASS] 错误: agent_end 正常收尾
+[PASS] 会话: get_state 返回 sessionFile/sessionId
+[PASS] 会话: new_session 成功
+[PASS] 第二会话对话: prompt 受理成功
+[PASS] 第二会话对话: agent_start 开头 — ['agent_start', 'turn_start', 'message_start']
+[PASS] 第二会话对话: 含 turn_start/turn_end
+[PASS] 第二会话对话: 含 message_start/message_end
+[PASS] 第二会话对话: 有流式 message_update
+[PASS] 第二会话对话: answer 含【answer】标记
+[PASS] 第二会话对话: agent_end.willRetry=false
+[PASS] 会话: get_messages 返回本会话历史 — 2 条
+[PASS] 会话: set_session_name 成功
+[PASS] 会话: switch_session 切回成功
+[PASS] 会话: switch 不存在的会话报错
+[PASS] 未知命令: success=false + error
+
+==== 45/45 通过 ====

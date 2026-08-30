@@ -1,0 +1,9 @@
+{
+  "defaultProvider": "deepseek",
+  "defaultModel": "deepseek-v4-flash-vision-exp",
+  "defaultThinkingLevel": "high",
+  "theme": "dark",
+  "enableInstallTelemetry": false,
+  "enableAnalytics": false,
+  "quietStartup": true
+}
