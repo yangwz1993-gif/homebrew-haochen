@@ -19,14 +19,18 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
+import ipaddress
 import json
 import os
+import socket
 import sys
 import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
 import AppKit
 from ApplicationServices import (
@@ -404,16 +408,76 @@ def _validate_image(data: bytes) -> str | None:
             "WEBP": "image/webp"}.get(fmt)
 
 
+MAX_REMOTE_IMAGE_BYTES = 4 * 1024 * 1024
+_ALLOWED_REMOTE_IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
+def _validate_remote_image_url(url: str) -> str:
+    """Allow public HTTPS image URLs only; reject local and ambiguous destinations."""
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise ValueError("remote images require an HTTPS URL")
+    if parsed.username is not None or parsed.password is not None or parsed.fragment:
+        raise ValueError("credentials and fragments are not allowed in remote image URLs")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("invalid remote image port") from exc
+    if port not in (None, 443):
+        raise ValueError("remote images must use HTTPS port 443")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
+        raise ValueError("local hostnames are not allowed")
+    try:
+        addresses = socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError("remote image hostname could not be resolved") from exc
+    if not addresses:
+        raise ValueError("remote image hostname has no addresses")
+    for address in addresses:
+        ip = ipaddress.ip_address(address[4][0].split("%", 1)[0])
+        if not ip.is_global:
+            raise ValueError(f"remote image resolved to a non-public address: {ip}")
+    return url
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Apply the same network boundary to every redirect hop."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = _validate_remote_image_url(urljoin(req.full_url if req is not None else "", newurl))
+        return super().redirect_request(req, fp, code, msg, headers, target)
+
+
+def _secure_urlopen(url: str):
+    validated = _validate_remote_image_url(url)
+    request = urllib.request.Request(validated, headers={"User-Agent": "haochen-reader/2.0"})
+    opener = urllib.request.build_opener(_SafeRedirectHandler())
+    return opener.open(request, timeout=IMG_TIMEOUT)
+
+
 def _download_as_data_url(url: str) -> str | None:
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "haochen-reader/1.0"})
-        with urllib.request.urlopen(req, timeout=IMG_TIMEOUT) as resp:
-            data = resp.read(8 * 1024 * 1024)
+        with _secure_urlopen(url) as resp:
+            content_type = resp.headers.get_content_type().lower()
+            if content_type not in _ALLOWED_REMOTE_IMAGE_MIMES:
+                return None
+            declared_size = resp.headers.get("Content-Length")
+            if declared_size is not None:
+                try:
+                    declared_bytes = int(declared_size)
+                    if declared_bytes < 0 or declared_bytes > MAX_REMOTE_IMAGE_BYTES:
+                        return None
+                except ValueError:
+                    return None
+            data = resp.read(MAX_REMOTE_IMAGE_BYTES + 1)
+            if len(data) > MAX_REMOTE_IMAGE_BYTES:
+                return None
             mime = _validate_image(data)
-            if not mime:
+            if not mime or mime != content_type:
                 return None
             return f"data:{mime};base64,{base64.b64encode(data).decode()}"
-    except Exception:
+    except (OSError, ValueError, urllib.error.URLError):
         return None
 
 
