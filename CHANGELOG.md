@@ -21,6 +21,9 @@
 - 远程图片仅允许解析到公网地址的 HTTPS/443，并在每次重定向时重新校验；拒绝本机、私网、link-local、非法 MIME 和超限响应。
 - 用户提问不再写入 `last-user-text.txt`，仅以 0600 文件保存派生的看图意图 boolean，并自动删除旧版明文 sidecar。
 - 应用数据目录统一修复为 0700，认证、会话回收、日志与运行 sidecar 统一为 0600；引擎子进程使用 0077 umask。
+- 删除 App 内自签/重签与本地口令流程；release 构建强制 Developer ID、hardened runtime、timestamp、公证和 staple。
+- Homebrew Cask 不再移除 quarantine；开发版只能显式 ad-hoc 构建且禁止对外分发。
+- 清理旧工程遗留的明文模型凭据与 Keychain 口令文档，并加强 secret scan 规则。
 
 ## [0.2.0-dev.1] - 开发中
 - 从旧工程 `haochen_new` 的 0.1.10 源码建立干净基线。

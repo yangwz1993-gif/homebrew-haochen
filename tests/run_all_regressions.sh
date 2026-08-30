@@ -50,7 +50,7 @@ fi
 
 # L4
 run_name "L4 packaging build (dmg)"
-bash packaging/build.sh >/dev/null 2>&1
+HAOCHEN_BUILD_MODE=development bash packaging/build.sh >/dev/null 2>&1
 check "L4 packaging build (dmg)"
 
 echo

@@ -1,11 +1,9 @@
 #!/bin/bash
-# haochen P5 一键打包：读屏执行体 → PyInstaller .app → 资源内嵌 → LSUIElement → 稳定身份签名 → dmg
+# haochen reproducible macOS package pipeline.
 #
-# 用法: bash packaging/build.sh
-# 产物: packaging/dist/haochen.app + packaging/dist/haochen-<version>.dmg
-#
-# 依据：macos-app-dev-reference/MACOS_APP_DEV_REFERENCE.md §6/§7 + packaging/spike 结论。
-# 说明：默认用稳定身份 haochen Local Signing（DR 固定，授权跨构建持久）；找不到才回落 ad-hoc。
+# Release (default): Developer ID + hardened runtime + Apple notarization are mandatory.
+# Development: HAOCHEN_BUILD_MODE=development bash packaging/build.sh (ad-hoc, never distribute).
+# Output: packaging/dist/haochen.app + packaging/dist/haochen-<version>.dmg
 
 set -euo pipefail
 
@@ -18,9 +16,25 @@ VERSION_FILE="$ROOT/VERSION"
 ENGINE_MANIFEST="$ROOT/engine/package.json"
 VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
 MARKETING_VERSION="${VERSION%%-*}"
-BUNDLE_BUILD="${HAOCHEN_BUILD_NUMBER:-$(printf '%s' "$VERSION" | sed -nE 's/.*\.(\d+)$/\1/p')}"
+BUNDLE_BUILD="${HAOCHEN_BUILD_NUMBER:-$(printf '%s' "$VERSION" | sed -nE 's/.*\.([0-9]+)$/\1/p')}"
 BUNDLE_BUILD="${BUNDLE_BUILD:-0}"
+BUILD_MODE="${HAOCHEN_BUILD_MODE:-release}"
+SIGNING_IDENTITY="${HAOCHEN_SIGNING_IDENTITY:-}"
+NOTARY_PROFILE="${HAOCHEN_NOTARY_PROFILE:-}"
 DIST="$DIR/dist"
+
+case "$BUILD_MODE" in
+  development) SIGNING_IDENTITY="-" ;;
+  release)
+    : "${HAOCHEN_SIGNING_IDENTITY:?Release builds require a Developer ID Application identity from Keychain}"
+    : "${HAOCHEN_NOTARY_PROFILE:?Release builds require a notarytool Keychain profile}"
+    if [[ "$SIGNING_IDENTITY" != "Developer ID Application:"* ]]; then
+      echo "ERROR: HAOCHEN_SIGNING_IDENTITY must start with 'Developer ID Application:'" >&2
+      exit 1
+    fi
+    ;;
+  *) echo "ERROR: HAOCHEN_BUILD_MODE must be development or release" >&2; exit 1 ;;
+esac
 STAGE="$DIST/stage"
 
 echo "==> [1/6] 验证锁定的构建环境与版本元数据"
@@ -97,27 +111,36 @@ PLIST="$APP/Contents/Info.plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_BUILD" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string haochen" "$PLIST" 2>/dev/null || true
 
-# 签名：默认用「自签受信任」稳定身份（DR 固定→授权跨构建持久）；无稳定身份才回落 ad-hoc。
-# 用身份名 + --keychain 签名（-v 会过滤未受信自签证书，故用 find-certificate 探测而非 find-identity -v）；
-# set-key-partition-list 已授予 codesign 免密访问私钥；钥匙串可能自动锁定 → 用密码文件显式解锁。
-IDENTITY="haochen Local Signing"
-KEYCHAIN="$HOME/Library/Keychains/haochen-signing.keychain-db"
-KC_PW_FILE="$DIR/signing.keychain-pw"
-if [ -f "$KC_PW_FILE" ] && [ -f "$KEYCHAIN" ]; then
-    security unlock-keychain -p "$(cat "$KC_PW_FILE")" "$KEYCHAIN" 2>/dev/null || true
+SIGN_ARGS=(--force --sign "$SIGNING_IDENTITY")
+if [ -n "${HAOCHEN_KEYCHAIN:-}" ]; then
+    SIGN_ARGS+=(--keychain "$HAOCHEN_KEYCHAIN")
 fi
-ID_HASH="$(security find-certificate -c "$IDENTITY" -Z "$KEYCHAIN" 2>/dev/null \
-    | grep -oE 'SHA-1 hash: [0-9A-F]{40}' | head -1 | awk '{print $3}')"
-if [ -n "$ID_HASH" ]; then
-    echo "    签名：稳定身份 $IDENTITY ($ID_HASH) 【DR 固定，授权跨构建持久】"
-    codesign --force --deep --sign "$IDENTITY" --keychain "$KEYCHAIN" "$APP" >/dev/null
+if [ "$BUILD_MODE" = "release" ]; then
+    SIGN_ARGS+=(--options runtime --timestamp)
 else
-    echo "    签名：ad-hoc（未在钥匙串找到稳定身份。建议先在 App 内「一键修复签名权限」生成，避免反复授权）"
-    codesign --force --deep --sign - "$APP" >/dev/null
+    SIGN_ARGS+=(--timestamp=none)
 fi
-# 改完 plist/Resources 必须重签（spike 踩坑 2/3）；--deep 一并签引擎与读屏执行体
-codesign --verify --deep --strict "$APP"
-echo "    签名验证通过"
+
+sign_macho() {
+    local target="$1"
+    /usr/bin/codesign "${SIGN_ARGS[@]}" "$target" >/dev/null
+}
+
+# Sign nested Mach-O files from the inside out. The Bun engine needs narrowly
+# scoped JIT entitlements; the PyInstaller app itself does not receive them.
+while IFS= read -r -d '' binary; do
+    if /usr/bin/file "$binary" | grep -q 'Mach-O'; then
+        sign_macho "$binary"
+    fi
+done < <(find "$APP/Contents" -type f ! -path '*/Resources/engine/haochen-engine' -print0)
+/usr/bin/codesign "${SIGN_ARGS[@]}" --entitlements "$DIR/engine.entitlements" \
+    "$APP/Contents/Resources/engine/haochen-engine" >/dev/null
+/usr/bin/codesign "${SIGN_ARGS[@]}" --entitlements "$DIR/app.entitlements" "$APP" >/dev/null
+/usr/bin/codesign --verify --deep --strict "$APP"
+
+if [ "$BUILD_MODE" = "release" ]; then
+    HAOCHEN_NOTARY_PROFILE="$NOTARY_PROFILE" "$DIR/notarize.sh" app "$APP"
+fi
 
 echo "==> [6/6] dmg（含 Applications 拖装链接 + 像素小哥卷图标）"
 rm -rf "$STAGE" && mkdir -p "$STAGE"
@@ -129,9 +152,11 @@ cp "$ICNS" "$STAGE/.VolumeIcon.icns"
 DMG="$DIST/$APP_NAME-$VERSION.dmg"
 rm -f "$DMG"
 hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
-# 给包名补一个像素小哥图标（Finder 侧栏/桌面用），并验证 .app 与卷的图标都是像素小哥
-cp "$ICNS" "$STAGE/$APP_NAME.app/Contents/Resources/haochen.icns" 2>/dev/null || true
 test -f "$DMG"
+if [ "$BUILD_MODE" = "release" ]; then
+    /usr/bin/codesign "${SIGN_ARGS[@]}" "$DMG" >/dev/null
+    HAOCHEN_NOTARY_PROFILE="$NOTARY_PROFILE" "$DIR/notarize.sh" dmg "$DMG"
+fi
 
 echo ""
 echo "==> 构建完成："

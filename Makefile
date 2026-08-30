@@ -13,7 +13,7 @@ check:
 
 lint:
 	$(UV) run ruff check app scripts tests
-	$(UV) run shellcheck engine/build.sh packaging/build.sh packaging/setup-signing.sh tests/run_all_regressions.sh scripts/*.sh
+	$(UV) run shellcheck engine/build.sh packaging/build.sh packaging/notarize.sh tests/run_all_regressions.sh scripts/*.sh
 
 type:
 	$(UV) run pyright

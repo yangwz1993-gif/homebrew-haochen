@@ -213,55 +213,10 @@ class AppShell:
             QTimer.singleShot(1200, lambda: self._first_run_guide())
 
     def _first_run_guide(self) -> None:
-        """首启引导：若为 ad-hoc（未稳定签名）先引导一键修复；否则直接触发系统授权。"""
+        """Request system permissions; release signing is handled before distribution."""
         from .permissions import ensure_permissions
 
-        if self.signing_needs_fix():
-            from PyQt6.QtWidgets import QMessageBox
-
-            box = QMessageBox(self.settings)
-            box.setWindowTitle("haochen 签名与授权")
-            box.setText("当前 haochen 用临时签名，授权可能不持久（重新构建后需再授权）。")
-            box.setInformativeText(
-                "点「一键修复」：生成稳定签名并自动重签重开（无需密码），"
-                "之后授权一次即持久，重新构建/升级不再需授权。")
-            btn = box.addButton("一键修复签名权限", QMessageBox.ButtonRole.AcceptRole)
-            box.addButton("暂不", QMessageBox.ButtonRole.RejectRole)
-            box.exec()
-            if box.clickedButton() is btn:
-                self.fix_signing()
-            else:
-                ensure_permissions(self.settings)
-        else:
-            ensure_permissions(self.settings)
-
-    def signing_needs_fix(self) -> bool:
-        """是否需一键修复（当前 app 为 ad-hoc，非稳定签名）。"""
-        if getattr(self.supervisor.client, "_mock", False):
-            return False
-        from .app_signing_repair import app_bundle, is_stable_signed
-        return app_bundle() is not None and not is_stable_signed()
-
-    def fix_signing(self) -> None:
-        """一键修复签名权限（设置/首启按钮触发）。"""
-        from PyQt6.QtCore import QTimer
-        from PyQt6.QtWidgets import QMessageBox
-
-        from .app_signing_repair import repair_signing
-        from .engine_client import haochen_home
-
-        if not self.signing_needs_fix():
-            QMessageBox.information(self.settings, "签名", "当前已用稳定签名，无需修复。")
-            return
-        res = repair_signing(haochen_home())
-        log.info("fix_signing result: %s", res)
-        if res.get("ok") and res.get("needs_quit"):
-            QMessageBox.information(
-                self.settings, "签名修复",
-                "已修复并调度自动重签重开（无需密码）。App 将自动退出重启——重启后请授权一次（辅助功能+屏幕录制）。")
-            QTimer.singleShot(400, lambda: self.pet.quit())  # 整个 App 退出
-        else:
-            QMessageBox.warning(self.settings, "签名修复", res.get("msg", "未完成"))
+        ensure_permissions(self.settings)
 
     def stop(self) -> None:
         self.supervisor.stop()

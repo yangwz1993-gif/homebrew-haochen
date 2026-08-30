@@ -134,7 +134,7 @@ _FINGERPRINT_FILE = "build-fingerprint"
 
 def _signing_cert_fingerprint() -> str:
     """当前 app 签名 leaf 证书 SHA-1；非 frozen/取不到时回退固定串。"""
-    from .app_signing_repair import app_bundle
+    from .signing_status import app_bundle
     app = app_bundle()
     if app is None:
         return "unfrozen"
@@ -209,7 +209,7 @@ def relaunch_app() -> None:
     打包形态：detached `sh -c 'sleep 1; open -n <app>'` 后退出（独立 session，
     不随父进程被杀）。开发形态（非 frozen）只记日志——不重启，避免搞死终端会话。
     """
-    from .app_signing_repair import app_bundle
+    from .signing_status import app_bundle
 
     app = app_bundle()
     if app is None:

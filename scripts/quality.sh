@@ -30,7 +30,7 @@ printf '\n==> shellcheck\n'
 uv run shellcheck \
   engine/build.sh \
   packaging/build.sh \
-  packaging/setup-signing.sh \
+  packaging/notarize.sh \
   tests/run_all_regressions.sh \
   scripts/bootstrap.sh \
   scripts/quality.sh

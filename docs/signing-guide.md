@@ -1,51 +1,53 @@
-# 方案 B：自签受信任证书 —— 操作说明（用户/产品执行）
+# Developer ID 签名与 Apple 公证
 
-> 目的：让 haochen .app 有**稳定** code 签名身份 → macOS「辅助功能」授权按 DR 认 → 授权跨构建持久，不再每次重建都重授权。解决 ①读屏失败 ②授权弹窗不关（同根因：ad-hoc 重建换 DR）。
+v0.2.0 起禁止自签分发、App 内生成签名身份、明文保存钥匙串口令以及移除 quarantine。正式发布只接受 Apple Developer ID Application 签名和 Apple 公证。
 
----
+## 准备（发布者执行）
 
-## 一步：跑脚本（只有最后一步需要输一次管理员密码）
-
-```bash
-cd "/Users/yangwz/Documents/workspace/haochen new"
-bash packaging/setup-signing.sh
-```
-
-- 脚本会：生成自签证书（codeSigning EKU，3 年）→ 专用钥匙串 → 导入身份 → 设受信任。
-- **唯一需要你输入的**：脚本末尾 `sudo security add-trusted-cert ...` 会提示**管理员密码**（按一次回车/输一次密码即可）。
-- 完成后输出 `haochen Local Signing` 身份已就绪；钥匙串密码存 `packaging/signing.keychain-pw`（0600，build.sh 自动读）。
-
-## 二步：用稳定身份重建
+1. 把 Developer ID Application 证书导入 macOS Keychain；私钥不得进入项目目录。
+2. 使用 `xcrun notarytool store-credentials <profile>` 把公证凭据保存到 Keychain；CI 中则从受保护 Secret 创建临时 Keychain/profile。
+3. 设置非敏感引用：
 
 ```bash
-bash packaging/build.sh
+export HAOCHEN_SIGNING_IDENTITY='Developer ID Application: … (TEAMID)'
+export HAOCHEN_NOTARY_PROFILE='haochen-notary'
+# 可选：export HAOCHEN_KEYCHAIN=/path/to/temporary-ci.keychain-db
 ```
 
-- build.sh §5 检测到稳定身份会自动用 `haochen Local Signing` 签名（不再 ad-hoc）；产物 `packaging/dist/haochen.app` + `.dmg`。
-- 可 `codesign -dvv dist/haochen.app | grep Authority` 确认是 `haochen Local Signing` 而非 adhoc。
+不要把 identity 对应私钥、公证 API key、Apple ID app-specific password 或 Keychain 密码写入 `.env`、脚本、日志和 Git。
 
-## 三步：首次授权「当前构建」（一次性；之后跨构建持久）
+## 正式构建
 
-1. 启动：`open dist/haochen.app`（或双击）。
-2. 授权引导卡片弹出 → 点**「去授权」** → 系统弹窗点**「打开系统设置」** → 在 **系统设置 → 隐私与安全性 → 辅助功能** 打开 **haochen** 开关。
-3. 回到 haochen 卡片点**「我已授权」** → 卡片关闭（此时当前构建已授权，DR 稳定）。
-4. **验证**：问一句「看看我屏幕上是什么」→ 感知提示 → 「读吧/不读」→ 授权 → `read_screen` 工具卡 → 答案含当前窗口内容（读屏成功）。
+```bash
+HAOCHEN_BUILD_MODE=release bash packaging/build.sh
+```
 
-## 四步：重启/跨构建持久验证（可选）
+构建会：
 
-- 重启 App / 重新 `build.sh` 构建后再次启动：日志 `accessibility granted at startup: True`（授权跨构建仍在）。
-- 读屏再次直接成功（不需要重新授权）。
+1. 对嵌套 Mach-O 和 App 进行 hardened runtime + timestamp 签名；
+2. 公证并 staple App；
+3. 创建并签名 DMG；
+4. 公证、staple 并用 Gatekeeper 验证 DMG。
 
----
+缺少 Developer ID identity 或 notary Keychain profile 时，release 构建必须失败。仅本机测试可显式运行：
 
-## 排障
+```bash
+HAOCHEN_BUILD_MODE=development bash packaging/build.sh
+```
 
-- 若授权卡片点「我已授权」仍报未授权：确认设置列表里 haochen 开关是开的；若开仍不报，点「暂不」→ 重启 App → 重试（个别情况需重启才能识别）。
-- 若 `security find-identity -p codesigning` 找不到身份：重跑 `bash packaging/setup-signing.sh`，确认管理员密码那步成功。
-- ad-hoc 与稳定身份不可混用：若你之前用 ad-hoc 授权过，删掉设置里旧的 haochen 勾选再重新走三步（TCC 按 DR 认，旧 DR 勾选对当前构建无效）。
+开发产物使用 ad-hoc 签名，不得上传 Release、生成正式 Cask 或对外分发。
 
-## 附：技术背景
+## 发布验收
 
-- macOS TCC「辅助功能」授权按 code 的 **designated requirement (DR)** 记录。ad-hoc `--sign -` 每次构建 DR 不同 → 旧授权不适用于新构建。
-- 自签**受信任**证书 → 稳定 identity → 稳定 DR → 授权持久。
-- 分发请用 Developer ID + 公证（总纲 §五 既定）；本方案用于本机/内测的持久授权。
+```bash
+codesign --verify --deep --strict packaging/dist/haochen.app
+spctl --assess --type execute --verbose=2 packaging/dist/haochen.app
+xcrun stapler validate packaging/dist/haochen.app
+xcrun stapler validate packaging/dist/haochen-*.dmg
+```
+
+Cask 由 `scripts/version.py render-cask <dmg>` 根据根 `VERSION` 和真实 SHA-256 生成，禁止 `postflight` 清除 quarantine。
+
+## 已泄露凭据处置
+
+旧工程曾保存自签私钥、P12、Keychain 口令和一个第三方模型 API Key。它们都必须视为已泄露，由用户在对应平台轮换/吊销。新仓库不得复用这些凭据；完成外部轮换前不能宣称发布安全闭环。

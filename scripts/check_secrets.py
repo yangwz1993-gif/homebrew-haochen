@@ -22,6 +22,8 @@ PATTERNS = {
     "OpenAI-style key": re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     "GitHub token": re.compile(r"\bgh(?:p|o|u|s|r)_[A-Za-z0-9]{30,}\b"),
     "AWS access key": re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    "Zhipu-style key": re.compile(r"\b[0-9a-fA-F]{32}\.[A-Za-z0-9_-]{8,}\b"),
+    "labelled password": re.compile(r"(?:password|密码)\s*[：:=]\s*`?[A-Za-z0-9+/=_-]{8,}", re.IGNORECASE),
 }
 TEXT_SUFFIXES = {
     "", ".cfg", ".env", ".ini", ".json", ".md", ".py", ".rb", ".sh", ".toml", ".ts", ".txt", ".yaml", ".yml"

@@ -298,39 +298,19 @@ class SettingsWindow(QWidget):
         return card
 
     def _signature_card(self) -> QFrame:
-        """P8：签名与授权（一键修复）+ 权限状态。"""
-        from ..app_signing_repair import app_bundle, is_stable_signed
+        """Read-only release-signing status; the app never creates signing identities."""
+        from ..signing_status import is_developer_id_signed, signing_summary
 
-        card, lay = _card("签名与权限", "用稳定签名后，辅助功能/屏幕录制授权跨构建持久（无需密码一键完成）。")
-        stable = bool(app_bundle() is not None and is_stable_signed())
-        status = QLabel("当前：已用稳定签名 ✓（授权持久）" if stable
-                        else "当前：临时签名（ad-hoc），授权可能不持久")
-        status.setObjectName("statusOk" if stable else "statusWarn")
+        signed = is_developer_id_signed()
+        card, lay = _card(
+            "签名与权限",
+            "正式版由 Developer ID 签名并经 Apple 公证；签名凭据不会存放在 App 或项目目录中。",
+        )
+        status = QLabel(f"当前：{signing_summary()}")
+        status.setObjectName("statusOk" if signed else "statusWarn")
+        status.setWordWrap(True)
         lay.addWidget(status)
-        btn_fix = QPushButton("一键修复签名权限", objectName="primaryBtn")
-        btn_fix.setEnabled(not stable)
-        btn_fix.clicked.connect(self._fix_signing_clicked)
-        lay.addWidget(btn_fix, alignment=Qt.AlignmentFlag.AlignLeft)
         return card
-
-    def _fix_signing_clicked(self) -> None:
-        from PyQt6.QtWidgets import QApplication
-
-        # 触发壳层签名修复（经 app_shell 或独立调用 repair + quit）
-        # 复用当前运行中的 shell（若已被某处持有）；否则独立修
-        shell = getattr(QApplication.instance(), "_haochen_shell", None)
-        if shell is not None:
-            shell.fix_signing()
-        else:
-            from ..app_signing_repair import repair_signing
-            from ..engine_client import haochen_home
-            res = repair_signing(haochen_home())
-            from PyQt6.QtWidgets import QMessageBox
-            if res.get("ok") and res.get("needs_quit"):
-                QMessageBox.information(self, "签名修复",
-                    "已修复并调度自动重签重开（无需密码）。App 将退出重启，重启后请授权一次。")
-            else:
-                QMessageBox.warning(self, "签名修复", res.get("msg", "未完成"))
 
     # ── 状态反馈 ───────────────────────────────────────────────
 
