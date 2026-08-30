@@ -16,14 +16,14 @@
  * 退出码 0 = 全过。
  */
 
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const HOME = mkdtempSync(join(tmpdir(), "haochen-visual-test-"));
 const FAKE_READER = join(HOME, "fake-reader.sh");
 const CASE_JSON = join(HOME, "case.json");
-const LAST_TEXT = join(HOME, "last-user-text.txt");
+const LAST_INTENT = join(HOME, "last-user-intent.json");
 
 // 1x1 透明 PNG（占位截图/原图）
 const PNG =
@@ -71,16 +71,15 @@ function check(name: string, ok: boolean, detail = ""): void {
   ok ? pass++ : fail++;
 }
 
-/** 写用例：假 reader 输出 + 用户最新提问（last-user-text.txt；不传=删除意图）。 */
-let lastTextWritten = false;
+/** 写用例：假 reader 输出 + 壳侧派生的看图意图 boolean（不落盘原始提问）。 */
 async function run(label: string, data: unknown, userText: string | null) {
   writeFileSync(CASE_JSON, JSON.stringify(data));
   if (userText === null) {
-    try { (await import("node:fs")).unlinkSync(LAST_TEXT); } catch {}
-    lastTextWritten = false;
+    try { unlinkSync(LAST_INTENT); } catch {}
   } else {
-    writeFileSync(LAST_TEXT, userText, "utf8");
-    lastTextWritten = true;
+    const words = ["看图", "这张图", "图里", "帅", "美", "图片", "照片", "截图", "image", "photo"];
+    const visual = words.some((word) => userText.toLowerCase().includes(word));
+    writeFileSync(LAST_INTENT, JSON.stringify({ visual }), { encoding: "utf8", mode: 0o600 });
   }
   const r = await execute("t-" + label, {}, undefined, undefined, { hasUI: false });
   const texts = r.content.filter((c) => c.type === "text").map((c) => c.text ?? "");

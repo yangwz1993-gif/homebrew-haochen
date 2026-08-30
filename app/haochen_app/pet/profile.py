@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 
 from ..engine_client import haochen_home
+from ..secure_storage import atomic_write_private, ensure_private_file
 
 log = logging.getLogger("haochen.pet.profile")
 
@@ -27,7 +28,9 @@ def should_ask_name() -> bool:
 def load_user_name() -> str:
     """读称呼；无档案/损坏/空名 → ""（静默）。"""
     try:
-        data = json.loads(profile_path().read_text(encoding="utf-8"))
+        path = profile_path()
+        ensure_private_file(path)
+        data = json.loads(path.read_text(encoding="utf-8"))
         name = data.get("name")
         return name.strip() if isinstance(name, str) else ""
     except Exception:
@@ -37,8 +40,9 @@ def load_user_name() -> str:
 def save_user_name(name: str) -> None:
     """落盘称呼（空串 = 用户跳过，同样不再问）。"""
     try:
-        p = profile_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"name": name}, ensure_ascii=False), encoding="utf-8")
+        atomic_write_private(
+            profile_path(),
+            json.dumps({"name": name}, ensure_ascii=False, separators=(",", ":")) + "\n",
+        )
     except Exception as e:
         log.warning("save user profile failed: %s", e)

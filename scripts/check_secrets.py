@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SKIP_DIRS = {".git", ".venv", ".python", "node_modules", "build", "dist", "pi-source", "verification"}
+SKIP_DIRS = {".git", ".venv", ".python", "node_modules", "build", "dist", "pi-source"}
 FORBIDDEN_NAMES = {
     "auth.json",
     "signing-key.pem",

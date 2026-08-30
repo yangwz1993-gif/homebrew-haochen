@@ -21,14 +21,12 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from haochen_app import paths
 from haochen_app.engine_client import haochen_home
+from haochen_app.secure_storage import atomic_write_private, ensure_private_directory, ensure_private_file
 
 TEMPLATE_DIR = paths.config_templates()
 
@@ -84,7 +82,8 @@ class ConfigStore:
     def ensure_initialized(self) -> list[Path]:
         """agent/ 或任一配置文件缺失时，用 config/ 模板补齐。返回新建的文件列表。"""
         created: list[Path] = []
-        self.agent_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(self.home)
+        ensure_private_directory(self.agent_dir)
         for name, template in (
             (MODELS_FILE, TEMPLATE_DIR / MODELS_FILE),
             (SETTINGS_FILE, TEMPLATE_DIR / SETTINGS_FILE),
@@ -92,17 +91,19 @@ class ConfigStore:
         ):
             target = self.agent_dir / name
             if not target.exists():
-                shutil.copyfile(template, target)
+                atomic_write_private(target, template.read_text(encoding="utf-8"))
                 created.append(target)
+            else:
+                ensure_private_file(target)
         return created
 
     def reset_to_default(self, name: str) -> Path:
         """把某个配置文件重置为模板默认（损坏恢复入口）。name 为文件名常量。"""
         template = TEMPLATE_DIR / (AUTH_TEMPLATE if name == AUTH_FILE else name)
         target = self.agent_dir / name
-        self.agent_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(template, target)
-        return target
+        ensure_private_directory(self.home)
+        ensure_private_directory(self.agent_dir)
+        return atomic_write_private(target, template.read_text(encoding="utf-8"))
 
     # ── 底层读写 ──────────────────────────────────────────────
 
@@ -111,6 +112,7 @@ class ConfigStore:
         if not path.exists():
             self.ensure_initialized()
         try:
+            ensure_private_file(path)
             with path.open(encoding="utf-8") as f:
                 data = json.load(f)
         except json.JSONDecodeError as e:
@@ -120,19 +122,9 @@ class ConfigStore:
         return data
 
     def _save(self, name: str, data: dict) -> Path:
-        """原子写：同目录 tmp 文件 + os.replace，避免半截 JSON。"""
-        self.agent_dir.mkdir(parents=True, exist_ok=True)
-        path = self.agent_dir / name
-        fd, tmp = tempfile.mkstemp(dir=str(self.agent_dir), prefix=f".{name}.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.write("\n")
-            os.replace(tmp, path)
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise
-        return path
+        """原子写：同目录 0600 临时文件 + replace，避免半截 JSON。"""
+        payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+        return atomic_write_private(self.agent_dir / name, payload)
 
     # ── models.json（只读展示）────────────────────────────────
 

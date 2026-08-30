@@ -34,9 +34,14 @@ def snap(win, name: str) -> None:
 
 def dump(home: Path, title: str) -> None:
     log_lines.append(f"\n===== {title} =====")
-    for n in ("settings.json", "auth.json"):
-        p = home / "agent" / n
-        log_lines.append(f"--- {n} ---\n{p.read_text(encoding='utf-8')}")
+    for name in ("settings.json", "auth.json"):
+        path = home / "agent" / name
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if name == "auth.json":
+            for entry in data.values():
+                if isinstance(entry, dict) and "key" in entry:
+                    entry["key"] = "***redacted***"
+        log_lines.append(f"--- {name} ---\n{json.dumps(data, ensure_ascii=False, indent=2)}")
 
 
 app = QApplication(sys.argv)
@@ -51,7 +56,7 @@ dump(home, "初始（模板初始化后）")
 
 # 2. 填 key（第一个 QLineEdit = deepseek key 输入框）
 edit = win.findChildren(QLineEdit)[0]
-edit.setText("sk-screenshot-test-key")
+edit.setText("test-credential-one")
 edit.editingFinished.emit()
 snap(win, "02-填写key后.png")
 dump(home, "填写 deepseek key 后")
@@ -63,7 +68,7 @@ snap(win, "03-切换模型.png")
 dump(home, "切换默认模型为 deepseek-v4-pro 后")
 
 # 4. 再改一次 key → 底部状态条显示「重启引擎后生效」
-edit.setText("sk-screenshot-test-key-v2")
+edit.setText("test-credential-two")
 edit.editingFinished.emit()
 snap(win, "04-key重启提示.png")
 

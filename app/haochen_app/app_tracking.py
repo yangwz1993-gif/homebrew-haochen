@@ -1,22 +1,26 @@
-"""追踪用户「最近浏览的非 haochen 窗口」，供读屏窗口选择（P7 修复）。
+"""Track the last non-haochen app and a privacy-preserving visual-intent bit.
 
-读者是独立进程（os.getpid() ≠ app pid），无法自己判断「前台是 haochen」或
-「用户刚才在看哪个 app」。壳侧（本 app）用 NSWorkspace 监听激活，把用户最近
-使用的**非 haochen** app pid 写到 HAOCHEN_HOME/last-user-app.txt；读到该数字。
-读者在「前台=haochen」时优先用它，从而读到用户正在浏览的窗口（如 Chrome），
-而非 haochen 自身或系统悬浮窗口。
-
-v0.1.8 另管一个 sidecar：last-user-text.txt —— pet/chat 发送时把用户最新提问
-原文落盘，引擎扩展 read_screen 读它做看图意图判定（v0.1.8 看图模式）。
+The reader is a separate process, so the app stores the last foreground PID in a
+private sidecar. User prompts are never persisted: only a derived boolean saying
+whether the latest prompt explicitly requested image understanding is shared with
+the engine extension.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
 
+from .secure_storage import atomic_write_private, ensure_private_directory, ensure_private_file
+
 log = logging.getLogger("haochen.apptrack")
+
+_VISUAL_INTENT_WORDS = (
+    "看图", "看看这", "这张图", "图里", "图片", "照片", "截图", "画面", "长什么样",
+    "帅", "美", "好看", "评价一下", "识别", "who is", "what's in", "image", "photo", "picture",
+)
 
 
 def _last_app_file(home: Path) -> Path:
@@ -34,8 +38,8 @@ def write_last_user_app(home) -> None:
         pid = app.processIdentifier()
         if pid == os.getpid() or pid <= 1:
             return
-        home.mkdir(parents=True, exist_ok=True)
-        _last_app_file(home).write_text(str(pid), encoding="utf-8")
+        ensure_private_directory(home)
+        atomic_write_private(_last_app_file(home), str(pid))
     except Exception as exc:  # noqa: BLE001
         log.debug("write_last_user_app failed: %s", exc)
 
@@ -46,6 +50,7 @@ def read_last_user_app(home) -> int:
         home = Path(home)
         p = _last_app_file(home)
         if p.exists():
+            ensure_private_file(p)
             return int(p.read_text().strip())
     except (ValueError, OSError):
         pass
@@ -53,14 +58,20 @@ def read_last_user_app(home) -> int:
 
 
 def write_last_user_text(home, text: str) -> None:
-    """记录用户最新提问原文到 last-user-text.txt（v0.1.8 看图模式：
-    引擎扩展 read_screen 读它判定「用户是不是在问图」）。覆盖写纯文本，失败静默。"""
+    """Persist only a derived visual-intent boolean; never persist the prompt text."""
     try:
         home = Path(home)
-        home.mkdir(parents=True, exist_ok=True)
-        (home / "last-user-text.txt").write_text(text, encoding="utf-8")
+        ensure_private_directory(home)
+        normalized = text.casefold()
+        visual = any(word in normalized for word in _VISUAL_INTENT_WORDS)
+        atomic_write_private(
+            home / "last-user-intent.json",
+            json.dumps({"visual": visual}, separators=(",", ":")) + "\n",
+        )
+        # Remove the privacy-sensitive sidecar left by versions <=0.1.10.
+        (home / "last-user-text.txt").unlink(missing_ok=True)
     except Exception as exc:  # noqa: BLE001
-        log.debug("write_last_user_text failed: %s", exc)
+        log.debug("write visual intent failed: %s", exc)
 
 
 def install_tracker(home) -> None:
@@ -68,7 +79,7 @@ def install_tracker(home) -> None:
     try:
         home = Path(home)
         from AppKit import NSWorkspace, NSWorkspaceDidActivateApplicationNotification
-        home.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(home)
         write_last_user_app(home)  # 初始
         # 正确：addObserver 挂在 workspace 的 notificationCenter 上（workspace 本身无此方法）
         NSWorkspace.sharedWorkspace().notificationCenter().addObserverForName_object_queue_usingBlock_(

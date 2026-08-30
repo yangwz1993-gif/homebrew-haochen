@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -25,10 +26,16 @@ from PyQt6.QtWidgets import QApplication
 def _setup_file_logging() -> None:
     """冻结形态无控制台：日志落 HAOCHEN_HOME/logs/app.log（支持排障）。"""
     from haochen_app.engine_client import haochen_home
+    from haochen_app.secure_storage import ensure_private_directory, ensure_private_file
     logdir = haochen_home() / "logs"
     try:
-        logdir.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(logdir / "app.log", encoding="utf-8")
+        ensure_private_directory(haochen_home())
+        ensure_private_directory(logdir)
+        log_file = logdir / "app.log"
+        descriptor = os.open(log_file, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+        os.close(descriptor)
+        ensure_private_file(log_file)
+        handler = logging.FileHandler(log_file, encoding="utf-8")
         handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
         logging.getLogger().addHandler(handler)
     except OSError:

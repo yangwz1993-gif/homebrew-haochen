@@ -304,7 +304,7 @@ class ChatWindow(QWidget):
 
     def _send_now(self, text: str) -> None:
         self._last_user_text = text
-        # v0.1.8 看图模式：落盘用户原文，供引擎扩展 read_screen 判定看图意图
+        # 仅落盘派生的看图意图 boolean，绝不持久化用户原文
         write_last_user_text(haochen_home(), text)
         self._auto_title(text)
         self.ctrl.send(text)

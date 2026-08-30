@@ -34,6 +34,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from . import paths
+from .secure_storage import ensure_private_directory
 
 PROJECT_ROOT = paths.PROJECT_ROOT
 DEFAULT_ENGINE = paths.engine_binary()
@@ -61,9 +62,11 @@ def spawn_argv(engine: Path, ext: Path | None, home: Path) -> tuple[list[str], d
             "--session-dir", str(home / "pi-sessions")]
     if ext and ext.exists():
         argv += ["-e", str(ext)]
-    cwd = home / "pi-home"
-    cwd.mkdir(parents=True, exist_ok=True)
-    (home / "pi-sessions").mkdir(parents=True, exist_ok=True)
+    ensure_private_directory(home)
+    ensure_private_directory(home / "agent")
+    cwd = ensure_private_directory(home / "pi-home")
+    ensure_private_directory(home / "pi-sessions")
+    ensure_private_directory(home / "logs")
     return argv, env, cwd
 
 
@@ -99,7 +102,7 @@ class EngineClient(QObject):
             argv, env, cwd = spawn_argv(self._engine, self._ext, self._home)
         self._proc = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env, cwd=str(cwd))
+            stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env, cwd=str(cwd), umask=0o077)
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
 
@@ -230,12 +233,7 @@ class DeletedSession:
 
 
 def _session_root(home: Path) -> Path:
-    root = home.expanduser() / "pi-sessions"
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    root.chmod(0o700)
-    if root.is_symlink():
-        raise ValueError("session root must not be a symbolic link")
-    return root.resolve(strict=True)
+    return ensure_private_directory(home.expanduser() / "pi-sessions").resolve(strict=True)
 
 
 def _validated_session_path(session_path: str, home: Path, *, must_exist: bool) -> Path:
@@ -259,12 +257,7 @@ def _validated_session_path(session_path: str, home: Path, *, must_exist: bool) 
 
 
 def _recycle_root(home: Path) -> Path:
-    root = home.expanduser() / "session-recycle-bin"
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    root.chmod(0o700)
-    if root.is_symlink():
-        raise ValueError("session recycle bin must not be a symbolic link")
-    return root.resolve(strict=True)
+    return ensure_private_directory(home.expanduser() / "session-recycle-bin").resolve(strict=True)
 
 
 def delete_session(session_path: str, home: Path | None = None) -> DeletedSession:

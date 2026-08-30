@@ -19,7 +19,7 @@ import { Type } from "typebox";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readFileSync, unlinkSync, writeFileSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 /** 两步输出协议只在 App 内强制：壳 spawn 引擎时注入（engine_client.spawn_argv）。 */
 const IN_PET = process.env.HAOCHEN_PET === "1";
@@ -42,24 +42,30 @@ function loadUserName(): string {
   }
 }
 
-/** v0.1.8：用户最新提问原文（壳侧 pet/chat 发送时落盘 last-user-text.txt），
- *  供 read_screen 判定看图意图。不存在/读失败 = 无意图（静默）。 */
-function loadLastUserText(): string {
+/** Privacy boundary: the Python shell persists only a derived boolean, never the prompt. */
+function loadLastUserVisualIntent(): boolean {
   try {
-    return readFileSync(join(HAOCHEN_HOME, "last-user-text.txt"), "utf8").trim().toLowerCase();
+    const raw = readFileSync(join(HAOCHEN_HOME, "last-user-intent.json"), "utf8");
+    return (JSON.parse(raw) as { visual?: unknown }).visual === true;
   } catch {
-    return "";
+    return false;
   }
+}
+
+function ensurePrivateHome() {
+  mkdirSync(HAOCHEN_HOME, { recursive: true, mode: 0o700 });
+  chmodSync(HAOCHEN_HOME, 0o700);
 }
 
 function writeLastReadSig(pid: number | null, title: string) {
   try {
-    mkdirSync(HAOCHEN_HOME, { recursive: true });
+    ensurePrivateHome();
     writeFileSync(
       LAST_READ_SIG,
       JSON.stringify({ pid: pid ?? null, title, time: Date.now() }),
-      "utf8",
+      { encoding: "utf8", mode: 0o600 },
     );
+    chmodSync(LAST_READ_SIG, 0o600);
   } catch {}
 }
 
@@ -82,12 +88,7 @@ const MARK_SUMMARY_PHASE = "haochen-summary-phase";
 // 图片在 AX 树里只有占位、无文字 → 纯 AX 读屏拿不到画面（真机：微信图片窗口
 // 问「这个男的帅么」被答"没看到图"）。满足任一条件即判定看图模式，把窗口截图
 // 作为主输入发给多模态模型：
-/** ① 用户意图：提问命中看图关键词（含「帅不帅/美不美」类评价词）。 */
-const VISUAL_INTENT_WORDS = [
-  "看图", "看看这", "这张图", "图里", "图片", "照片", "截图", "画面", "长什么样",
-  "帅", "美", "好看", "评价一下", "识别",
-  "who is", "what's in", "image", "photo", "picture",
-];
+/** ① 用户意图由壳侧计算为隐私安全的 boolean sidecar。 */
 /** ② 窗口类型：app 名 / 窗口标题命中图片/视频/预览类。 */
 const VISUAL_WINDOW_WORDS = [
   "图片", "照片", "视频", "预览", "图像", "image", "photo", "video", "preview", "quick look",
@@ -96,8 +97,7 @@ const VISUAL_WINDOW_WORDS = [
 const SPARSE_TEXT_CHARS = 80;
 
 function detectVisualMode(data: PetreadJson): boolean {
-  const q = loadLastUserText();
-  if (q && VISUAL_INTENT_WORDS.some((w) => q.includes(w))) return true;
+  if (loadLastUserVisualIntent()) return true;
   const win = `${data.app} ${data.window_title}`.toLowerCase();
   if (VISUAL_WINDOW_WORDS.some((w) => win.includes(w))) return true;
   if (!data.blocks.length) return true;

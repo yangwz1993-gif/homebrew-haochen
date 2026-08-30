@@ -51,6 +51,7 @@ typeCheckingMode = "basic"
 include = [
   "scripts",
   "app/haochen_app/version.py",
+  "app/haochen_app/secure_storage.py",
   "tests",
 ]
 exclude = [

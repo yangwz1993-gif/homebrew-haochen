@@ -27,6 +27,8 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
+from .secure_storage import atomic_write_private, ensure_private_file
+
 log = logging.getLogger("haochen.permissions")
 
 _SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
@@ -174,8 +176,12 @@ def reconcile_tcc_with_build(home: Path) -> bool:
     fp = build_fingerprint()
     fp_file = Path(home) / _FINGERPRINT_FILE
     try:
-        prev = fp_file.read_text(encoding="utf-8").strip() if fp_file.exists() else ""
-    except OSError:
+        if fp_file.exists():
+            ensure_private_file(fp_file)
+            prev = fp_file.read_text(encoding="utf-8").strip()
+        else:
+            prev = ""
+    except (OSError, ValueError):
         prev = ""
     if prev and _fingerprint_cert(prev) == fp:
         log.info("signing cert unchanged (%s), tcc records kept", fp)
@@ -184,8 +190,7 @@ def reconcile_tcc_with_build(home: Path) -> bool:
              prev or "<none>", fp)
     reset_tcc_records()
     try:
-        fp_file.parent.mkdir(parents=True, exist_ok=True)
-        fp_file.write_text(fp, encoding="utf-8")
+        atomic_write_private(fp_file, fp + "\n")
     except OSError as exc:
         log.warning("write build fingerprint failed: %s", exc)
     return True

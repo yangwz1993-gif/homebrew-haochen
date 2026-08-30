@@ -299,7 +299,7 @@ class PetApp(QObject):
         self.ensure_engine()  # 引擎已崩则先重启（不白屏，interaction-spec §8.2）
         self._aborted = False
         self._last_user_text = text
-        # v0.1.8 看图模式：落盘用户原文，供引擎扩展 read_screen 判定看图意图
+        # 仅落盘派生的看图意图 boolean，绝不持久化用户原文
         write_last_user_text(haochen_home(), text)
         self.bubble.add_user_message(text)
         self._status_block = self.bubble.add_status(STATUS_LINE[PetState.THINK])

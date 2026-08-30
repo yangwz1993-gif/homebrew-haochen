@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLabel, QMenu,
 
 from .. import paths
 from ..engine_client import haochen_home
+from ..secure_storage import atomic_write_private, ensure_private_file
 from .theme import ANIM_POSE_MS
 
 log = logging.getLogger("haochen.pet.window")
@@ -164,7 +165,9 @@ class PetWindow(QWidget):
     def _restore_position(self, screen) -> None:
         """启动恢复上次拖动的位置；文件缺失/损坏/越出所有屏幕可用区 → 回退默认右下角。"""
         try:
-            data = json.loads(self._pos_path().read_text(encoding="utf-8"))
+            path = self._pos_path()
+            ensure_private_file(path)
+            data = json.loads(path.read_text(encoding="utf-8"))
             rect = QRect(int(data["x"]), int(data["y"]), self._size, self._size)
             if any(s.availableGeometry().intersects(rect) for s in QApplication.screens()):
                 self.move(rect.topLeft())
@@ -176,9 +179,10 @@ class PetWindow(QWidget):
     def save_position(self) -> None:
         """拖动结束持久化人物位置（气泡位置由人物派生，不单独存）。"""
         try:
-            p = self._pos_path()
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps({"x": self.x(), "y": self.y()}), encoding="utf-8")
+            atomic_write_private(
+                self._pos_path(),
+                json.dumps({"x": self.x(), "y": self.y()}, separators=(",", ":")) + "\n",
+            )
         except Exception as e:
             log.warning("save pet position failed: %s", e)
 
