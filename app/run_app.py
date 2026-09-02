@@ -63,6 +63,8 @@ def main() -> int:
 
     shell = AppShell()
     shell.first_run_setup()
+    from haochen_app.menu_bar import install_menu_bar
+    install_menu_bar(app, shell)  # task-4c：LSUIElement 下提供原生菜单栏入口
     app.aboutToQuit.connect(shell.stop)
     shell.pet.pet.quit_requested.connect(app.quit)  # 桌宠右键退出 → 整个 App
     setattr(app, "_haochen_shell", shell)  # 供设置面板「一键修复签名」触达壳层

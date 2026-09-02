@@ -52,7 +52,7 @@ haochen-engine --mode rpc --no-extensions -e <haochen-ext.ts> \
 
 - 协议**无内建心跳**。约定：
   - 壳每 30s 发一次 `get_state` 探活（开销极小）；所有 RPC 请求统一 5s 超时，探针超时视为引擎卡死并触发自动重启。
-  - **崩溃检测**：引擎进程退出 / stdout EOF 即崩溃。壳必须感知并：提示用户 + 自动重启引擎（重启后当前会话可用 `switch_session` 恢复到崩溃前会话文件），不得白屏（interaction-spec §8.2）。
+  - **崩溃检测**：引擎进程退出 / stdout EOF 即崩溃。壳必须感知并：提示用户 + 自动重启引擎（重启后当前会话可用 `switch_session` 恢复到崩溃前会话文件），不得白屏（interaction-spec §9.2）。
 - **正常关闭**：壳在后台关闭 stdin 并向独立进程组发 SIGTERM；超时后 SIGKILL 整个进程组。Qt 主线程不得调用同步 `wait()`，解释器退出前由非 daemon reaper 保证无孤儿进程。
 - **异常输出**：stdout 非 JSON、非对象或 EOF 半行会发脱敏协议错误；stderr 只落长度与 SHA-256 摘要的 0600 轮转日志，不记录原始正文。引擎停止或退出时，所有未完成请求会收到 `success:false` 及 `errorCode`（`timeout` / `engine_stopped` / `engine_exited`）。
 
@@ -339,7 +339,7 @@ haochen-summary-phase
 | **会话删除 delete** | **壳侧**（删 jsonl 文件） | §2.8，RPC 无此命令 |
 | 心跳/崩溃检测/重启 | 壳侧 | §1.3，协议无心跳 |
 | 页面变化检测（读屏签名侧车文件） | 壳侧 + 扩展写签名 | 沿用上一版 last-read-sig.json |
-| 气泡↔窗口同一会话 | 壳侧（共享 get_messages 数据源） | interaction-spec §6 |
+| 气泡↔窗口同一会话 | 壳侧（共享 get_messages 数据源） | interaction-spec §7 |
 
 ---
 

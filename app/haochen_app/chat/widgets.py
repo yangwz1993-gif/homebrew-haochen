@@ -61,7 +61,10 @@ _live_fade_anims: set[QPropertyAnimation] = set()
 
 
 def fade_in(widget: QWidget) -> None:
-    """visual-spec §5：每条气泡淡入 180ms，ease-out。"""
+    """visual-spec §5：每条气泡淡入 180ms，ease-out；Reduce Motion 时直接显示。"""
+    from ..a11y import reduce_motion_enabled
+    if reduce_motion_enabled():
+        return  # 尊重系统设置：不叠加透明度动画
     eff = QGraphicsOpacityEffect(widget)
     widget.setGraphicsEffect(eff)
     anim = QPropertyAnimation(eff, b"opacity", widget)
@@ -310,6 +313,7 @@ class ToolCard(QFrame):
         self.toggle = QToolButton()
         self.toggle.setText("▸")
         self.toggle.setCheckable(True)
+        self.toggle.setAccessibleName("工具详情")
         self.toggle.setStyleSheet(f"QToolButton {{ border: none; color: {C['ink_soft']}; }}")
         self.toggle.toggled.connect(self._on_toggle)
         header.addWidget(self.toggle)
@@ -331,18 +335,21 @@ class ToolCard(QFrame):
 
         # 操作区（task-4b）：运行中→取消；失败→重试；有产物→打开。
         self.cancel_button = QPushButton("取消")
+        self.cancel_button.setAccessibleName("取消工具")
         self.cancel_button.setStyleSheet(button_outline())
         self.cancel_button.setToolTip("停止当前回合")
         self.cancel_button.hide()
         header.addWidget(self.cancel_button)
 
         self.retry_button = QPushButton("重试")
+        self.retry_button.setAccessibleName("重试")
         self.retry_button.setStyleSheet(button_outline())
         self.retry_button.setToolTip("重新发送上一条消息")
         self.retry_button.hide()
         header.addWidget(self.retry_button)
 
         self.open_button = QPushButton("打开")
+        self.open_button.setAccessibleName("打开产物")
         self.open_button.setStyleSheet(button_outline())
         artifact = self.artifact_path()
         if artifact is not None:

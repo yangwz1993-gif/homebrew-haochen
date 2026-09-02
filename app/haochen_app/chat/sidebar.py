@@ -63,6 +63,8 @@ class SessionSidebar(QWidget):
         root.addWidget(self.list, 1)
 
         btn_new = QPushButton("＋ 新会话")
+        btn_new.setAccessibleName("新会话")
+        self.new_button = btn_new
         btn_new.setStyleSheet(button_solid())
         btn_new.clicked.connect(self.new_requested)
         root.addWidget(btn_new)

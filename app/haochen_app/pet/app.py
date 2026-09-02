@@ -211,9 +211,11 @@ class PetApp(QObject):
     def _place_bubble(self) -> None:
         """气泡固定在桌宠正上方：底边（含尾巴）与桌宠头顶留 BUBBLE_PET_GAP 间隙，
         右下尾巴尖对准桌宠中心；顶部空间不足时落桌宠下方，同样不重叠（v0.1.6）。"""
+        from ..a11y import screen_of
+
         b, p = self.bubble, self.pet
         b._refresh_height()  # v0.1.7：先按当前内容定高再锚定（旧高度会算出错误锚点）
-        screen = QApplication.primaryScreen().availableGeometry()
+        screen = screen_of(p).availableGeometry()  # task-4c：气泡锚定在桌宠所在屏
         x = p.x() + p.width() // 2 - (b.width() - 44 + 10)  # 尾巴尖 ≈ 桌宠中心
         x = max(screen.left() + 8, min(x, screen.right() - b.width() - 8))
         y_above = p.y() - b.height() - T.BUBBLE_PET_GAP  # 气泡底含尾巴，间隙即不压人物
@@ -230,8 +232,10 @@ class PetApp(QObject):
 
     def _on_bubble_moved(self, _x: int, _y: int) -> None:
         """拖气泡 → 人物跟到气泡尾巴正下方，二者作为整体移动（v0.1.6）。"""
+        from ..a11y import screen_of
+
         b, p = self.bubble, self.pet
-        screen = QApplication.primaryScreen().availableGeometry()
+        screen = screen_of(b).availableGeometry()
         x = b.x() + (b.width() - 44 + 10) - p.width() // 2  # 桌宠中心对尾巴尖
         y = b.y() + b.height() + T.BUBBLE_PET_GAP
         x = max(screen.left() + 4, min(x, screen.right() - p.width() - 4))

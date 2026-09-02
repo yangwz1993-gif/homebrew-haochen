@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 from pathlib import Path
 
@@ -29,9 +31,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..a11y import screen_of
 from ..app_tracking import write_last_user_text
 from ..conversation import SUMMARY_KICK_PREFIX, ConversationController, parse_paired, strip_tags
 from ..engine_client import EngineClient, delete_session, restore_session
+from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
 from .sidebar import SessionSidebar
 from .theme import FONT, RADIUS_INPUT, C, button_outline, button_solid
@@ -47,6 +51,8 @@ from .widgets import (
     ToolCard,
     UserBubble,
 )
+
+log = logging.getLogger("haochen.chat.window")
 
 
 class _InputBox(QPlainTextEdit):
@@ -143,6 +149,7 @@ class ChatWindow(QWidget):
         self._build_ui()
         self._wire()
         self._sync_queue_banners()
+        self._restore_geometry()
 
         # ⌘W：详情模式 = 收起；正常模式不拦截（行为不变）
         sc = QShortcut(QKeySequence.StandardKey.Close, self)
@@ -150,6 +157,41 @@ class ChatWindow(QWidget):
         sc.activated.connect(self._on_close_shortcut)
 
     # ── UI 骨架 ────────────────────────────────────────────────
+
+    # ── 窗口几何记忆（task-4c）─────────────────────────────────
+
+    def _geometry_file(self) -> Path:
+        return self.client.home / "chat-window-geometry.json"
+
+    def _restore_geometry(self) -> None:
+        """恢复上次尺寸/位置；不存在或不合法则用默认。"""
+        try:
+            data = json.loads(self._geometry_file().read_text(encoding="utf-8"))
+            x, y = int(data["x"]), int(data["y"])
+            w, h = int(data["width"]), int(data["height"])
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            return
+        if w < self.minimumWidth() or h < self.minimumHeight():
+            return
+        rect = QRect(x, y, w, h)
+        if not any(s.availableGeometry().intersects(rect) for s in QApplication.screens()):
+            return  # 屏幕布局变了（如拔掉副屏）：回到默认位置
+        self.setGeometry(x, y, w, h)
+
+    def _save_geometry(self) -> None:
+        """关闭时保存当前几何（0600，原子写）。"""
+        geo = self.geometry()
+        try:
+            atomic_write_private(
+                self._geometry_file(),
+                json.dumps(
+                    {"x": geo.x(), "y": geo.y(), "width": geo.width(), "height": geo.height()},
+                    separators=(",", ":"),
+                )
+                + "\n",
+            )
+        except (OSError, ValueError) as exc:  # noqa: BLE001 — 记不住尺寸不阻断关闭
+            log.warning("save chat geometry failed: %s", exc)
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
@@ -181,6 +223,7 @@ class ChatWindow(QWidget):
         rlay.addWidget(self.scroll, 1)
 
         self.jump_to_latest_button = QPushButton("↓ 回到最新")
+        self.jump_to_latest_button.setAccessibleName("回到最新")
         self.jump_to_latest_button.setStyleSheet(button_outline())
         self.jump_to_latest_button.clicked.connect(self._jump_to_latest)
         self.jump_to_latest_button.hide()
@@ -196,11 +239,13 @@ class ChatWindow(QWidget):
         self.input = _InputBox(self._on_send)
         input_bar.addWidget(self.input, 1)
         self.btn_send = QPushButton("➤")
+        self.btn_send.setAccessibleName("发送")
         self.btn_send.setFixedWidth(56)
         self.btn_send.setStyleSheet(button_solid())
         self.btn_send.clicked.connect(self._on_send)
         input_bar.addWidget(self.btn_send)
         self.btn_stop = QPushButton("■ 停止")
+        self.btn_stop.setAccessibleName("停止生成")
         self.btn_stop.setStyleSheet(button_solid().replace(C["accent"], C["danger"]))
         self.btn_stop.clicked.connect(self._on_stop)
         self.btn_stop.hide()
@@ -404,6 +449,7 @@ class ChatWindow(QWidget):
             self.collapse_detail()
 
     def closeEvent(self, ev) -> None:
+        self._save_geometry()
         # 详情模式下系统级关闭（⌘W/Mission Control 等）也走收起，绝不退出 app
         if self._detail_mode:
             ev.ignore()
@@ -459,8 +505,8 @@ class ChatWindow(QWidget):
         self.detail_collapsed.emit()
 
     def _detail_target_rect(self) -> QRect:
-        """正常尺寸（默认 1200×800，夹回屏幕），以气泡中心锚定。"""
-        screen = QApplication.primaryScreen().availableGeometry()
+        """正常尺寸（默认 1200×800，夹回屏幕），以气泡中心锚定（气泡所在屏）。"""
+        screen = screen_of(self).availableGeometry()
         w = min(1200, screen.width() - 16)
         h = min(800, screen.height() - 16)
         if self._detail_source_rect.isValid() and not self._detail_source_rect.isNull():
@@ -473,12 +519,19 @@ class ChatWindow(QWidget):
         return QRect(x, y, w, h)
 
     def _animate_geom_to(self, rect: QRect, finished=None) -> None:
+        from .a11y import reduce_motion_enabled
         old, self._geom_anim = self._geom_anim, None
         if old is not None:
             try:
                 old.stop()
             except RuntimeError:
-                pass  # DeleteWhenStopped 后底层 C++ 对象已删，忽略
+                pass
+        if reduce_motion_enabled():
+            # 尊重系统设置：直接落位，不播几何动画
+            self.setGeometry(rect)
+            if finished is not None:
+                finished()
+            return
         anim = QPropertyAnimation(self, b"geometry", self)
         anim.setDuration(220)
         anim.setStartValue(self.geometry())
