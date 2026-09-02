@@ -519,7 +519,7 @@ class ChatWindow(QWidget):
         return QRect(x, y, w, h)
 
     def _animate_geom_to(self, rect: QRect, finished=None) -> None:
-        from .a11y import reduce_motion_enabled
+        from ..a11y import reduce_motion_enabled
         old, self._geom_anim = self._geom_anim, None
         if old is not None:
             try:

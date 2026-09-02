@@ -112,10 +112,11 @@ class Runner:
         tail_x = b.x() + b.width() - 34
         self.check("S0 尾巴尖对准人物中心", abs(tail_x - (p.x() + p.width() // 2)) <= 2,
                    f"tail={tail_x} center={p.x() + p.width() // 2}")
-        self.check("S0 唤起后等待称呼", pa._awaiting_name)
-        self.check("S0 问候块已显示", pa.bubble.findChild(GreetBlock) is not None)
+        # v0.2.0：称呼由首启向导询问，气泡唤起不再自动拦截
+        self.check("S0 气泡唤起不再自动问称呼（已移向导）", not pa._awaiting_name)
         shot(pa.bubble, "00-first-run-ask-name.png")
-        pa.send("阿晨")  # 用户直接输入称呼
+        pa._awaiting_name = True  # 主动验证称呼回合链路（档案保存、不进引擎）
+        pa.send("阿晨")
         QTimer.singleShot(300, self._s0_saved)
 
     def _s0_saved(self):
@@ -141,8 +142,8 @@ class Runner:
         self.check("唤起后 AWAKE", pa.state is PetState.AWAKE)
         QTimer.singleShot(300, lambda: shot(pa.bubble, "02-bubble-summoned.png"))
         QTimer.singleShot(500, lambda: pa.send("你好，haochen，介绍一下你自己"))
-        # 生成中抓 thinking 姿态 + 对话流
-        QTimer.singleShot(1200, lambda: (
+        # v0.2.0：消息经 coordinator 队列异步泄流，THINK 状态稍后出现
+        QTimer.singleShot(1500, lambda: (
             shot(pa.pet, "03a-pet-thinking.png"),
             shot(pa.bubble, "03b-bubble-thinking.png"),
             self.check("生成中姿态 thinking", pa.pet.pose == "thinking", pa.pet.pose),
@@ -166,8 +167,18 @@ class Runner:
         self._s2_answer = ""
         pa.ctrl.answer_done.connect(self._s2_answer_got)
         pa.send("帮我读屏看看屏幕上有什么")
-        QTimer.singleShot(2500, self._s2_confirm_shown)
+        # v0.2.0：消息经队列异步泄流，确认条出现时间稍晚（mock tick × 多轮）
+        self._s2_confirm_polls = 0
+        QTimer.singleShot(2000, self._s2_wait_confirm)
         pa.ctrl.summary_done.connect(self._s2_done)
+
+    def _s2_wait_confirm(self):
+        pa = self.pa
+        if pa.bubble.confirm_pending or self._s2_confirm_polls >= 6:
+            self._s2_confirm_shown()
+            return
+        self._s2_confirm_polls += 1
+        QTimer.singleShot(1000, self._s2_wait_confirm)
 
     def _s2_answer_got(self, answer: str):
         self._s2_answer = answer

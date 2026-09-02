@@ -104,8 +104,11 @@ class PetWindow(QWidget):
 
     def set_pose(self, pose: str, animate: bool = True) -> None:
         """切换姿态：idle / thinking / angry(alert)。轻过渡 = 淡出→换图→淡入。"""
-        if pose == self._pose:
-            return
+        try:
+            if pose == self._pose:
+                return
+        except RuntimeError:
+            return  # C++ 对象已销毁（延迟回调触发）：静默
         self._pose = pose
         pm = self._pixmap(pose)
         if animate and pm is not None and self.isVisible():

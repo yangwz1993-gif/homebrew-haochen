@@ -161,9 +161,17 @@ class PetApp(QObject):
         self.state_changed.emit(s.value)
 
     def _alert_pose_then_idle(self) -> None:
-        """出错：alert(angry) 姿态亮 2.5s 后回 idle。"""
+        """出错：alert(angry) 姿态亮 2.5s 后回 idle（窗口销毁后静默跳过）。"""
         self.pet.set_pose(POSE_ALERT)
-        QTimer.singleShot(2500, lambda: self.pet.set_pose(POSE_FOR_STATE[self._state]))
+        state = self._state
+
+        def _back_to_pose() -> None:
+            try:
+                self.pet.set_pose(POSE_FOR_STATE[state])
+            except RuntimeError:
+                pass  # C++ 对象已销毁（App 退出中）：静默
+
+        QTimer.singleShot(2500, _back_to_pose)
 
     # ── 唤起 / 收起 ───────────────────────────────────────────
 

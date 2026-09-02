@@ -31,7 +31,7 @@ def install_menu_bar(app: QApplication, shell: AppShell):
     """Install (or return the existing) haochen menu bar with native shortcuts."""
     existing = app.findChild(QMenu, "haochen-app-menu")
     if existing is not None:
-        return app.menuBar()
+        return existing  # 已安装：返回挂住的菜单对象（幂等）
 
     bar = getattr(app, "_haochen_menu_bar", None)
     if bar is not None:
@@ -39,7 +39,7 @@ def install_menu_bar(app: QApplication, shell: AppShell):
     # macOS：首个无父 QMenuBar 成为原生菜单栏（LSUIElement 应用也适用）。
     bar = QMenuBar()
     bar.setObjectName(MENU_OBJECT_NAME)
-    app._haochen_menu_bar = bar  # 根住引用，防被 GC
+    setattr(app, "_haochen_menu_bar", bar)  # 根住引用，防被 GC
 
     menu = QMenu("haochen", bar)
     menu.setObjectName("haochen-app-menu")

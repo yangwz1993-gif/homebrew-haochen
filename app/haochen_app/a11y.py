@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 def _reduce_motion_preference() -> bool:
     """Read the user's Reduce Motion preference once per process."""
     try:
-        from Foundation import NSUserDefaults
+        from Foundation import NSUserDefaults  # pyright: ignore[reportAttributeAccessIssue]
     except ImportError:
         return False
     try:

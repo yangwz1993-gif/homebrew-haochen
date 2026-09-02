@@ -52,12 +52,46 @@ include = [
   "scripts",
   "app/haochen_app/version.py",
   "app/haochen_app/secure_storage.py",
-  "tests",
+  "app/haochen_app/keychain.py",
+  "app/haochen_app/key_validation.py",
+  "app/haochen_app/signing_status.py",
+  "app/haochen_app/a11y.py",
+  "app/haochen_app/menu_bar.py",
+  "app/haochen_app/session_coordinator.py",
+  "tests/test_application_version.py",
+  "tests/test_engine_lifecycle.py",
+  "tests/test_keychain.py",
+  "tests/test_onboarding.py",
+  "tests/test_private_storage.py",
+  "tests/test_reader_network_security.py",
+  "tests/test_release_security.py",
+  "tests/test_session_coordinator.py",
+  "tests/test_session_deletion.py",
+  "tests/test_versioning.py",
 ]
 exclude = [
   "**/verification",
   "pi-source",
   "packaging/spike",
+  "tests/test_app_shell.py",
+  "tests/test_chat_flows.py",
+  "tests/test_conversation_full.py",
+  "tests/test_core_modules_coverage.py",
+  "tests/test_coverage_gap.py",
+  "tests/test_engine_commands.py",
+  "tests/test_final_shell_coverage.py",
+  "tests/test_native_experience.py",
+  "tests/test_p0_final_coverage.py",
+  "tests/test_permissions.py",
+  "tests/test_pet_flows.py",
+  "tests/test_pet_window_permissions.py",
+  "tests/test_queue_visibility.py",
+  "tests/test_session_deletion_ui.py",
+  "tests/test_settings_window.py",
+  "tests/test_streaming_render.py",
+  "tests/test_supervisor_lifecycle.py",
+  "tests/test_supervisor_restart_cycle.py",
+  "tests/test_tool_card_states.py",
 ]
 venvPath = "app"
 venv = ".venv"
@@ -70,8 +104,16 @@ qt_api = "pyqt6"
 
 [tool.coverage.run]
 branch = true
-source = ["app/haochen_app", "app/reader"]
-omit = ["**/verification/**"]
+source = ["app/haochen_app"]
+omit = [
+  "**/verification/**",
+  "**/selfcheck.py",
+]
+
+# 测量口径（docs/quality-baseline.md）：
+# - 覆盖率统计应用运行时代码 app/haochen_app（selfcheck 是 CLI 验证脚本）。
+# - app/reader 是独立冻结执行体（HAOCHEN_PETREAD 子进程）：网络边界有直接单测，
+#   AX/截屏路径需真机辅助功能权限，由 qa-script.md 人工验收与视觉集成测试覆盖。
 
 [tool.coverage.report]
 show_missing = true

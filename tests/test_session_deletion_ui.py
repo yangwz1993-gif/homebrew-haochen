@@ -55,6 +55,12 @@ class FakeClient(QObject):
     def switch_session(self, _path: str) -> str:
         return self._id("switch")
 
+    def set_session_name(self, _name: str) -> str:
+        return self._id("set_session_name")
+
+    def set_model(self, _provider: str, _model_id: str) -> str:
+        return self._id("set_model")
+
     def respond_ui(self, *_args, **_kwargs) -> str:
         return self._id("ui")
 

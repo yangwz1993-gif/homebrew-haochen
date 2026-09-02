@@ -30,6 +30,13 @@ def test_menu_bar_provides_required_native_entries(qtbot) -> None:
     window = ChatWindow(client)
     qtbot.addWidget(window)
 
+    # 清理其它测试留下的全局菜单栏（生产只装一次，测试间需隔离）。
+    app = QApplication.instance()
+    existing = getattr(app, "_haochen_menu_bar", None)
+    if existing is not None:
+        existing.deleteLater()
+        app._haochen_menu_bar = None
+
     calls: list[str] = []
     shell = SimpleNamespace(
         show_chat=lambda: calls.append("chat"),

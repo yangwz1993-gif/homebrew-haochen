@@ -2,7 +2,7 @@
 """P4 真引擎全链路验收（P4 门禁）：配置 key → 对话 → 桌宠唤起 → 读屏确认 → 两步回答。
 
 用法（仓库根目录，真实调用 DeepSeek，花少量 token）：
-    HAOCHEN_HOME=/tmp/haochen-p4-real HAOCHEN_AUTO_IMPORT_KEY=1 QT_QPA_PLATFORM=offscreen \
+    HAOCHEN_HOME=/tmp/haochen-p4-real HAOCHEN_SKIP_ONBOARDING=1 QT_QPA_PLATFORM=offscreen \
         app/.venv/bin/python app/verification/p4_real_chain.py
 
 覆盖（开发总纲 §二 P4 门禁 + §四.4 回归清单）：
@@ -77,14 +77,15 @@ def main() -> int:
     # ── R0 首启 ────────────────────────────────────────────────
     print("── R0 首启：配置初始化 + key 导入 + 真引擎就绪 ──", flush=True)
     shell = AppShell()                    # 无 HAOCHEN_MOCK → 真引擎
-    shell.first_run_setup()               # AUTO_IMPORT=1：只读导入 deepseek key
+    # v0.2.0：key 由运行者预先在设置页/向导存入 Keychain（SKIP_ONBOARDING 跳过向导）
+    shell.first_run_setup()
     shell.start()
     chat, pet, sup = shell.chat, shell.pet, shell.supervisor
 
-    key = shell.store.get_key("deepseek") or ""
-    check("R0 key 只读导入（真 key 落 haochen auth.json）",
-          key.startswith("sk-") and "在此填入" not in
-          (HOME / "agent" / "auth.json").read_text())
+    auth_text = (HOME / "agent" / "auth.json").read_text(encoding="utf-8")
+    check("R0 key 经 Keychain（auth.json 只含引用，无明文）",
+          "$HAOCHEN_" in auth_text and "在此填入" not in auth_text
+          and "sk-" not in auth_text.replace("sk-在此填入", ""))
     ok = wait_until(lambda: sup.client.alive and chat._current_path is not None, 60,
                     "真引擎启动 + get_state")
     model = ""
