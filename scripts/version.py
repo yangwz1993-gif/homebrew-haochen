@@ -16,6 +16,7 @@ PYPROJECT = ROOT / "pyproject.toml"
 ENGINE_MANIFEST = ROOT / "engine" / "package.json"
 CASK = ROOT / "cask" / "Casks" / "haochen.rb"
 CASK_TEMPLATE = ROOT / "cask" / "Casks" / "haochen.rb.template"
+CASK_LEGACY_TEMPLATE = ROOT / "cask" / "Casks" / "haochen.rb.legacy.template"
 SEMVER_RE = re.compile(
     r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
     r"(?:-(?P<label>dev|alpha|beta|rc)\.(?P<sequence>0|[1-9]\d*))?$"
@@ -98,9 +99,10 @@ def check() -> None:
     if missing:
         raise ValueError(f"packaging/build.sh does not consume version metadata: {missing}")
 
-    template = CASK_TEMPLATE.read_text(encoding="utf-8")
-    if "@VERSION@" not in template or "@SHA256@" not in template:
-        raise ValueError("Cask template must contain @VERSION@ and @SHA256@")
+    for template_path in (CASK_TEMPLATE, CASK_LEGACY_TEMPLATE):
+        template = template_path.read_text(encoding="utf-8")
+        if "@VERSION@" not in template or "@SHA256@" not in template:
+            raise ValueError(f"Cask template must contain @VERSION@ and @SHA256@: {template_path}")
 
     print(
         f"Version OK: semver={version}, python={expected_pyproject}, "
@@ -108,14 +110,20 @@ def check() -> None:
     )
 
 
-def render_cask(dmg: Path) -> None:
+def render_cask(dmg: Path, *, legacy: bool = False) -> None:
     version = read_version()
     if not dmg.is_file():
         raise FileNotFoundError(dmg)
     digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
-    rendered = CASK_TEMPLATE.read_text(encoding="utf-8").replace("@VERSION@", version).replace("@SHA256@", digest)
+    template_path = CASK_LEGACY_TEMPLATE if legacy else CASK_TEMPLATE
+    rendered = (
+        template_path.read_text(encoding="utf-8")
+        .replace("@VERSION@", version)
+        .replace("@SHA256@", digest)
+    )
     CASK.write_text(rendered, encoding="utf-8")
-    print(f"Rendered {CASK.relative_to(ROOT)} for {dmg.name} ({digest})")
+    mode = "legacy" if legacy else "notarized"
+    print(f"Rendered {CASK.relative_to(ROOT)} ({mode}) for {dmg.name} ({digest})")
 
 
 def main() -> int:
@@ -125,6 +133,10 @@ def main() -> int:
     sub.add_parser("sync")
     render = sub.add_parser("render-cask")
     render.add_argument("dmg", type=Path)
+    render.add_argument(
+        "--legacy", action="store_true",
+        help="use the 0.1.x-style cask (postflight quarantine removal)",
+    )
     args = parser.parse_args()
     try:
         if args.command == "check":
@@ -132,7 +144,7 @@ def main() -> int:
         elif args.command == "sync":
             sync_metadata()
         else:
-            render_cask(args.dmg)
+            render_cask(args.dmg, legacy=args.legacy)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"version error: {exc}", file=sys.stderr)
         return 1

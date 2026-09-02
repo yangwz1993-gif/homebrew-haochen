@@ -33,7 +33,31 @@ case "$BUILD_MODE" in
       exit 1
     fi
     ;;
-  *) echo "ERROR: HAOCHEN_BUILD_MODE must be development or release" >&2; exit 1 ;;
+  legacy)
+    # 0.1.x 时代模式：稳定自签身份优先（无 Developer ID/公证）。用户已知情选择此模式。
+    LEGACY_IDENTITY="haochen Local Signing"
+    LEGACY_KEYCHAIN="$HOME/Library/Keychains/haochen-signing.keychain-db"
+    if [ -f "$LEGACY_KEYCHAIN" ]; then
+        # 钥匙串可能锁定：口令仅从用户本机数据目录的既有文件运行时读取（不入仓）
+        LEGACY_PW_FILE="$HOME/Library/Application Support/haochen/signing/signing.keychain-pw"
+        if [ -f "$LEGACY_PW_FILE" ]; then
+            security unlock-keychain -p "$(cat "$LEGACY_PW_FILE")" "$LEGACY_KEYCHAIN" 2>/dev/null || true
+        fi
+        ID_HASH="$(security find-identity -p codesigning "$LEGACY_KEYCHAIN" 2>/dev/null \
+            | grep "\"$LEGACY_IDENTITY\"" | head -1 | awk '{print $2}' || true)"
+    else
+        ID_HASH="$(security find-identity -p codesigning 2>/dev/null \
+            | grep "\"$LEGACY_IDENTITY\"" | head -1 | awk '{print $2}' || true)"
+    fi
+    if [ -n "$ID_HASH" ]; then
+        SIGNING_IDENTITY="$ID_HASH"
+        echo "    legacy 签名身份：$LEGACY_IDENTITY ($ID_HASH)"
+    else
+        SIGNING_IDENTITY="-"
+        echo "    legacy 未找到自签身份，回落 ad-hoc"
+    fi
+    ;;
+  *) echo "ERROR: HAOCHEN_BUILD_MODE must be development, release or legacy" >&2; exit 1 ;;
 esac
 STAGE="$DIST/stage"
 
@@ -115,11 +139,16 @@ SIGN_ARGS=(--force --sign "$SIGNING_IDENTITY")
 if [ -n "${HAOCHEN_KEYCHAIN:-}" ]; then
     SIGN_ARGS+=(--keychain "$HAOCHEN_KEYCHAIN")
 fi
-if [ "$BUILD_MODE" = "release" ]; then
-    SIGN_ARGS+=(--options runtime --timestamp)
-else
-    SIGN_ARGS+=(--timestamp=none)
-fi
+case "$BUILD_MODE" in
+  release) SIGN_ARGS+=(--options runtime --timestamp) ;;
+  development) SIGN_ARGS+=(--timestamp=none) ;;
+  legacy)
+    # 0.1.x 模式：无 hardened runtime/timestamp 要求；自签身份在用户搜索列表中。
+    if [ -z "${HAOCHEN_KEYCHAIN:-}" ] && [ -f "$LEGACY_KEYCHAIN" ]; then
+        SIGN_ARGS+=(--keychain "$LEGACY_KEYCHAIN")
+    fi
+    ;;
+esac
 
 sign_macho() {
     local target="$1"

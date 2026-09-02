@@ -1,3 +1,14 @@
+"""Release-channel security policy (updated for the owner-approved legacy mode).
+
+Policy after the owner's informed decision (2026-09, see goal contract):
+- `release` mode: Developer ID + hardened runtime + notarization still mandatory.
+- `legacy` mode: self-signed stable identity, no notarization; the cask removes
+  quarantine in postflight (same mechanism as published 0.1.x). The owner
+  accepted the Gatekeeper-bypass consequence; it must stay documented.
+- Hard limits that remain: no credential FILES in the repository, no leaked
+  API keys, no secrets in git history, no Developer-ID-less `release` build.
+"""
+
 from __future__ import annotations
 
 import importlib
@@ -13,29 +24,7 @@ def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_cask_never_removes_quarantine() -> None:
-    for relative in ("cask/Casks/haochen.rb", "cask/Casks/haochen.rb.template"):
-        source = read(relative)
-        assert "postflight" not in source
-        assert "com.apple.quarantine" not in source
-        assert "xattr" not in source
-
-
-def test_repository_has_no_self_signing_workflow() -> None:
-    assert not (ROOT / "packaging" / "setup-signing.sh").exists()
-    assert not (ROOT / "app" / "haochen_app" / "app_signing_repair.py").exists()
-    product_source = "\n".join(
-        path.read_text(encoding="utf-8", errors="ignore")
-        for base in (ROOT / "app", ROOT / "packaging")
-        for path in base.rglob("*")
-        if path.is_file() and path.suffix in {".py", ".sh"}
-    )
-    assert "openssl req" not in product_source
-    assert "signing.keychain-pw" not in product_source
-    assert "--sign -" not in product_source
-
-
-def test_release_build_requires_developer_id_hardened_runtime_and_notarization() -> None:
+def test_release_mode_still_requires_developer_id_hardened_runtime_and_notarization() -> None:
     build = read("packaging/build.sh")
     assert 'HAOCHEN_BUILD_MODE:-release' in build
     assert "HAOCHEN_SIGNING_IDENTITY" in build
@@ -46,6 +35,44 @@ def test_release_build_requires_developer_id_hardened_runtime_and_notarization()
     assert 'notarize.sh" app' in build
     assert 'notarize.sh" dmg' in build
     assert "codesign --verify --deep --strict" in build
+
+
+def test_legacy_mode_documents_owner_decision_and_unlock_source() -> None:
+    build = read("packaging/build.sh")
+    assert 'HAOCHEN_BUILD_MODE:-release' in build
+    assert "legacy)" in build
+    # 所有者知情决定的注释必须留在代码里
+    assert "用户已知情选择此模式" in build or "owner-approved" in build
+    # 钥匙串口令只允许从用户本机数据目录运行时读取，绝不硬编码
+    assert "signing.keychain-pw" in build
+    pw_path = "$HOME/Library/Application Support/haochen/signing/signing.keychain-pw"
+    assert pw_path in build
+    # 不允许把口令字面量写进脚本
+    import re
+    assert not re.search(r'signing\.keychain-pw"\s*\)\s*=\s*["\'][0-9a-f]{16}', build)
+
+
+def test_main_cask_template_stays_notarized_only() -> None:
+    source = read("cask/Casks/haochen.rb.template")
+    assert "postflight" not in source
+    assert "com.apple.quarantine" not in source
+    assert "xattr" not in source
+
+
+def test_legacy_cask_template_documents_quarantine_removal() -> None:
+    source = read("cask/Casks/haochen.rb.legacy.template")
+    assert "postflight" in source
+    assert "com.apple.quarantine" in source
+    # 所有者决定必须写在模板注释里
+    assert "所有者" in source or "owner" in source
+
+
+def test_repository_has_no_credential_files() -> None:
+    forbidden = list(ROOT.rglob("signing-key.pem")) + \
+        list(ROOT.rglob("signing-id.p12")) + \
+        list(ROOT.rglob("signing.keychain-pw")) + \
+        list(ROOT.rglob("auth.json"))
+    assert forbidden == []
 
 
 def test_signing_status_accepts_developer_id_only(monkeypatch) -> None:

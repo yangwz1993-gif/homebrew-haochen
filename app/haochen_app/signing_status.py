@@ -42,4 +42,4 @@ def signing_summary() -> str:
         return "开发模式（未打包）"
     if is_developer_id_signed():
         return "Developer ID 签名 ✓"
-    return "未通过 Developer ID 签名（仅限开发测试）"
+    return "自签/未公证签名（发布者分发模式）"

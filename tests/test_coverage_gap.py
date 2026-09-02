@@ -107,7 +107,7 @@ def test_signing_status_frozen_without_codesign(monkeypatch) -> None:
         lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="", stderr=""),
     )
     assert signing_status.is_developer_id_signed() is False
-    assert signing_status.signing_summary() == "未通过 Developer ID 签名（仅限开发测试）"
+    assert signing_status.signing_summary() == "自签/未公证签名（发布者分发模式）"
 
 
 # ── key_validation ──────────────────────────────────────────
