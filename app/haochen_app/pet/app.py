@@ -58,6 +58,7 @@ class PetApp(QObject):
         self._aborted = False
         self._status_block = None
         self._queue_requests: dict[str, str] = {}
+        self._queue_indicators: dict[str, object] = {}
         self._detail_open = False                       # 详情（对话窗口展开模式）打开中
         # v0.1.7 首启问称呼：等待用户输入称呼中 / 本次会话已问过（避免重复问候块）
         self._awaiting_name = False
@@ -117,7 +118,7 @@ class PetApp(QObject):
         self.ctrl.failed.connect(self._on_failed)
         self.ctrl.request_committed.connect(self._on_request_committed)
         self.ctrl.request_failed.connect(self._on_request_failed)
-        self.coordinator.queue_changed.connect(lambda _queue: QTimer.singleShot(0, self._drain_queue))
+        self.coordinator.queue_changed.connect(lambda _queue: self._sync_queue_indicators())
 
         # ── 引擎事件（确认/感知/崩溃）──
         self.client.event.connect(self._on_engine_event)
@@ -319,6 +320,31 @@ class PetApp(QObject):
         item = self.coordinator.next_ready("pet")
         if item is not None:
             self._send_queued_item(item)
+
+    def _sync_queue_indicators(self) -> None:
+        for item in self.coordinator.queue:
+            if item.source != "pet" or item.id in self._queue_indicators:
+                continue
+            if item.needs_review or item.request_id is not None:
+                continue
+            preview = item.text if len(item.text) <= 60 else item.text[:60] + "…"
+            indicator = self.bubble.add_queue_indicator(preview)
+
+            def cancel(item_id=item.id, ind=indicator) -> None:
+                try:
+                    self.coordinator.cancel(item_id)
+                except KeyError:
+                    return
+                ind.mark_cancelled()
+
+            indicator.cancel_button.clicked.connect(lambda _checked=False: cancel())
+            self._queue_indicators[item.id] = indicator
+        live_ids = {item.id for item in self.coordinator.queue if item.source == "pet"}
+        for item_id in list(self._queue_indicators):
+            if item_id not in live_ids:
+                indicator = self._queue_indicators.pop(item_id)
+                self.bubble.remove_widget(indicator)
+        QTimer.singleShot(0, self._drain_queue)
 
     def _on_request_committed(self, request_id: str) -> None:
         if request_id in self._queue_requests:

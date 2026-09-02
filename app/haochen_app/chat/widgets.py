@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from PyQt6.QtCore import (
     QEasingCurve,
@@ -275,10 +276,12 @@ class StatusBubble(QWidget):
 class ToolCard(QFrame):
     """工具卡（visual-spec §6.3）：图标 + 工具名 + 状态 + 摘要，可折叠看 args/输出。
 
-    状态色：成功 color-accent / 进行中 color-info / 失败 color-danger。
+    状态机（task-4b）：运行中 → 完成/失败/已取消；运行中可取消，失败可重试，
+    有产物路径（write/edit）可打开。
     """
 
     _ICON = {"read_screen": "🖥", "bash": "⌘", "read": "📄", "write": "✏️", "edit": "✏️"}
+    _ARTIFACT_KEYS = ("file_path", "path", "filePath")
 
     def __init__(self, tool_call_id: str, tool_name: str, args: dict | None = None,
                  parent=None):
@@ -289,6 +292,7 @@ class ToolCard(QFrame):
         self.output = ""
         self.is_error = False
         self._expanded = False
+        self._started_at: float | None = None
 
         self.setStyleSheet(f"""
             ToolCard {{
@@ -324,6 +328,28 @@ class ToolCard(QFrame):
         self.summary = QLabel(self._summary_text())
         self.summary.setStyleSheet(f"color: {C['ink_soft']}; font-size: {FONT['body_sm']}px;")
         header.addWidget(self.summary, 1)
+
+        # 操作区（task-4b）：运行中→取消；失败→重试；有产物→打开。
+        self.cancel_button = QPushButton("取消")
+        self.cancel_button.setStyleSheet(button_outline())
+        self.cancel_button.setToolTip("停止当前回合")
+        self.cancel_button.hide()
+        header.addWidget(self.cancel_button)
+
+        self.retry_button = QPushButton("重试")
+        self.retry_button.setStyleSheet(button_outline())
+        self.retry_button.setToolTip("重新发送上一条消息")
+        self.retry_button.hide()
+        header.addWidget(self.retry_button)
+
+        self.open_button = QPushButton("打开")
+        self.open_button.setStyleSheet(button_outline())
+        artifact = self.artifact_path()
+        if artifact is not None:
+            self.open_button.setToolTip(str(artifact))
+        else:
+            self.open_button.hide()
+        header.addWidget(self.open_button)
         root.addLayout(header)
 
         self.detail = QTextBrowser()
@@ -352,16 +378,53 @@ class ToolCard(QFrame):
             return cmd if len(cmd) <= 42 else cmd[:42] + "…"
         return ""
 
+    def start_clock(self) -> None:
+        """记录工具开始时刻，用于完成时显示耗时（本地测量，不依赖引擎字段）。"""
+        import time
+        self._started_at = time.monotonic()
+
+    def elapsed_ms(self) -> int | None:
+        if self._started_at is None:
+            return None
+        import time
+        return int((time.monotonic() - self._started_at) * 1000)
+
     def mark_done(self, result_text: str, is_error: bool, elapsed_ms: int | None = None) -> None:
         self.is_error = is_error
         self.output = result_text or ""
+        self.cancel_button.hide()
         if is_error:
             self.status.setText("✗ 失败")
             self._set_status_color(C["danger"])
+            self.retry_button.show()
         else:
-            self.status.setText("✓ 完成")
+            elapsed = self._format_elapsed(elapsed_ms)
+            self.status.setText(f"✓ 完成{elapsed}")
             self._set_status_color(C["accent"])
         self._refresh_detail()
+
+    def mark_cancelled(self) -> None:
+        self.is_error = False
+        self.cancel_button.hide()
+        self.status.setText("已取消")
+        self._set_status_color(C["ink_soft"])
+        self._refresh_detail()
+
+    @staticmethod
+    def _format_elapsed(elapsed_ms: int | None) -> str:
+        if elapsed_ms is None or elapsed_ms < 0:
+            return ""
+        if elapsed_ms < 1000:
+            return f" · {elapsed_ms}ms"
+        return f" · {elapsed_ms / 1000:.1f}s"
+
+    def artifact_path(self) -> Path | None:
+        """write/edit 类工具的产物路径（用于“打开”）"""
+        for key in self._ARTIFACT_KEYS:
+            value = self.args.get(key)
+            if isinstance(value, str) and value.strip():
+                return Path(value.strip())
+        return None
 
     def _refresh_detail(self) -> None:
         import json
@@ -484,6 +547,37 @@ class ActionBanner(QFrame):
     def mark_done(self, text: str) -> None:
         self.message.setText(text)
         self.action_button.hide()
+
+    def set_max_width(self, w: int) -> None:
+        self.setMaximumWidth(w)
+        self.setMinimumWidth(min(360, w))
+
+
+class QueueIndicator(QFrame):
+    """排队中消息的可见指示条：显示内容预览并可取消（interaction-spec §3）。"""
+
+    def __init__(self, preview: str, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"""
+            QueueIndicator {{
+                background: {C['surface']};
+                border: 1px dashed {C['line']};
+                border-radius: {RADIUS_CARD}px;
+            }}
+        """)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 6, 14, 6)
+        self.label = QLabel(f"已排队 · {preview}")
+        self.label.setStyleSheet(
+            f"color: {C['ink_soft']}; font-size: {FONT['body_sm']}px;")
+        lay.addWidget(self.label, 1)
+        self.cancel_button = QPushButton("取消")
+        self.cancel_button.setStyleSheet(button_outline())
+        lay.addWidget(self.cancel_button)
+
+    def mark_cancelled(self) -> None:
+        self.label.setText("已取消")
+        self.cancel_button.hide()
 
     def set_max_width(self, w: int) -> None:
         self.setMaximumWidth(w)

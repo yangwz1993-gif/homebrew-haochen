@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
@@ -33,13 +34,14 @@ from ..conversation import SUMMARY_KICK_PREFIX, ConversationController, parse_pa
 from ..engine_client import EngineClient, delete_session, restore_session
 from ..session_coordinator import QueueItem, SessionCoordinator
 from .sidebar import SessionSidebar
-from .theme import FONT, RADIUS_INPUT, C, button_solid
+from .theme import FONT, RADIUS_INPUT, C, button_outline, button_solid
 from .widgets import (
     ActionBanner,
     AssistantBubble,
     BubbleRow,
     ConfirmBar,
     ErrorBanner,
+    QueueIndicator,
     QueueRecoveryBanner,
     StatusBubble,
     ToolCard,
@@ -92,6 +94,9 @@ class ChatWindow(QWidget):
     隐藏（detail_collapsed 通知 pet 侧恢复气泡），任何情况下不触发 app 退出。
     """
 
+    STREAM_THROTTLE_MS = 50          # interaction-spec §3：流式重绘节流
+    SCROLL_FOLLOW_THRESHOLD = 24     # 距底小于该像素视为“用户在底部”
+
     detail_collapsed = pyqtSignal()   # 详情模式收起动画播完、窗口已隐藏
 
     def __init__(self, client: EngineClient | None = None, supervisor=None, parent=None):
@@ -116,9 +121,13 @@ class ChatWindow(QWidget):
         )
         self._queue_requests: dict[str, str] = {}  # request id -> queue item id
         self._queue_banners: dict[str, QueueRecoveryBanner] = {}
+        self._queue_indicators: dict[str, tuple[QueueIndicator, BubbleRow]] = {}
         self._last_user_text = ""
         self._stream_row: BubbleRow | None = None
         self._stream_buf = ""
+        self._stream_dirty = False      # 节流窗口内已有新增量待渲染
+        self._stream_timer: QTimer | None = None
+        self._follow_stream = True      # 用户是否在底部（决定是否自动跟随）
         self._thinking_row: BubbleRow | None = None
         self._status_row: BubbleRow | None = None   # 提炼结论等轻状态
         self._tool_cards: dict[str, ToolCard] = {}
@@ -159,6 +168,10 @@ class ChatWindow(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet("QScrollArea { border: none; }")
+        bar = self.scroll.verticalScrollBar()
+        bar.valueChanged.connect(lambda _value: self._on_scroll_moved())
+        # 内容高度变化（流式增长）时，若用户在底部则继续跟随。
+        bar.rangeChanged.connect(lambda _min, _max: self._on_range_changed())
         self.flow_host = QWidget()
         self.flow = QVBoxLayout(self.flow_host)
         self.flow.setContentsMargins(0, 12, 0, 12)
@@ -166,6 +179,16 @@ class ChatWindow(QWidget):
         self.flow.addStretch(1)
         self.scroll.setWidget(self.flow_host)
         rlay.addWidget(self.scroll, 1)
+
+        self.jump_to_latest_button = QPushButton("↓ 回到最新")
+        self.jump_to_latest_button.setStyleSheet(button_outline())
+        self.jump_to_latest_button.clicked.connect(self._jump_to_latest)
+        self.jump_to_latest_button.hide()
+        jump_row = QHBoxLayout()
+        jump_row.setContentsMargins(16, 0, 16, 0)
+        jump_row.addStretch(1)
+        jump_row.addWidget(self.jump_to_latest_button)
+        rlay.addLayout(jump_row)
 
         input_bar = QHBoxLayout()
         input_bar.setContentsMargins(16, 8, 16, 0)
@@ -280,10 +303,39 @@ class ChatWindow(QWidget):
         sb = self.scroll.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    def _on_scroll_moved(self) -> None:
+        """用户主动滚动后重估“是否在底部”；离开底部即停止强制跟随。"""
+        sb = self.scroll.verticalScrollBar()
+        at_bottom = sb.maximum() - sb.value() <= self.SCROLL_FOLLOW_THRESHOLD
+        was_following = self._follow_stream
+        self._follow_stream = at_bottom
+        self.jump_to_latest_button.setVisible(
+            not at_bottom and (self._stream_row is not None or bool(self._tool_cards))
+        )
+        if not at_bottom and was_following and self._stream_timer is not None:
+            return  # 保持当前节流状态，只是不再自动滚底
+
+    def _jump_to_latest(self) -> None:
+        self._follow_stream = True
+        self.jump_to_latest_button.hide()
+        self._scroll_bottom()
+
+    def _maybe_follow(self) -> None:
+        if self._follow_stream:
+            # rangeChanged 会在布局完成后触发 _on_range_changed 完成跟随；
+            # 这里再补一次同步滚动，覆盖“高度未变但内容变了”的场景。
+            QTimer.singleShot(0, self._scroll_bottom)
+
+    def _on_range_changed(self) -> None:
+        if self._follow_stream:
+            sb = self.scroll.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
     def _drop_row(self, row: BubbleRow | None) -> None:
         if row is None:
             return
         self.flow.removeWidget(row)
+        row.setParent(None)
         row.deleteLater()
 
     def resizeEvent(self, ev) -> None:
@@ -455,6 +507,11 @@ class ChatWindow(QWidget):
         if busy:
             self._thinking_row = self._add_row(StatusBubble("haochen 正在想", "thinking"), "left")
         else:
+            # 回合结束仍未收到 end 事件的工具卡 → 视为已取消（如被 abort）。
+            for card in self._tool_cards.values():
+                if card.status.text() == "运行中…":
+                    card.mark_cancelled()
+            self._tool_cards.clear()
             # busy(False) 先于 summary_done/failed 同步发出，推迟一拍让结论先落位
             QTimer.singleShot(0, self._drain_queue)
 
@@ -481,29 +538,66 @@ class ChatWindow(QWidget):
 
     def _sync_queue_banners(self) -> None:
         for item in self.coordinator.queue:
-            if not item.needs_review or item.id in self._queue_banners:
+            if item.source != "chat":
                 continue
-            preview = item.text if len(item.text) <= 80 else item.text[:80] + "…"
-            banner = QueueRecoveryBanner(preview)
-            self._queue_banners[item.id] = banner
-            self._add_row(banner, "left")
+            if item.needs_review:
+                self._ensure_recovery_banner(item)
+            elif item.request_id is None:
+                self._ensure_queue_indicator(item)
+        self._prune_queue_widgets()
 
-            def resend(item_id=item.id, recovery_banner=banner) -> None:
-                try:
-                    self.coordinator.retry(item_id)
-                except KeyError:
-                    return
-                recovery_banner.mark_done("已选择重新发送")
+    def _ensure_recovery_banner(self, item: QueueItem) -> None:
+        if item.id in self._queue_banners:
+            return
+        preview = item.text if len(item.text) <= 80 else item.text[:80] + "…"
+        banner = QueueRecoveryBanner(preview)
+        self._queue_banners[item.id] = banner
+        self._add_row(banner, "left")
 
-            def cancel(item_id=item.id, recovery_banner=banner) -> None:
-                try:
-                    self.coordinator.cancel(item_id)
-                except KeyError:
-                    return
-                recovery_banner.mark_done("已取消未发送消息")
+        def resend(item_id=item.id, recovery_banner=banner) -> None:
+            try:
+                self.coordinator.retry(item_id)
+            except KeyError:
+                return
+            recovery_banner.mark_done("已选择重新发送")
 
-            banner.resend_requested.connect(resend)
-            banner.cancel_requested.connect(cancel)
+        def cancel(item_id=item.id, recovery_banner=banner) -> None:
+            try:
+                self.coordinator.cancel(item_id)
+            except KeyError:
+                return
+            recovery_banner.mark_done("已取消未发送消息")
+
+        banner.resend_requested.connect(resend)
+        banner.cancel_requested.connect(cancel)
+
+    def _ensure_queue_indicator(self, item: QueueItem) -> None:
+        if item.id in self._queue_indicators or item.id in self._queue_banners:
+            return
+        preview = item.text if len(item.text) <= 60 else item.text[:60] + "…"
+        indicator = QueueIndicator(preview)
+        row = self._add_row(indicator, "left")
+        self._queue_indicators[item.id] = (indicator, row)
+
+        def cancel(item_id=item.id, ind=indicator) -> None:
+            try:
+                self.coordinator.cancel(item_id)
+            except KeyError:
+                return
+            ind.mark_cancelled()
+
+        indicator.cancel_button.clicked.connect(lambda _checked=False: cancel())
+
+    def _prune_queue_widgets(self) -> None:
+        live_ids = {item.id for item in self.coordinator.queue if item.source == "chat"}
+        for item_id in list(self._queue_indicators):
+            if item_id not in live_ids:
+                indicator, row = self._queue_indicators.pop(item_id)
+                self._drop_row(row)
+        for item_id in list(self._queue_banners):
+            if item_id not in live_ids:
+                self._queue_banners.pop(item_id)
+                # banner 由恢复流程 mark_done 收尾，这里只解除登记。
 
     def _on_answer_delta(self, delta: str) -> None:
         self._drop_thinking()
@@ -513,17 +607,40 @@ class ChatWindow(QWidget):
             self._stream_row = self._add_row(bubble, "left")
             self._stream_buf = ""
         self._stream_buf += delta
-        self._stream_row.content.append_stream(self._stream_buf)
-        QTimer.singleShot(0, self._scroll_bottom)
+        self._stream_dirty = True
+        if self._stream_timer is None:
+            self._stream_timer = QTimer(self)
+            self._stream_timer.setSingleShot(True)
+            self._stream_timer.timeout.connect(self._flush_stream)
+            self._stream_timer.start(self.STREAM_THROTTLE_MS)
+        self._maybe_follow()
+
+    def _flush_stream(self) -> None:
+        """节流窗口到期：把累计缓冲真正渲染一次；无增量则不发定时器。"""
+        if self._stream_timer is not None:
+            self._stream_timer.stop()
+            self._stream_timer = None
+        if self._stream_row is None:
+            return
+        if self._stream_dirty:
+            self._stream_row.content.append_stream(self._stream_buf)
+            self._stream_dirty = False
+            self._maybe_follow()
 
     def _on_answer_done(self, answer: str) -> None:
         self._drop_thinking()
+        self._flush_stream()
         if self._stream_row is not None:
             self._stream_row.content.set_text(answer)
             self._stream_row = None
             self._stream_buf = ""
+            self._stream_dirty = False
+            if self._stream_timer is not None:
+                self._stream_timer.stop()
+                self._stream_timer = None
         else:
             self._add_row(AssistantBubble("answer"), "left").content.set_text(answer)
+        QTimer.singleShot(0, self._maybe_follow)
 
     def _on_summarizing(self) -> None:
         self._status_row = self._add_row(StatusBubble("正在提炼结论", "thinking"), "left")
@@ -542,6 +659,11 @@ class ChatWindow(QWidget):
         self._drop_thinking()
         self._drop_status()
         self._stream_row = None
+        self._stream_buf = ""
+        self._stream_dirty = False
+        if self._stream_timer is not None:
+            self._stream_timer.stop()
+            self._stream_timer = None
         banner = ErrorBanner(f"{err}")
         banner.retry.connect(self._retry_last_message)
         self._add_row(banner, "left")
@@ -559,6 +681,14 @@ class ChatWindow(QWidget):
             self.coordinator.retry(pending.id)
         elif self._last_user_text:
             self.coordinator.enqueue(self._last_user_text, "chat")
+
+    def _open_artifact(self, path: Path) -> None:
+        """用系统默认程序打开工具产物（write/edit 的文件）。"""
+        if not path.is_file():
+            self._add_row(ErrorBanner(f"产物不存在：{path}", retryable=False), "left")
+            return
+        from PyQt6.QtGui import QDesktopServices, QUrl
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _drop_thinking(self) -> None:
         if self._thinking_row:
@@ -587,6 +717,14 @@ class ChatWindow(QWidget):
                 # 感知提示（interaction-spec §4.1：绝不默默读屏）
                 self._add_row(StatusBubble("我正看一下你的屏幕…", "perceive"), "left")
             card = ToolCard(ev.get("toolCallId", ""), name, ev.get("args") or {})
+            card.start_clock()
+            # 运行中可取消（中止回合）；失败可重试；产物可打开。
+            card.cancel_button.clicked.connect(lambda _checked=False: self._on_stop())
+            card.retry_button.clicked.connect(lambda _checked=False: self._retry_last_message())
+            artifact = card.artifact_path()
+            if artifact is not None:
+                card.open_button.clicked.connect(
+                    lambda _checked=False, path=artifact: self._open_artifact(path))
             self._tool_cards[card.tool_call_id] = card
             self._add_row(card, "left")
         elif t == "tool_execution_end":
@@ -595,7 +733,7 @@ class ChatWindow(QWidget):
                 result = ev.get("result") or {}
                 text = "".join(c.get("text", "") for c in result.get("content", [])
                                if c.get("type") == "text")
-                card.mark_done(text, bool(ev.get("isError")))
+                card.mark_done(text, bool(ev.get("isError")), card.elapsed_ms())
         elif t == "extension_ui_request":
             self._on_ui_request(ev)
         elif t == "extension_error":
@@ -780,6 +918,8 @@ class ChatWindow(QWidget):
                 card.mark_done(text, bool(msg.get("isError")))
                 self._add_row(card, "left")
         QTimer.singleShot(0, self._scroll_bottom)
+        self._follow_stream = True
+        self.jump_to_latest_button.hide()
 
     def _render_history_assistant(self, msg: dict) -> None:
         if msg.get("stopReason") == "error":
@@ -811,6 +951,7 @@ class ChatWindow(QWidget):
         self._confirm = None
         self._tool_cards.clear()
         self._queue_banners.clear()
+        self._queue_indicators.clear()
         while self.flow.count() > 1:
             item = self.flow.takeAt(0)
             w = item.widget()

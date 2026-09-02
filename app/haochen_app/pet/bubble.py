@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..chat.widgets import QueueIndicator
 from . import theme as T
 
 BUBBLE_WIDTH = 400          # ≤420（visual-spec §6.1）
@@ -427,6 +428,16 @@ class BubbleWindow(QWidget):
 
     def add_user_message(self, text: str) -> None:
         self._append(UserBlock(text))
+
+    def add_queue_indicator(self, preview: str) -> QueueIndicator:
+        indicator = QueueIndicator(preview)
+        self._append(indicator)
+        return indicator
+
+    def remove_widget(self, w: QWidget) -> None:
+        self.flow.removeWidget(w)
+        w.deleteLater()
+        self._refresh_height()
 
     def add_perception_hint(self, text: str) -> None:
         self._append(HintBlock(text))
