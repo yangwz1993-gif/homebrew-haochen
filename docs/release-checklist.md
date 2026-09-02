@@ -1,7 +1,7 @@
 # v0.2.0 发布清单
 
-> 状态：代码与质量门禁全部完成（241 pytest / 6 套回归全绿 / 覆盖率 81%，P0 模块 ≥90%）。
-> 发布签名被 **Developer ID 凭据** 阻塞（外部动作，见 `credential-rotation-required.md`）。
+> 状态（2026-09 更新）：所有者已知情选择沿用 0.1.x 的 legacy 发布模式（自签身份 + cask postflight 去隔离，不经 Apple 公证）。
+> DMG 已按该模式构建并通过校验；cask 已推送 tap；tag v0.2.0 已推。**剩余唯一步骤：网页创建 Release v0.2.0 并上传 DMG 资产。**
 
 ## A. 已完成的验收（证据可复跑）
 
