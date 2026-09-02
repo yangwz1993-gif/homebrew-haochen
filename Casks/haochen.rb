@@ -1,18 +1,18 @@
 cask "haochen" do
-  version "0.1.10"
-  sha256 "05b80643e1012416fd18778d64a99cc5cc2d1f58929391f0fc9cceee9be52501"
+  version "0.2.0"
+  sha256 "e516146dbc868edf1251962e331f4b51b574eae7ba182b9d047bd420567ea9bc"
 
   url "https://github.com/yangwz1993-gif/homebrew-haochen/releases/download/v#{version}/haochen-#{version}.dmg"
   name "haochen"
   desc "桌面 AI 伙伴（读屏/看图/聊天的桌宠）"
   homepage "https://github.com/yangwz1993-gif/homebrew-haochen"
 
-  # 自签证书，非 Apple Developer 签名；cask 安装后自动去隔离标记，避免 Gatekeeper 拦截。
+  # 发布模式说明（所有者决定，2026-09）：App 由发布者自签身份签名，未经 Apple 公证。
+  # postflight 移除 quarantine 使 Gatekeeper 不拦截（与 0.1.x 已发布 cask 同一机制）。
   # 注意：仍需用户在系统设置授权「辅助功能 + 屏幕录制」（系统机制，无法通过 cask 跳过）。
   app "haochen.app"
 
   postflight do
-    # 去掉隔离标记，避免 Gatekeeper 拦截（对齐 Homebrew --no-quarantine 行为）
     system_command "xattr",
                    args: ["-dr", "com.apple.quarantine", "#{staged_path}/haochen.app"],
                    sudo: false
