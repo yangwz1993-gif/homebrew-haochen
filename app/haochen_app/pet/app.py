@@ -410,8 +410,10 @@ class PetApp(QObject):
         self._set_state(PetState.AWAKE)
 
     def _on_failed(self, err: str) -> None:
+        from ..conversation import humanize_error
+
         self._status_block = None
-        self.bubble.add_error(err)
+        self.bubble.add_error(humanize_error(err))
         self.bubble.set_input_visible(True)  # 出错可重试/重新提问
         self._alert_pose_then_idle()
         if not self.bubble.summoned:

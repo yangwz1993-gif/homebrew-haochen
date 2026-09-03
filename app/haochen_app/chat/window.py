@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 
 from ..a11y import screen_of
 from ..app_tracking import write_last_user_text
-from ..conversation import SUMMARY_KICK_PREFIX, ConversationController, parse_paired, strip_tags
+from ..conversation import SUMMARY_KICK_PREFIX, ConversationController, humanize_error, parse_paired, strip_tags
 from ..engine_client import EngineClient, delete_session, restore_session
 from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
@@ -717,7 +717,7 @@ class ChatWindow(QWidget):
         if self._stream_timer is not None:
             self._stream_timer.stop()
             self._stream_timer = None
-        banner = ErrorBanner(f"{err}")
+        banner = ErrorBanner(humanize_error(err))
         banner.retry.connect(self._retry_last_message)
         self._add_row(banner, "left")
 
@@ -977,7 +977,7 @@ class ChatWindow(QWidget):
     def _render_history_assistant(self, msg: dict) -> None:
         if msg.get("stopReason") == "error":
             self._add_row(
-                ErrorBanner(msg.get("errorMessage") or "引擎错误", retryable=False), "left")
+                ErrorBanner(humanize_error(msg.get("errorMessage") or "引擎错误"), retryable=False), "left")
             return
         text = "".join(c.get("text", "") for c in msg.get("content", [])
                        if c.get("type") == "text")

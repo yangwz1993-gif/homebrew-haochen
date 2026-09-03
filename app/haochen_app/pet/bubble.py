@@ -15,6 +15,7 @@ from PyQt6.QtCore import (
     QPointF,
     QPropertyAnimation,
     QRectF,
+    QSize,
     Qt,
     QTimer,
     pyqtSignal,
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -68,9 +70,27 @@ class ChatInput(QTextEdit):
 
 # ── 对话流气泡块 ──────────────────────────────────────────────
 
+class _WrapLabel(QLabel):
+    """折行文本标签：修正 Qt 对无空格 CJK 长句的尺寸缺陷。
+
+    QLabel+wordWrap 的 minimumSizeHint 会把「整句一个词」的宽度当最小宽度，
+    且最小高度按极窄宽度折行（爆炸值），把滚动内容最小高度撑破 viewport
+    （0.2.0 用户实测：横向裁字 + 气泡异常高 + 大片空白）。
+    这里把最小尺寸收敛为「一行高、宽度交给布局」，实际折行高度仍由
+    heightForWidth 在布局时按真实宽度给出。
+    """
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+    def minimumSizeHint(self):
+        return QSize(1, self.fontMetrics().lineSpacing())
+
+
 def _text_label(text: str, css: str, size: float = T.FONT_BODY) -> QLabel:
-    lb = QLabel(text)
-    lb.setWordWrap(True)
+    lb = _WrapLabel(text)
     lb.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     lb.setStyleSheet(f"font-size: {size}px; {css}")
     return lb

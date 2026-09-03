@@ -43,6 +43,24 @@ SUMMARY_KICK_TEMPLATE = (
 )
 
 
+def humanize_error(text: str) -> str:
+    """把引擎错误（如 '402: {"message":"Insufficient Balance",...}'）转成用户能懂的文案。"""
+    import json as _json
+
+    raw = (text or "").strip()
+    m = re.match(r"^(\d{3}):\s*(\{.*\})\s*$", raw, re.S)
+    if not m:
+        return raw
+    code, payload = m.group(1), m.group(2)
+    try:
+        message = str(_json.loads(payload).get("message") or payload)
+    except ValueError:
+        return raw
+    if "insufficient balance" in message.lower():
+        return f"API 账户余额不足（HTTP {code}）——请到服务商控制台充值，或在设置中更换 Key"
+    return f"API 错误 {code}：{message}"
+
+
 def strip_tags(text: str) -> str:
     return _ANY_TAG.sub("", text or "").strip()
 
