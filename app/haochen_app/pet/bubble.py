@@ -363,7 +363,7 @@ class BubbleWindow(QWidget):
 
         # 输入区（交互规范 §5：发送后收起，仅消息气泡流；需再输入时才出现）
         self._input_panel = QWidget()
-        self._input_panel.setStyleSheet("background: transparent;")
+        self._input_panel.setObjectName("inputPanel")
         ip = QVBoxLayout(self._input_panel)
         ip.setContentsMargins(0, 0, 0, 0)
         ip.setSpacing(6)
@@ -379,13 +379,46 @@ class BubbleWindow(QWidget):
         row = QHBoxLayout()
         self.btn_stop = QPushButton("■ 停")
         self.btn_stop.setObjectName("outlineBtn")
+        self.btn_stop.setAccessibleName("停止生成")
         self.btn_stop.setToolTip("打断当前生成（Esc）")
+        self.btn_stop.setStyleSheet(f"""
+            QPushButton {{
+                border: 1px solid {T.COLOR_DANGER};
+                border-radius: {T.RADIUS_BUTTON}px;
+                padding: 4px 10px;
+                background: {T.COLOR_SURFACE};
+                color: {T.COLOR_DANGER};
+                font-size: {T.FONT_BODY_SM}px;
+            }}
+            QPushButton:hover {{
+                background: {T.COLOR_BG};
+            }}
+        """)
         self.btn_stop.clicked.connect(self.abort_requested.emit)
         self.btn_stop.hide()
         row.addWidget(self.btn_stop)
         row.addStretch(1)
         self.btn_send = QPushButton("发送 ➤")
         self.btn_send.setObjectName("sendBtn")
+        self.btn_send.setAccessibleName("发送")
+        self.btn_send.setStyleSheet(f"""
+            QPushButton {{
+                background: {T.COLOR_ACCENT};
+                color: #ffffff;
+                border: none;
+                border-radius: {T.RADIUS_BUTTON}px;
+                padding: 4px 12px;
+                font-weight: bold;
+                font-size: {T.FONT_BODY_SM}px;
+            }}
+            QPushButton:hover {{
+                background: {T.COLOR_ACCENT_DEEP};
+            }}
+            QPushButton:disabled {{
+                background: {T.COLOR_LINE_SOFT};
+                color: {T.COLOR_SURFACE};
+            }}
+        """)
         self.btn_send.clicked.connect(self._on_send)
         row.addWidget(self.btn_send)
         ip.addLayout(row)
