@@ -60,11 +60,11 @@ class KeychainStore:
             self.service,
             "-a",
             provider,
-            "-w",  # at the end: security reads the password from stdin
+            "-w",  # at the end: security prompts twice; both lines come from stdin
         ]
         result = subprocess.run(
             command,
-            input=secret + "\n",
+            input=f"{secret}\n{secret}\n",  # password + retype confirmation
             capture_output=True,
             text=True,
             timeout=10,

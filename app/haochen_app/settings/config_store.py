@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -118,6 +119,7 @@ class ConfigStore:
         except (OSError, ValueError, json.JSONDecodeError):
             return
         changed = False
+        migrated: list[str] = []
         for provider, entry in auth.items() if isinstance(auth, dict) else ():
             if not isinstance(provider, str) or not isinstance(entry, dict):
                 continue
@@ -126,13 +128,22 @@ class ConfigStore:
                 continue
             if is_indirect_reference(secret):
                 continue
-            self.keychain.set(provider, secret)
-            if self.keychain.get(provider) != secret:
-                raise RuntimeError("Keychain read-back verification failed")
+            try:
+                self.keychain.set(provider, secret)
+                if self.keychain.get(provider) != secret:
+                    raise RuntimeError("Keychain read-back verification failed")
+            except Exception as exc:  # noqa: BLE001
+                # 迁移失败绝不阻断启动：保留明文条目，下次启动重试。
+                logging.getLogger("haochen.config").warning(
+                    "keychain migration deferred for %s: %s", provider, exc)
+                continue
             entry["key"] = f"${credential_env_name(provider)}"
             changed = True
+            migrated.append(provider)
         if changed:
             self._save(AUTH_FILE, auth)
+            logging.getLogger("haochen.config").info(
+                "migrated plaintext keys to keychain: %s", migrated)
 
     # ── 底层读写 ──────────────────────────────────────────────
 

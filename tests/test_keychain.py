@@ -30,7 +30,7 @@ def test_keychain_write_passes_secret_on_stdin_not_argv(monkeypatch) -> None:
     command, kwargs = calls[0]
     assert secret not in command
     assert command[-1] == "-w"
-    assert kwargs["input"] == secret + "\n"
+    assert kwargs["input"] == f"{secret}\n{secret}\n"
 
 
 def test_keychain_errors_never_include_secret(monkeypatch) -> None:
@@ -139,3 +139,32 @@ def test_validation_failure_is_actionable_and_does_not_expose_key(monkeypatch) -
     assert not result.ok
     assert "无效" in result.message
     assert key not in result.message
+
+
+def test_config_migration_failure_does_not_crash_startup(tmp_path: Path, monkeypatch) -> None:
+    """启动时 Keychain 不可用：保留明文条目，不抛异常（0.2.0 启动崩溃回归）。"""
+    config_module = importlib.import_module("haochen_app.settings.config_store")
+
+    class BrokenStore:
+        def set(self, _provider, _secret):
+            raise keychain.KeychainError("无法写入 macOS Keychain")
+
+        def get(self, _provider):
+            return None
+
+        def delete(self, _provider):
+            pass
+
+    home = tmp_path / "home"
+    store = config_module.ConfigStore(home, keychain=BrokenStore())
+    store.ensure_initialized()
+    auth_path = home / "agent" / "auth.json"
+    auth_path.write_text(
+        json.dumps({"deepseek": {"type": "api_key", "key": "legacy-plaintext-value"}}),
+        encoding="utf-8",
+    )
+
+    store.ensure_initialized()  # 不得抛出
+
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    assert auth["deepseek"]["key"] == "legacy-plaintext-value"  # 明文保留，待下次重试
