@@ -1,0 +1,36 @@
+name: 功能建议
+description: 提议新的桌宠能力或体验改进
+title: "feat: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景
+      description: 用户在什么情况下遇到什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 期望结果
+      description: 描述用户最终感受到的结果，不必先限定技术实现。
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: 主要界面
+      options:
+        - 桌宠 / 即时气泡
+        - 完整对话窗口
+        - 设置 / 首次使用
+        - 引擎 / 工具能力
+        - 安装 / 更新
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 可验收标准
+      description: 怎样判断这个体验真的变好了？

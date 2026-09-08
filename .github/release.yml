@@ -1,0 +1,12 @@
+changelog:
+  categories:
+    - title: 新功能
+      labels: [enhancement, feature]
+    - title: 修复
+      labels: [bug, fix]
+    - title: 安全
+      labels: [security]
+    - title: 其他改动
+      labels: ["*"]
+  exclude:
+    labels: [skip-changelog]

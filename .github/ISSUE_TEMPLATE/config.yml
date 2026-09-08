@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题
+    url: https://github.com/yangwz1993-gif/homebrew-haochen/security/advisories/new
+    about: 请使用私密渠道报告安全问题，不要公开敏感细节。

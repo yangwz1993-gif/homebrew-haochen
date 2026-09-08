@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Changed
+- 将完整源码与 Homebrew Tap 历史合并到统一仓库，并补齐 README、CI、CODEOWNERS、Issue/PR 模板、安全政策和版本发布规范。
+- 明确后续发布标签必须指向完整源码提交；根 `Casks/haochen.rb` 成为唯一 Cask 发布入口。
+
+## [0.2.0] - 2026-09-02
+
 ### Added
 - 建立独立的新版本源码基线、Git 管理和发布规划。
 - 新增 v0.2.0 开发方案与缺陷修复验收门禁。
@@ -33,9 +39,6 @@
 - API Key 保存至 macOS Keychain；`auth.json` 仅保留 `$HAOCHEN_*_API_KEY` 引用，写入前先通过固定安全端点验证，失败不覆盖旧 Key。
 - 首次启动改为单一可续办向导（欢迎→Key 验证→按需权限→试问），不再读取全局 `~/.pi` 凭据、不再同时弹出多个系统授权页面。
 - 应用数据目录统一修复为 0700，认证、会话回收、日志与运行 sidecar 统一为 0600；引擎子进程使用 0077 umask。
-- 删除 App 内自签/重签与本地口令流程；release 构建强制 Developer ID、hardened runtime、timestamp、公证和 staple。
-- Homebrew Cask 不再移除 quarantine；开发版只能显式 ad-hoc 构建且禁止对外分发。
+- 默认 release 构建要求 Developer ID、hardened runtime、timestamp、公证和 staple；保留 0.2.0 的发布者自签 legacy 构建作为已知过渡例外。
+- 0.2.0 Homebrew Cask 继续以 `postflight_steps` 移除该 App 的 quarantine；下一正式版本须改为 Apple 公证产物并删除这一例外。
 - 清理旧工程遗留的明文模型凭据与 Keychain 口令文档，并加强 secret scan 规则。
-
-## [0.2.0-dev.1] - 开发中
-- 从旧工程 `haochen_new` 的 0.1.10 源码建立干净基线。
