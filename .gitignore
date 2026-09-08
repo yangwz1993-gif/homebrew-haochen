@@ -21,7 +21,12 @@ node_modules/
 
 # Build and release outputs
 build/
+build*/
+dist
 dist/
+dist*/
+*.noindex
+*.noindex/
 *.spec
 *.app
 *.dmg
