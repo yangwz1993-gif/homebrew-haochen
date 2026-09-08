@@ -33,6 +33,13 @@ def test_keychain_write_passes_secret_on_stdin_not_argv(monkeypatch) -> None:
     assert kwargs["input"] == f"{secret}\n{secret}\n"
 
 
+def test_keychain_service_can_be_isolated_for_development(monkeypatch) -> None:
+    monkeypatch.setenv("HAOCHEN_KEYCHAIN_SERVICE", "com.haochen.app.development.api-key")
+
+    assert keychain.KeychainStore().service == "com.haochen.app.development.api-key"
+    assert keychain.KeychainStore("explicit.service").service == "explicit.service"
+
+
 def test_keychain_errors_never_include_secret(monkeypatch) -> None:
     monkeypatch.setattr(
         keychain.subprocess,

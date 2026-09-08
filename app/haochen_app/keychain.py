@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
 from typing import Protocol
 
 SERVICE = "com.haochen.app.api-key"
+SERVICE_ENV = "HAOCHEN_KEYCHAIN_SERVICE"
 
 
 class CredentialStore(Protocol):
@@ -24,8 +26,8 @@ class KeychainError(RuntimeError):
 class KeychainStore:
     """Use Apple's security CLI; new secrets are provided on stdin, never argv."""
 
-    def __init__(self, service: str = SERVICE):
-        self.service = service
+    def __init__(self, service: str | None = None):
+        self.service = service or os.environ.get(SERVICE_ENV, SERVICE)
 
     def get(self, provider: str) -> str | None:
         result = subprocess.run(

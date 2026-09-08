@@ -12,6 +12,7 @@ P4 集成验证脚本共用本装配，保证「测的就是跑的」。
 环境变量：
     HAOCHEN_MOCK=1             用 mock 引擎（联调/测试）
     HAOCHEN_HOME=<path>        数据目录（测试隔离）
+    HAOCHEN_KEYCHAIN_SERVICE   Keychain 服务名（开发配置隔离）
     HAOCHEN_SKIP_ONBOARDING=1  自动化环境不显示首启向导
     HAOCHEN_AUTO_RESTART=1     配置要求重启引擎时免询问直接重启（自动化）
 """
