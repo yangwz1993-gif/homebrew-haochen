@@ -91,6 +91,18 @@ def test_config_migrates_plaintext_only_after_keychain_readback(tmp_path: Path) 
     assert "legacy-private-value" not in auth_path.read_text(encoding="utf-8")
 
 
+def test_config_can_reference_existing_key_without_writing_secret(tmp_path: Path) -> None:
+    credentials = keychain.MemoryCredentialStore()
+    credentials.set("deepseek", "runtime-private-value")
+    store = config_module.ConfigStore(tmp_path / "home", keychain=credentials)
+    store.ensure_initialized()
+
+    assert store.reference_existing_key("deepseek") is True
+    auth_text = (store.agent_dir / "auth.json").read_text(encoding="utf-8")
+    assert "$HAOCHEN_DEEPSEEK_API_KEY" in auth_text
+    assert "runtime-private-value" not in auth_text
+
+
 def test_engine_env_resolves_keychain_reference_without_changing_disk(tmp_path: Path) -> None:
     home = tmp_path / "home"
     credentials = keychain.MemoryCredentialStore()

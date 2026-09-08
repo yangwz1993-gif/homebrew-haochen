@@ -36,6 +36,7 @@ _PAIRS = {
     for kind in ("brief", "detail", "answer", "summary")
 }
 _ANY_TAG = re.compile(r"【/?(?:brief|detail|answer|summary)】|==/?(?:brief|detail|answer|summary)==")
+_ANY_CLOSE = r"(?:【/(?:brief|detail|answer|summary)】|==/(?:brief|detail|answer|summary)==)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +80,15 @@ def parse_paired(text: str, kind: str) -> str:
     return "\n\n".join(parts).strip()
 
 
+def parse_loose_block(text: str, kind: str) -> str:
+    """Recover a block whose opening tag is correct but closing tag drifted."""
+    if kind not in _PAIRS:
+        return ""
+    pattern = re.compile(rf"(?:【{kind}】|=={kind}==)\s*(.*?)\s*{_ANY_CLOSE}", re.S)
+    match = pattern.search(text or "")
+    return match.group(1).strip() if match else ""
+
+
 def extractive_summary(text: str, limit: int = 160) -> str:
     """从详答抽高密度短结：优先首句结论 + 少量要点行（沿用上一版逻辑）。"""
     raw = strip_tags(text)
@@ -116,8 +126,8 @@ def parse_turn_result(text: str) -> TurnResult:
     raw = text or ""
     current_brief = parse_paired(raw, "brief")
     current_detail = parse_paired(raw, "detail")
-    detail = current_detail or parse_paired(raw, "answer")
-    brief = current_brief or parse_paired(raw, "summary")
+    detail = current_detail or parse_paired(raw, "answer") or parse_loose_block(raw, "detail")
+    brief = current_brief or parse_paired(raw, "summary") or parse_loose_block(raw, "brief")
     fallback_used = not (current_brief and current_detail)
     if not detail:
         detail = strip_tags(raw)

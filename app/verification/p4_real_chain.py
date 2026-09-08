@@ -77,8 +77,10 @@ def main() -> int:
     # ── R0 首启 ────────────────────────────────────────────────
     print("── R0 首启：配置初始化 + key 导入 + 真引擎就绪 ──", flush=True)
     shell = AppShell()                    # 无 HAOCHEN_MOCK → 真引擎
-    # v0.2.0：key 由运行者预先在设置页/向导存入 Keychain（SKIP_ONBOARDING 跳过向导）
+    # key 只从指定 Keychain service 读取；临时 HAOCHEN_HOME 只写 $ENV 引用。
     shell.first_run_setup()
+    key_bound = shell.store.reference_existing_key("deepseek")
+    check("R0 已引用 Keychain 中的 DeepSeek key", key_bound)
     shell.start()
     chat, pet, sup = shell.chat, shell.pet, shell.supervisor
 
@@ -103,6 +105,8 @@ def main() -> int:
     check("R1 气泡单回合完成", ok)
     check("R1 详答非空且标记已剥除",
           bool(pet._last_answer) and "【" not in pet._last_answer)
+    check("R1 简答非空且标记已剥除",
+          bool(pet._last_summary) and "【" not in pet._last_summary)
     TRANSCRIPT.append(f"\n## R1 气泡问答\n\n**Q**: {q1}\n\n**A(详答)**: {pet._last_answer}\n")
     session_r1 = chat._current_path
 
@@ -147,7 +151,11 @@ def main() -> int:
     check("R4 read_screen 工具卡呈现", bool(cards))
     answers = [b._text for b in bubbles(chat, AssistantBubble) if b.kind == "answer"]
     read_answer = answers[-1] if answers else ""
+    briefs = [b._text for b in bubbles(chat, AssistantBubble) if b.kind == "summary"]
+    read_brief = briefs[-1] if briefs else ""
     check("R4 读屏后单回合完成", ok and bool(read_answer))
+    check("R4 读屏简答已正确解析",
+          bool(read_brief) and "【" not in read_brief)
     TRANSCRIPT.append(f"\n## R4 读屏确认\n\n**Q**: {q4}\n\n**A(详答)**: {read_answer}\n")
     chat.grab().save(str(OUT / "p4-real-02-readscreen.png"))
 

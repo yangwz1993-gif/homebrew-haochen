@@ -109,6 +109,18 @@ class ConfigStore:
         ensure_private_directory(self.agent_dir)
         return atomic_write_private(target, template.read_text(encoding="utf-8"))
 
+    def reference_existing_key(self, provider: str) -> bool:
+        """Bind auth.json to an existing Keychain item without copying the secret to disk."""
+        if not self.keychain.get(provider):
+            return False
+        auth = self._load(AUTH_FILE)
+        entry = auth.get(provider)
+        if not isinstance(entry, dict):
+            return False
+        entry["key"] = f"${credential_env_name(provider)}"
+        self._save(AUTH_FILE, auth)
+        return True
+
     def _migrate_plaintext_keys(self) -> None:
         """Move legacy plaintext keys into Keychain, changing disk only after read-back succeeds."""
         path = self.agent_dir / AUTH_FILE

@@ -208,3 +208,16 @@ def test_parse_turn_result_falls_back_for_plain_text() -> None:
     assert result.detail == "第一句结论。\n- 第二点"
     assert result.brief
     assert result.fallback_used is True
+
+
+def test_parse_turn_result_recovers_mismatched_brief_closing_tag() -> None:
+    raw = (
+        "【brief】没读到屏——还缺辅助功能权限。【/detail】\n"
+        "【detail】请到系统设置开启辅助功能权限。【/detail】"
+    )
+
+    result = conversation.parse_turn_result(raw)
+
+    assert result.brief == "没读到屏——还缺辅助功能权限。"
+    assert result.detail == "请到系统设置开启辅助功能权限。"
+    assert result.fallback_used is True
