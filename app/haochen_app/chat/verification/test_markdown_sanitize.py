@@ -37,15 +37,20 @@ check("纯等号配对 ==answer==…==/answer==",
       parse_paired("==answer==正文==/answer==", "answer") == "正文")
 check("summary 错误闭合",
       parse_paired("【summary】短结==/summary==", "summary") == "短结")
+check("brief 错误闭合",
+      parse_paired("【brief】直接结论==/brief==", "brief") == "直接结论")
+check("detail 等号配对",
+      parse_paired("==detail==完整说明==/detail==", "detail") == "完整说明")
 check("正常【】路径不受影响",
       parse_paired("【answer】正常详答【/answer】", "answer") == "正常详答")
 check("兜底 strip_tags 剥净 == 系整标记",
-      strip_tags("开头【answer】残文==/answer==尾巴==/summary==") == "开头残文尾巴")
+      strip_tags("开头【brief】残文==/brief==尾巴==/detail==") == "开头残文尾巴")
 
 # ── 渲染前清洗 ──
 check("==高亮== → **粗体**", _sanitize_markdown("这是==重点==词") == "这是**重点**词")
 check("===标题=== → **粗体**", _sanitize_markdown("===小节标题===\n正文") == "**小节标题**\n正文")
 check("清洗剥残留整标记", _sanitize_markdown("正文==/answer==") == "正文")
+check("清洗剥新协议标记", _sanitize_markdown("【brief】结论【/brief】") == "结论")
 
 # ── 端到端：重放真机式内容（错误闭合 + ==高亮== + ●列表）──
 raw = ("【answer】\n==外形==：线条不错。\n● 要点一\n● 要点二\n"

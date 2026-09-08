@@ -5,9 +5,8 @@
  * 提供：
  * - read_screen 工具：Accessibility 读屏（文本/原图为主；图片型窗口附窗口截图，
  *   v0.1.8 看图模式），宠物内强制先确认（契约 §5.2）
- * - 两步输出强制：HAOCHEN_PET=1（壳 spawn 时注入，engine_client.spawn_argv）时
- *   answer 阶段注入 ANSWER_RULES；检测到「haochen-summary-phase」踢令时注入
- *   SUMMARY_RULES（契约 §4）。
+ * - 单回合分层输出：HAOCHEN_PET=1（壳 spawn 时注入，engine_client.spawn_argv）时
+ *   注入 RESULT_RULES，一次生成可直接显示的 brief 与可展开的 detail（契约 §4）。
  *
  * 源自 previous-version/haochen-app/ext/index.ts（P1 已验证 Bun 直载），
  * P4 适配：去掉旧 /pet 命令（旧 bridge 已废）；读屏签名/工具路径支持
@@ -21,7 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
-/** 两步输出协议只在 App 内强制：壳 spawn 引擎时注入（engine_client.spawn_argv）。 */
+/** 分层结果协议只在 App 内强制：壳 spawn 引擎时注入（engine_client.spawn_argv）。 */
 const IN_PET = process.env.HAOCHEN_PET === "1";
 
 /** 数据目录：与壳一致（契约 §1.1），默认 ~/Library/Application Support/haochen。 */
@@ -81,8 +80,6 @@ const PETREAD = process.env.HAOCHEN_PETREAD || join(homedir(), ".local", "bin", 
 const MAX_TEXT_CHARS = 40_000;
 const MAX_IMAGES = 15;
 const READ_TIMEOUT_MS = 120_000;
-
-const MARK_SUMMARY_PHASE = "haochen-summary-phase";
 
 // ── 看图模式（v0.1.8）────────────────────────────────────────
 // 图片在 AX 树里只有占位、无文字 → 纯 AX 读屏拿不到画面（真机：微信图片窗口
@@ -150,51 +147,36 @@ function parseDataImage(u?: string | null): { data: string; mime: string } | nul
   return { data, mime };
 }
 
-const ANSWER_RULES = `
-# haochen 输出协议 · 第 1 步 / 完整答案（强制）
+const RESULT_RULES = `
+# haochen 输出协议 · 单回合结果（强制）
 
-本回合是 **answer 阶段**。你必须遵守：
+一次回答同时服务桌面简答与完整详情。你必须遵守：
 
-1. 可以先调用工具（如 read_screen、bash），但**最终对用户可见的正文**只能是一对标记：
-   【answer】
-   …完整详答…
-   【/answer】
-2. **禁止**输出【summary】或【/summary】（短结留给下一步）。
-3. **禁止**交叉错标（例如【summary】…【/answer】）；**闭合标记只能用「【/answer】」**，
-   ==禁止==用 ==/answer==、==answer== 这类等号写法替代【】系标记。
-4. answer 内用简短 Markdown；==文字== 仅限正文内**关键词**高亮、少量使用，
+1. 可以先调用工具（如 read_screen、bash），但最终正文必须严格输出两个配对块，顺序不可颠倒：
+   【brief】
+   …一句结论 + 最多两个高信息量要点…
+   【/brief】
+   【detail】
+   …完整回答…
+   【/detail】
+2. **brief** 必须能独立回答用户：第一句直接给判断或结果，全文通常 24～120 个中文字符；
+   最多两个要点，不写过程复述、客套、元评论或“详见下文”。
+3. **detail** 承载依据、步骤、限制和产物；结论仍放最前，不能复制粘贴 brief 来凑内容。
+4. **禁止**输出 answer/summary 旧标记或交叉错标；闭合标记只能用【/brief】和【/detail】，
+   禁止用等号写法替代【】系标记。
+5. detail 内用简短 Markdown；==文字== 仅限正文内**关键词**高亮、少量使用，
    ==禁止==用于分节标题或协议标记；禁止表格/流程图/ASCII 图。
-5. 不要客套开场；不要复述工具过程；不确定要说明。
-6. **口吻**：你是住在用户桌面上的像素眼镜小哥，是伙伴，不是客服。
+6. 不要客套开场；不要复述工具过程；不确定要说明。
+7. **口吻**：你是住在用户桌面上的像素眼镜小哥，是伙伴，不是客服。
    - 闲聊、打招呼、问候时：像朋友一样自然亲切、口语化，一两句就够；
      ==禁止==机械列点，==禁止==「有什么可以帮您」「很高兴为您服务」式客服腔。
    - 技术问题：保持专业、直接、有用的「有帮助的技术专家」风格。
-7. **读屏策略**（严格按用户消息前缀里的「页面状态」信号行事）：
+8. **读屏策略**（严格按用户消息前缀里的「页面状态」信号行事）：
    - 问题不依赖当前屏幕内容 → 直接答，不要读屏。
    - 「页面状态：相同」→ 直接沿用上次读到的内容答，不要重复读。
    - 「页面状态：已切换」→ 上次读到的内容==已作废==：依赖屏幕的问题必须调用 read_screen 重新读（会先弹确认）；**严禁**用旧页面内容回答当前页面，也禁止混用。
    - 「还没读过屏」→ 依赖屏幕的问题必须调用 read_screen（会先弹确认，用户同意才读）。
    - 用户拒绝读屏 → 明说「没读屏，以下基于已有信息」再作答。
-`.trim();
-
-const SUMMARY_RULES = `
-# haochen 输出协议 · 第 2 步 / 短结（强制）
-
-本回合是 **summary 阶段**。你必须遵守：
-
-1. **只**输出一对标记，禁止工具调用，禁止再写详答：
-   【summary】
-   …短结正文…
-   【/summary】
-2. **禁止**输出【answer】或【/answer】；禁止交叉错标；**闭合标记只能用「【/summary】」**，
-   禁止用 ==/summary==、==summary== 这类等号写法替代【】系标记。
-3. **篇幅硬限制**：正文以汉字计约 **80～160 字**（含标点不超过 180）。禁止凑字、禁止写成迷你详答。
-4. **信息原则**（只留最高价值）：
-   - 先用 **1 句**说清结论（这是什么 / 结论文是什么）；
-   - 最多再列 **2～3 个要点**（口碑数字、看点、雷点等）；
-   - 禁止：客套、过程复述、自我纠正旁白、括号里的元评论（如「这部分我标注下」）；
-   - 禁止大段引用原文；专名保留，细节留给 answer。
-5. 口吻说人话、直击要害；不确定就一句带过。
 `.trim();
 
 interface PetreadBlock {
@@ -249,20 +231,13 @@ function checkReadPermission(): Promise<"granted" | "denied" | "unknown"> {
 export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event) => {
     if (!IN_PET) return;
-    const prompt = event.prompt || "";
-    // 壳发起的短结回合（prompt 带 haochen-summary-phase 标记，契约 §4.3）
-    if (prompt.includes(MARK_SUMMARY_PHASE)) {
-      return {
-        systemPrompt: `${event.systemPrompt}\n\n${SUMMARY_RULES}`,
-      };
-    }
-    // 普通回合：answer 阶段规则（+ 已知用户称呼，闲聊时可自然称呼）
+    // 普通回合：单回合 brief + detail（+ 已知用户称呼，闲聊时可自然称呼）
     const name = loadUserName();
     const nameHint = name
       ? `\n\n# 用户称呼\n用户希望被称呼为「${name}」。闲聊问候时可以自然地这么称呼 TA（别生硬嵌入）；技术回答不必刻意带称呼。`
       : "";
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${ANSWER_RULES}${nameHint}`,
+      systemPrompt: `${event.systemPrompt}\n\n${RESULT_RULES}${nameHint}`,
     };
   });
 

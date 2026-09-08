@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""haochen mock 引擎 — 按 docs/rpc-contract.md v1.0 吐出确定性假事件流。
+"""haochen mock 引擎 — 按 docs/rpc-contract.md v2.0 吐出确定性假事件流。
 
 用途：P3 三个 UI agent 无成本联调打桩。stdio JSONL，事件名/字段与真引擎一致
 （对照 mock-engine/verification/real-engine-dump*.jsonl 编写）。
 
 场景（按 prompt 关键词确定性触发）：
-  - 包含 "haochen-summary-phase"  → summary 回合（【summary】…【/summary】）
   - 包含 "读屏" / "屏幕" / "read_screen" → read_screen 工具 + 读屏确认（extension_ui_request）
   - 包含 "错误" / "mock-error"    → 错误回合（stopReason=error + errorMessage）
-  - 其它                          → 普通 answer 回合（thinking + 【answer】…【/answer】）
+  - 其它                          → 单回合结果（thinking + 【brief】/【detail】）
 
 会话命令：new_session / switch_session / get_messages / get_state /
 set_session_name 均按契约响应；abort 在流式中可打断（stopReason=aborted）。
@@ -27,8 +26,6 @@ from pathlib import Path
 
 TICK = max(0, int(os.environ.get("MOCK_TICK_MS", "30"))) / 1000.0
 MOCK_MODEL = "mock/mock-v1"
-SUMMARY_MARK = "haochen-summary-phase"
-
 ZERO_USAGE = {
     "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0,
     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0},
@@ -245,9 +242,7 @@ class MockEngine:
         self.send({"type": "message_end", "message": umsg})
         self.current_history().append(umsg)
 
-        if SUMMARY_MARK in message:
-            self._summary_turn()
-        elif any(k in message for k in ("错误", "mock-error")):
+        if any(k in message for k in ("错误", "mock-error")):
             self._error_turn()
         elif any(k in message for k in ("读屏", "屏幕", "read_screen")):
             self._read_screen_turn()
@@ -272,12 +267,15 @@ class MockEngine:
     def _plain_turn(self, question: str) -> None:
         self.send({"type": "message_start",
                    "message": self.assistant_message([])})
-        thinking = "用户在问一个普通问题，mock 引擎按两步协议先给详答。"
+        thinking = "用户在问一个普通问题，mock 引擎正在生成简答与详情。"
         self.stream_thinking(thinking, 0)
-        answer = (f"【answer】\n这是对「{question}」的 mock 详答。\n\n"
-                  f"- 要点一：本回合走普通对话路径，无工具调用。\n"
-                  f"- 要点二：正文由【answer】…【/answer】包裹，壳解析后发 summary 踢令。\n\n"
-                  f"==结论==：mock 引擎工作正常。\n【/answer】")
+        answer = ("【brief】\nmock 引擎工作正常。\n"
+                  "- 请求已完成，可以直接查看结果。\n"
+                  "- 需要更多依据时，请打开详情。\n【/brief】\n"
+                  f"【detail】\n这是对「{question}」的 mock 详答。\n\n"
+                  "- 本回合走普通对话路径，无工具调用。\n"
+                  "- 简答与详情由同一次请求生成。\n\n"
+                  "==结论==：单回合结果协议工作正常。\n【/detail】")
         if self.aborted or not self.stream_text(answer, 1):
             partial = [{"type": "thinking", "thinking": thinking},
                        {"type": "text", "text": ""}]
@@ -285,17 +283,6 @@ class MockEngine:
             return
         self._finish_assistant([{"type": "thinking", "thinking": thinking},
                                 {"type": "text", "text": answer}])
-
-    def _summary_turn(self) -> None:
-        self.send({"type": "message_start",
-                   "message": self.assistant_message([])})
-        summary = ("【summary】\nmock 引擎工作正常。\n"
-                   "- 请求已完成，结果可以直接查看。\n"
-                   "- 需要更多依据时，请打开详情。\n【/summary】")
-        if self.aborted or not self.stream_text(summary, 0):
-            self._finish_assistant([{"type": "text", "text": ""}], "aborted")
-            return
-        self._finish_assistant([{"type": "text", "text": summary}])
 
     def _error_turn(self) -> None:
         err = "mock 引擎注入的错误：模型服务不可用（演示错误路径）。"
@@ -373,19 +360,25 @@ class MockEngine:
         self.current_history().append(tmsg)
         self.send({"type": "turn_end", "message": amsg1, "toolResults": [tmsg]})
 
-        # turn 2: 基于读屏结果给 answer
+        # turn 2: 基于读屏结果给同回合 brief + detail
         self.send({"type": "turn_start"})
         self.send({"type": "message_start",
                    "message": self.assistant_message([])})
         if confirmed:
-            answer = ("【answer】\n我读到了你的屏幕（mock）。\n\n"
+            answer = ("【brief】\n屏幕读取成功。\n"
+                      "- 当前窗口是 Safari 的 Mock 示例页面。\n"
+                      "- 页面正文写着「你好，haochen」。\n【/brief】\n"
+                      "【detail】\n我读到了你的屏幕（mock）。\n\n"
                       "- 窗口：Safari — Mock 示例页面。\n"
                       "- 内容：页面写着「你好，haochen」。\n\n"
-                      "==结论==：读屏确认 → 授权 → 工具卡全链路工作正常。\n【/answer】")
+                      "==结论==：读屏确认、授权与工具链路工作正常。\n【/detail】")
         else:
-            answer = ("【answer】\n没读屏，以下基于已有信息。\n\n"
+            answer = ("【brief】\n这次没有读取屏幕。\n"
+                      "- 你拒绝了读取请求，我看不到当前窗口。\n"
+                      "- 需要时重新提问并允许本次读取。\n【/brief】\n"
+                      "【detail】\n没读屏，以下基于已有信息。\n\n"
                       "你拒绝了读屏请求，我无法看到当前窗口内容。"
-                      "如果你想让我看，重新提问并点「读吧」即可。\n【/answer】")
+                      "如果你想让我看，重新提问并点「读吧」即可。\n【/detail】")
         if self.aborted or not self.stream_text(answer, 0):
             self._finish_assistant([{"type": "text", "text": ""}], "aborted")
             return

@@ -31,13 +31,17 @@ from PyQt6.QtWidgets import (
 
 from .theme import ANIM_FADE_MS, BORDER, FONT, RADIUS_BTN, RADIUS_CARD, C, button_outline
 
-# 两步协议标记（流式渲染时做部分标记抑制，与 conversation.py 的冻结标记一致）
-_KNOWN_TAGS = ("【answer】", "【/answer】", "【summary】", "【/summary】")
+# 新旧协议标记（流式渲染时抑制，最终由 ConversationController 分层）。
+_KNOWN_TAGS = tuple(
+    f"【{slash}{kind}】"
+    for kind in ("brief", "detail", "answer", "summary")
+    for slash in ("", "/")
+)
 
 # 渲染前清洗（v0.1.10）：Qt setMarkdown 不认 ==高亮==/===标题===/==闭合标记==，
 # 模型又实际在输出这些（见 conversation.py 配对正则注释）。渲染入口统一转换，
 # 纯兜底，不换渲染器。
-_RE_FULL_TAG = re.compile(r"==/?(?:answer|summary)==")
+_RE_FULL_TAG = re.compile(r"==/?(?:brief|detail|answer|summary)==")
 _RE_SETEXT_EQ = re.compile(r"===([^=\n]+)===")
 _RE_HIGHLIGHT = re.compile(r"==([^=\n]+)==")
 
@@ -45,6 +49,8 @@ _RE_HIGHLIGHT = re.compile(r"==([^=\n]+)==")
 def _sanitize_markdown(text: str) -> str:
     """==标题===/==高亮== → Qt 认的粗体；残留协议标记剥净。"""
     out = _RE_FULL_TAG.sub("", text)          # ==answer==/==/answer== 等整标记
+    for tag in _KNOWN_TAGS:
+        out = out.replace(tag, "")
     out = _RE_SETEXT_EQ.sub(r"**\1**", out)   # ===文字=== → 粗体（先三元，防被二元吃掉）
     out = _RE_HIGHLIGHT.sub(r"**\1**", out)   # ==文字== → 粗体
     return out

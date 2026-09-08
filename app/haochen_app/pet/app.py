@@ -1,7 +1,7 @@
 """PetApp：桌宠模块装配 —— L0 桌宠 + L1 气泡 + 引擎会话 + 状态机。
 
 共享只读依赖：haochen_app.engine_client.EngineClient（传输层）、
-haochen_app.conversation.ConversationController（answer→summary 两步编排）。
+haochen_app.conversation.ConversationController（brief + detail 单回合编排）。
 
 P4 集成接口（给对话窗口/集成负责人）：
 - 共享会话：对话窗口用**同一个 EngineClient 实例**（或同一引擎进程）构造自己的
@@ -67,7 +67,7 @@ class PetApp(QObject):
         # 壳层注入：callable(source_rect: QRect)，把「展开详细」路由到 ChatWindow
         self.detail_opener = None
 
-        # 引擎 + 两步编排（共享模块，只读使用）；P4：注入共享 client/supervisor
+        # 引擎 + 单回合分层结果（共享模块）；P4：注入共享 client/supervisor
         self.supervisor = supervisor
         self.client = client or EngineClient(mock=mock)
         self.coordinator = (

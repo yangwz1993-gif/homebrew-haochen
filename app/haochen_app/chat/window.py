@@ -4,7 +4,7 @@
 （用户气泡居右、haochen 居左、最大宽 ~72%、逐条淡入 180ms）。
 
 数据流：
-- 两步协议（answer→summary）走共享的 ConversationController（只订阅信号）；
+- 单回合分层结果（brief + detail）走共享的 ConversationController（只订阅信号）；
 - 工具卡 / 读屏确认条直接订阅 EngineClient.event；
 - 命令响应按 id 关联（rpc-contract §1.2），_rpc() 挂回调。
 
@@ -132,6 +132,7 @@ class ChatWindow(QWidget):
         self._stream_row: BubbleRow | None = None
         self._stream_buf = ""
         self._stream_dirty = False      # 节流窗口内已有新增量待渲染
+        self._pending_answer = ""       # brief 到达后再按“结论→详情”落位
         self._stream_timer: QTimer | None = None
         self._follow_stream = True      # 用户是否在底部（决定是否自动跟随）
         self._thinking_row: BubbleRow | None = None
@@ -552,7 +553,7 @@ class ChatWindow(QWidget):
                 self._rpc(self.client.set_session_name, lambda r: None, title)
                 return
 
-    # ── ConversationController 信号（两步协议）──────────────────
+    # ── ConversationController 信号（单回合分层结果）────────────
 
     def _on_busy_changed(self, busy: bool) -> None:
         self.btn_stop.setVisible(busy)
@@ -683,16 +684,10 @@ class ChatWindow(QWidget):
     def _on_answer_done(self, answer: str) -> None:
         self._drop_thinking()
         self._flush_stream()
+        self._pending_answer = answer
         if self._stream_row is not None:
+            # 流式内容先保持可见；brief 到达后再重排为“结论在前、详情在后”。
             self._stream_row.content.set_text(answer)
-            self._stream_row = None
-            self._stream_buf = ""
-            self._stream_dirty = False
-            if self._stream_timer is not None:
-                self._stream_timer.stop()
-                self._stream_timer = None
-        else:
-            self._add_row(AssistantBubble("answer"), "left").content.set_text(answer)
         QTimer.singleShot(0, self._maybe_follow)
 
     def _on_summarizing(self) -> None:
@@ -701,12 +696,24 @@ class ChatWindow(QWidget):
     def _on_summary_done(self, summary: str) -> None:
         self._drop_thinking()
         self._drop_status()
-        if not summary:
-            return
-        bubble = AssistantBubble("summary")
-        bubble.set_text(summary)
-        # 结论后置（v0.1.4 §1a）：summary 气泡追加到本轮 answer 气泡之后
-        self._add_row(bubble, "left")
+        if self._stream_row is not None:
+            self._drop_row(self._stream_row)
+            self._stream_row = None
+        self._stream_buf = ""
+        self._stream_dirty = False
+        if self._stream_timer is not None:
+            self._stream_timer.stop()
+            self._stream_timer = None
+        if summary:
+            bubble = AssistantBubble("summary")
+            bubble.set_text(summary)
+            self._add_row(bubble, "left")
+        if self._pending_answer and self._pending_answer.strip() != summary.strip():
+            detail = AssistantBubble("answer")
+            detail.set_text(self._pending_answer)
+            self._add_row(detail, "left")
+        self._pending_answer = ""
+        QTimer.singleShot(0, self._maybe_follow)
 
     def _on_failed(self, err: str) -> None:
         self._drop_thinking()
@@ -714,6 +721,7 @@ class ChatWindow(QWidget):
         self._stream_row = None
         self._stream_buf = ""
         self._stream_dirty = False
+        self._pending_answer = ""
         if self._stream_timer is not None:
             self._stream_timer.stop()
             self._stream_timer = None
@@ -985,10 +993,20 @@ class ChatWindow(QWidget):
             return
         answer = parse_paired(text, "answer")
         summary = parse_paired(text, "summary")
-        if summary:
+        brief = parse_paired(text, "brief")
+        detail = parse_paired(text, "detail")
+        if brief or detail:
+            if brief:
+                bubble = AssistantBubble("summary")
+                bubble.set_text(brief)
+                self._add_row(bubble, "left")
+            if detail and detail.strip() != brief.strip():
+                bubble = AssistantBubble("answer")
+                bubble.set_text(detail)
+                self._add_row(bubble, "left")
+        elif summary:
             bubble = AssistantBubble("summary")
             bubble.set_text(summary)
-            # 结论后置（v0.1.4 §1a）：历史按时间序渲染，结论落在本轮详答之后
             self._add_row(bubble, "left")
         elif answer:
             bubble = AssistantBubble("answer")
@@ -1001,6 +1019,7 @@ class ChatWindow(QWidget):
 
     def _clear_flow(self) -> None:
         self._thinking_row = self._status_row = self._stream_row = None
+        self._pending_answer = ""
         self._confirm = None
         self._tool_cards.clear()
         self._queue_banners.clear()

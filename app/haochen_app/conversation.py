@@ -1,26 +1,26 @@
-"""两步协议编排（answer→summary）+ 解析。P3 三个 UI 模块共用，只读不改。
+"""单回合结果协议（brief + detail）与兼容解析。
 
-实现 docs/rpc-contract.md §4.3 的冻结逻辑：
-1. answer 回合 agent_end 后解析配对【answer】…【/answer】；
-2. 壳踢 summary 回合（冻结模板，haochen-summary-phase 前缀）；
-3. summary 回合 agent_end 后解析【summary】，失败则抽取式兜底，绝不死循环再踢。
+一个模型回合同时产出【brief】和【detail】：桌宠显示 brief，完整窗口显示
+brief + detail。旧【answer】/【summary】历史仍可解析，但控制器不再发送第二次
+summary 踢令。
 
 用法：
 
     ctrl = ConversationController(client)     # client = EngineClient（已 start）
-    ctrl.answer_delta.connect(...)            # str: answer 流式增量（打字机用）
-    ctrl.answer_done.connect(...)             # str: 完整详答（已剥标记）
-    ctrl.summarizing.connect(...)             # 无参：进入短结阶段（UI 状态文案）
-    ctrl.summary_done.connect(...)            # str: 短结（模型解析或兜底抽取）
+    ctrl.answer_delta.connect(...)            # str: 原始结果流式增量（打字机用）
+    ctrl.answer_done.connect(...)             # str: detail（兼容信号）
+    ctrl.summary_done.connect(...)            # str: brief（兼容信号）
+    ctrl.turn_done.connect(...)               # TurnResult: 同一回合结构化结果
     ctrl.failed.connect(...)                  # str: 错误描述
     ctrl.send("帮我看看这个页面")              # 发起一轮
 
-注意：`haochen-summary-phase` 开头的消息是协议保留踢令，UI 永不渲染（契约 §4.4）。
+注意：`haochen-summary-phase` 仅为旧历史兼容标记，UI 永不渲染。
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -29,18 +29,23 @@ from .engine_client import EngineClient
 SUMMARY_KICK_PREFIX = "haochen-summary-phase"
 # 配对标记：兼容模型的错误闭合——==answer==/==/answer==、==summary==/==/summary== 等
 # 变体视同【】系标记（v0.1.10：真机观测到模型【answer】开头却 ==/answer== 收尾）。
-_ANSWER_PAIR = re.compile(r"(?:【answer】|==answer==)\s*(.*?)\s*(?:【/answer】|==/answer==)", re.S)
-_SUMMARY_PAIR = re.compile(r"(?:【summary】|==summary==)\s*(.*?)\s*(?:【/summary】|==/summary==)", re.S)
-_ANY_TAG = re.compile(r"【/?(?:answer|summary)】|==/?(?:answer|summary)==")
+_PAIRS = {
+    kind: re.compile(
+        rf"(?:【{kind}】|=={kind}==)\s*(.*?)\s*(?:【/{kind}】|==/{kind}==)", re.S
+    )
+    for kind in ("brief", "detail", "answer", "summary")
+}
+_ANY_TAG = re.compile(r"【/?(?:brief|detail|answer|summary)】|==/?(?:brief|detail|answer|summary)==")
 
-SUMMARY_KICK_TEMPLATE = (
-    "haochen-summary-phase\n"
-    "下面是详答。请只输出短结：严格【summary】…【/summary】；篇幅 80～160 字；"
-    "结构=1 句结论 + 最多 2～3 要点；禁止元评论/括号旁白/大段引用；不要工具、不要再写 answer。\n\n"
-    "【answer】\n"
-    "{answer}\n"
-    "【/answer】"
-)
+
+@dataclass(frozen=True, slots=True)
+class TurnResult:
+    """一次模型回合的两个展示层。"""
+
+    brief: str
+    detail: str
+    raw: str = ""
+    fallback_used: bool = False
 
 
 def humanize_error(text: str) -> str:
@@ -66,8 +71,10 @@ def strip_tags(text: str) -> str:
 
 
 def parse_paired(text: str, kind: str) -> str:
-    """解析配对标记块（kind = "answer" | "summary"），无配对返回 ''。"""
-    pair = _ANSWER_PAIR if kind == "answer" else _SUMMARY_PAIR
+    """解析配对标记块，无配对或未知 kind 返回空字符串。"""
+    pair = _PAIRS.get(kind)
+    if pair is None:
+        return ""
     parts = [p.strip() for p in pair.findall(text or "") if p.strip()]
     return "\n\n".join(parts).strip()
 
@@ -104,13 +111,29 @@ def extractive_summary(text: str, limit: int = 160) -> str:
     return cut.rstrip("，,;；") + "…"
 
 
+def parse_turn_result(text: str) -> TurnResult:
+    """优先解析新协议，并对旧协议或无标记回答做确定性降级。"""
+    raw = text or ""
+    current_brief = parse_paired(raw, "brief")
+    current_detail = parse_paired(raw, "detail")
+    detail = current_detail or parse_paired(raw, "answer")
+    brief = current_brief or parse_paired(raw, "summary")
+    fallback_used = not (current_brief and current_detail)
+    if not detail:
+        detail = strip_tags(raw)
+    if not brief:
+        brief = extractive_summary(detail)
+    return TurnResult(brief=brief, detail=detail, raw=raw, fallback_used=fallback_used)
+
+
 class ConversationController(QObject):
-    """一轮对话的两步编排。UI 只订阅信号，不碰引擎事件细节。"""
+    """一轮对话的一次请求编排。UI 只订阅信号，不碰引擎事件细节。"""
 
     answer_delta = pyqtSignal(str)    # answer 阶段流式增量
     answer_done = pyqtSignal(str)     # answer 阶段完成（详答全文，已剥标记）
-    summarizing = pyqtSignal()        # 进入短结阶段
-    summary_done = pyqtSignal(str)    # 短结完成（解析值或兜底抽取）
+    summarizing = pyqtSignal()        # 兼容信号：结构化结果已开始收敛
+    summary_done = pyqtSignal(str)    # brief 完成（解析值或兜底抽取）
+    turn_done = pyqtSignal(object)    # TurnResult
     failed = pyqtSignal(str)          # 回合错误（stopReason=error 等）
     busy_changed = pyqtSignal(bool)   # 是否在一轮对话中
     request_accepted = pyqtSignal(str)
@@ -120,7 +143,7 @@ class ConversationController(QObject):
     def __init__(self, client: EngineClient, parent=None):
         super().__init__(parent)
         self.client = client
-        self._phase = ""              # "" | "answer" | "summary"
+        self._phase = ""              # "" | "answer"
         self._answer_buf = ""
         self._answer_text = ""
         self._requests: dict[str, str] = {}
@@ -217,8 +240,6 @@ class ConversationController(QObject):
                 return
             if self._phase == "answer":
                 self._end_answer_round(msgs)
-            elif self._phase == "summary":
-                self._end_summary_round(msgs)
 
     def _final_text(self, msgs: list) -> str:
         """agent_end 携带的完整消息里取最后一条 assistant 文本（比流式 buffer 可靠）。"""
@@ -232,26 +253,14 @@ class ConversationController(QObject):
 
     def _end_answer_round(self, msgs: list) -> None:
         raw = self._final_text(msgs) or self._answer_buf
-        answer = parse_paired(raw, "answer") or strip_tags(raw)
-        self._answer_text = answer
-        self.answer_done.emit(answer)
-        # 壳踢 summary 回合（冻结模板，截断 8000 字）
-        kick = SUMMARY_KICK_TEMPLATE.format(answer=answer[:8000])
-        self._phase = "summary"
+        result = parse_turn_result(raw)
+        self._answer_text = result.detail
+        self.answer_done.emit(result.detail)
         self.summarizing.emit()
-        try:
-            request_id = self.client.prompt(kick)
-        except RuntimeError as exc:
-            self._finish_error(str(exc))
-            return
-        self._requests[request_id] = "summary"
-
-    def _end_summary_round(self, msgs: list) -> None:
-        raw = self._final_text(msgs)
-        summary = parse_paired(raw, "summary") or extractive_summary(self._answer_text)
         self._phase = ""
         self.busy_changed.emit(False)
-        self.summary_done.emit(summary)
+        self.summary_done.emit(result.brief)
+        self.turn_done.emit(result)
 
     def _finish_error(self, err: str) -> None:
         self._phase = ""
@@ -259,7 +268,7 @@ class ConversationController(QObject):
         self.failed.emit(err)
 
 
-# ── 冒烟自检（对 mock engine 走完整两步）──────────────────────
+# ── 冒烟自检（对 mock engine 走单回合结果协议）────────────────
 
 if __name__ == "__main__":
     import sys
@@ -277,7 +286,7 @@ if __name__ == "__main__":
     ctrl.summary_done.connect(lambda s: (got.update(summary=s[:50]), app.quit()))
     ctrl.failed.connect(lambda e: (print("FAIL:", e), app.quit()))
     client.start()
-    QTimer.singleShot(200, lambda: ctrl.send("自我介绍"))  # mock: 普通对话 → answer；踢令 → summary
+    QTimer.singleShot(200, lambda: ctrl.send("自我介绍"))
     QTimer.singleShot(30000, app.quit)
     app.exec()
     client.stop()

@@ -17,12 +17,12 @@ check() { # $1=label; exit code of previous command
   if [ "$rc" -eq 0 ]; then echo "OK   $label"; PASS=$((PASS + 1)); else echo "FAIL $label"; FAIL=$((FAIL + 1)); fi
 }
 
-# L1
-run_name "L1 mock driver (45) + ext 看图模式 (21) + markdown 清洗 (11)"
-bash -c "cd '$ROOT/mock-engine' && python3 driver.py | tail -1 | grep -q '45/45'" && \
-bash -c "cd '$ROOT' && NODE_PATH='$ROOT/pi-source/node_modules' bun run app/ext/test-visual-mode.ts | tail -1 | grep -q '21/21'" && \
-bash -c "cd '$APP' && QT_QPA_PLATFORM=offscreen '$VENV' haochen_app/chat/verification/test_markdown_sanitize.py 2>/dev/null | tail -1 | grep -q '11/11'"
-check "L1 mock driver (45) + ext 看图模式 (21) + markdown 清洗 (11)"
+# L1：各脚本自己以非零退出码报告失败，避免新增断言后还要同步固定计数。
+run_name "L1 协议 / 扩展 / Markdown 清洗"
+bash -c "cd '$ROOT/mock-engine' && python3 driver.py" && \
+bash -c "cd '$ROOT' && NODE_PATH='$ROOT/pi-source/node_modules' bun run app/ext/test-visual-mode.ts" && \
+bash -c "cd '$APP' && QT_QPA_PLATFORM=offscreen '$VENV' haochen_app/chat/verification/test_markdown_sanitize.py 2>/dev/null"
+check "L1 协议 / 扩展 / Markdown 清洗"
 
 # L2
 run_name "L2 settings selfcheck (27)"

@@ -42,6 +42,8 @@ def test_render_history_draws_users_answers_tools_and_errors(qtbot, tmp_path: Pa
             {"role": "user", "content": [{"type": "text", "text": "haochen-summary-phase\nkick"}]},
             {"role": "assistant", "content": [{"type": "text", "text": "【answer】详答【/answer】"}]},
             {"role": "assistant", "content": [{"type": "text", "text": "【summary】结论【/summary】"}]},
+            {"role": "assistant", "content": [{"type": "text", "text":
+             "【brief】新结论【/brief】\n【detail】新详情【/detail】"}]},
             {"role": "assistant", "stopReason": "error", "errorMessage": "坏轮"},
             {"role": "toolResult", "toolCallId": "t1", "toolName": "bash",
              "content": [{"type": "text", "text": "输出"}], "isError": False},
@@ -53,6 +55,8 @@ def test_render_history_draws_users_answers_tools_and_errors(qtbot, tmp_path: Pa
     answers = [b for b in window.findChildren(AssistantBubble)]
     assert any("详答" in (b.view.toPlainText()) for b in answers)
     assert any("结论" in b.view.toPlainText() for b in answers)
+    assert any("新结论" in b.view.toPlainText() for b in answers)
+    assert any("新详情" in b.view.toPlainText() for b in answers)
     assert window.findChildren(ToolCard)
     assert window.findChildren(ErrorBanner)
 

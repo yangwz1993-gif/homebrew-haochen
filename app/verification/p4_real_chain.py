@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P4 真引擎全链路验收（P4 门禁）：配置 key → 对话 → 桌宠唤起 → 读屏确认 → 两步回答。
+"""P4 真引擎全链路验收：配置 key → 对话 → 桌宠唤起 → 读屏确认 → 分层结果。
 
 用法（仓库根目录，真实调用 DeepSeek，花少量 token）：
     HAOCHEN_HOME=/tmp/haochen-p4-real HAOCHEN_SKIP_ONBOARDING=1 QT_QPA_PLATFORM=offscreen \
@@ -7,10 +7,10 @@
 
 覆盖（开发总纲 §二 P4 门禁 + §四.4 回归清单）：
     R0 首启：模板初始化 + key 只读导入 + 真引擎就绪（真模型 id）
-    R1 气泡真问答：两步 answer/summary（真模型，标记解析正确）
+    R1 气泡真问答：单回合 brief/detail（真模型，标记解析正确）
     R2 窗口镜像：双入口同一会话（真实 jsonl 路径）
     R3 窗口追问：同会话不丢上下文（历史条数增长 + 语义呼应）
-    R4 读屏确认：确认条 → 授权 → read_screen 工具卡 → 两步完成
+    R4 读屏确认：确认条 → 授权 → read_screen 工具卡 → 单回合完成
     R5 崩溃恢复：kill → 自动重启 → 会话切回同一 jsonl → 追问不丢上下文
 产物：app/verification/p4-real-*.png + p4-real-transcript.md（问答实录，供产品审查）
 """
@@ -94,13 +94,13 @@ def main() -> int:
     check("R0 真引擎就绪", ok)
     TRANSCRIPT.append(f"- HAOCHEN_HOME: `{HOME}`\n- 会话文件: `{chat._current_path}`\n")
 
-    # ── R1 气泡真问答（两步协议）───────────────────────────────
-    print("── R1 气泡提问（真模型两步）──", flush=True)
+    # ── R1 气泡真问答（分层结果协议）───────────────────────────
+    print("── R1 气泡提问（真模型单回合）──", flush=True)
     q1 = "用一句话介绍你自己，并说出你当前使用的模型 id。"
     pet.send(q1)
     ok = wait_until(lambda: not pet.ctrl.busy and bool(pet._last_answer), 180,
-                    "气泡两步回合（真模型）")
-    check("R1 气泡两步回合完成", ok)
+                    "气泡单回合（真模型）")
+    check("R1 气泡单回合完成", ok)
     check("R1 详答非空且标记已剥除",
           bool(pet._last_answer) and "【" not in pet._last_answer)
     TRANSCRIPT.append(f"\n## R1 气泡问答\n\n**Q**: {q1}\n\n**A(详答)**: {pet._last_answer}\n")
@@ -134,7 +134,7 @@ def main() -> int:
     chat.grab().save(str(OUT / "p4-real-01-chat.png"))
 
     # ── R4 读屏确认真链路 ──────────────────────────────────────
-    print("── R4 读屏确认 → 授权 → 工具 → 两步 ──", flush=True)
+    print("── R4 读屏确认 → 授权 → 工具 → 单回合 ──", flush=True)
     q4 = "看看我当前屏幕上是什么窗口，一句话告诉我。"
     chat.input.setPlainText(q4)
     chat._on_send()
@@ -147,7 +147,7 @@ def main() -> int:
     check("R4 read_screen 工具卡呈现", bool(cards))
     answers = [b._text for b in bubbles(chat, AssistantBubble) if b.kind == "answer"]
     read_answer = answers[-1] if answers else ""
-    check("R4 读屏后两步完成", ok and bool(read_answer))
+    check("R4 读屏后单回合完成", ok and bool(read_answer))
     TRANSCRIPT.append(f"\n## R4 读屏确认\n\n**Q**: {q4}\n\n**A(详答)**: {read_answer}\n")
     chat.grab().save(str(OUT / "p4-real-02-readscreen.png"))
 

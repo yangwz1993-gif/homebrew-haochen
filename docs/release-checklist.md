@@ -9,7 +9,7 @@
 |---|---|---|
 | 静态检查 | `make check`（版本/secret/ruff/pyright/shellcheck/pytest/coverage） | 全绿，241 passed，覆盖率 81% |
 | 单元/安全/生命周期/会话/UI 流程 | `pytest tests/` | 241/241（两轮确认） |
-| L1 引擎协议 | `python3 mock-engine/driver.py` | 45/45 |
+| L1 引擎协议 | `python3 mock-engine/driver.py` | 退出码 0，全部断言通过 |
 | L2 配置自检 | selfcheck | 27/27 |
 | 视觉扩展 | `bun run app/ext/test-visual-mode.ts` | 21/21 |
 | L3 对话场景 | chat/verification/run_scenarios.py | 全部场景完成 |

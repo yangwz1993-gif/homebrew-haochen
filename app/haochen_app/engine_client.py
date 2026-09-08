@@ -43,7 +43,7 @@ from .secure_storage import ensure_private_directory, ensure_private_file
 PROJECT_ROOT = paths.PROJECT_ROOT
 DEFAULT_ENGINE = paths.engine_binary()
 DEFAULT_MOCK = paths.mock_engine()
-DEFAULT_EXT = paths.ext_entry()  # haochen 专属扩展（两步协议/read_screen）
+DEFAULT_EXT = paths.ext_entry()  # haochen 专属扩展（分层结果协议/read_screen）
 
 
 def haochen_home() -> Path:
@@ -61,7 +61,7 @@ def spawn_argv(
     """契约 §1.1 冻结的启动约定：返回 (argv, env, cwd)。"""
     env = dict(os.environ)
     env["PI_CODING_AGENT_DIR"] = str(home / "agent")
-    env["HAOCHEN_PET"] = "1"          # 扩展两步协议强制开关（app/ext/index.ts）
+    env["HAOCHEN_PET"] = "1"          # 扩展分层结果协议开关（app/ext/index.ts）
     env["HAOCHEN_HOME"] = str(home)   # 扩展读屏签名等落点与壳一致
     env["HAOCHEN_APP_PID"] = str(os.getpid())  # 读屏窗口选择：读者据此识别「前台=haochen」
     reader = paths.reader_binary()

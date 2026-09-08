@@ -239,7 +239,7 @@ class Runner:
         shot(pa.bubble, "06-read-screen-done.png")
         self.check("S2 读屏后短结非空", bool(summary.strip()), summary[:30])
         self.check("S2 读屏结果不恢复输入框", not pa.bubble._input_visible())
-        # mock 的 summary 回合文案固定，读屏语义改在 answer 详答上验
+        # mock 的 brief 文案固定，读屏语义改在 detail 详答上验
         self.check("S2 详答含读屏语义", "屏" in self._s2_answer, self._s2_answer[:40])
         QTimer.singleShot(300, self.next)
 

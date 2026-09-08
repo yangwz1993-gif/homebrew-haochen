@@ -34,21 +34,7 @@ def assistant_message(text: str) -> dict:
     return {"role": "assistant", "content": [{"type": "text", "text": text}]}
 
 
-def complete_round(client, answer: str = "【answer】答【/answer】", summary: str = "【summary】结【/summary】") -> None:
-    # 回答 accepted → user message_end → agent_end(answer) → agent_end(summary)
-    # 通过 controller 的两个 prompt request id 结算
-    # answer 阶段
-    getattr(client, "response").emit({"id": f"request-{len(_sent_count(client))}", "success": True, "type": "response"})
-    getattr(client, "event").emit({"type": "message_end", "message": {"role": "user"}})
-    getattr(client, "event").emit({"type": "agent_end", "messages": [user_message("q"), assistant_message(answer)]})
-    getattr(client, "event").emit({"type": "agent_end", "messages": [user_message("k"), assistant_message(summary)]})
-
-
-def _sent_count(client) -> list:
-    return getattr(client, "_ids", [])
-
-
-def test_send_runs_two_step_round_and_shows_summary(qtbot, tmp_path: Path) -> None:
+def test_send_runs_single_turn_and_shows_summary(qtbot, tmp_path: Path) -> None:
     pet, client = make_pet(qtbot, tmp_path)
     pet.bubble.summon()
 
@@ -60,10 +46,9 @@ def test_send_runs_two_step_round_and_shows_summary(qtbot, tmp_path: Path) -> No
     client.response.emit({"id": request_id, "success": True, "type": "response"})
     getattr(client, "event").emit({"type": "message_end", "message": {"role": "user"}})
     getattr(client, "event").emit({"type": "agent_end", "messages": [
-        user_message("你好"), assistant_message("【answer】详答内容【/answer】")]})
-    assert pet.ctrl.busy  # summary 阶段
-    getattr(client, "event").emit({"type": "agent_end", "messages": [
-        user_message("k"), assistant_message("【summary】短结论【/summary】")]})
+        user_message("你好"),
+        assistant_message("【brief】短结论【/brief】\n【detail】详答内容【/detail】"),
+    ]})
 
     assert not pet.ctrl.busy
     assert pet.state.value == "AWAKE"
