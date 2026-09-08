@@ -266,3 +266,23 @@ def test_pet_window_context_menu_emits_actions(qtbot, tmp_path: Path) -> None:
     labels = [action.text() for action in triggered]
     assert "打开完整对话" in labels
     assert len(triggered) >= 6  # 唤起/气泡/完整对话/新会话/设置/退出
+
+
+def test_pet_image_opens_context_menu_directly(qtbot, tmp_path: Path) -> None:
+    window = make_pet_window(qtbot, tmp_path)
+    shown_at: list[QPoint] = []
+
+    original_exec = QMenu.exec
+
+    def fake_exec(menu_self, global_pos, *args, **kwargs):
+        shown_at.append(global_pos)
+
+    QMenu.exec = fake_exec
+    try:
+        local_pos = QPoint(12, 18)
+        expected = window.label.mapToGlobal(local_pos)
+        window.label.customContextMenuRequested.emit(local_pos)
+    finally:
+        QMenu.exec = original_exec
+
+    assert shown_at == [expected]

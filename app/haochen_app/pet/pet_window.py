@@ -65,6 +65,13 @@ class PetWindow(QWidget):
         self.label = QLabel()
         self.label.setAccessibleName("haochen，点击开始对话")
         self.label.setStyleSheet("background: transparent;")
+        # QLabel covers the entire transparent window. On macOS its context
+        # event is not reliably forwarded to the parent QWidget, so handle it
+        # at the visible hit target as well.
+        self.label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.label.customContextMenuRequested.connect(
+            lambda pos: self._show_context_menu(self.label.mapToGlobal(pos))
+        )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.label)
@@ -262,7 +269,7 @@ class PetWindow(QWidget):
         else:
             super().mouseDoubleClickEvent(e)
 
-    def contextMenuEvent(self, e):
+    def _show_context_menu(self, global_pos: QPoint) -> None:
         menu = QMenu(self)
         act_key = QAction(f"唤起气泡 {self._hotkey_hint}", self)
         act_key.setEnabled(False)
@@ -284,4 +291,7 @@ class PetWindow(QWidget):
         act_quit = QAction("退出", self)
         act_quit.triggered.connect(self.quit_requested.emit)
         menu.addAction(act_quit)
-        menu.exec(e.globalPos())
+        menu.exec(global_pos)
+
+    def contextMenuEvent(self, e):
+        self._show_context_menu(e.globalPos())
