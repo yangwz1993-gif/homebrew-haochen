@@ -30,6 +30,7 @@ ASSETS_DIR = paths.pet_assets()
 PET_SIZE = 96            # 常驻尺寸（visual-spec §4）；set_pet_size 留缩放口
 _FLOAT_MS = 600
 _FLOAT_PX = 2
+_SINGLE_CLICK_MS = 220
 
 
 class PetWindow(QWidget):
@@ -70,6 +71,11 @@ class PetWindow(QWidget):
 
         self._drag_pos = None
         self._moved = False
+        self.setToolTip("单击和我说话 · 右键打开菜单")
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        self._click_timer.setInterval(_SINGLE_CLICK_MS)
+        self._click_timer.timeout.connect(self.summon_requested.emit)
 
         # idle 轻微浮动（视觉生命感；拖拽/非 idle 时暂停）
         self._float_dir = 1
@@ -173,8 +179,14 @@ class PetWindow(QWidget):
             ensure_private_file(path)
             data = json.loads(path.read_text(encoding="utf-8"))
             rect = QRect(int(data["x"]), int(data["y"]), self._size, self._size)
-            if any(s.availableGeometry().intersects(rect) for s in QApplication.screens()):
-                self.move(rect.topLeft())
+            candidates = [s.availableGeometry() for s in QApplication.screens()
+                          if s.availableGeometry().intersects(rect)]
+            if candidates:
+                target = max(candidates, key=lambda area: area.intersected(rect).width()
+                             * area.intersected(rect).height())
+                x = max(target.left(), min(rect.x(), target.right() - self._size + 1))
+                y = max(target.top(), min(rect.y(), target.bottom() - self._size + 1))
+                self.move(x, y)
                 return
         except Exception:
             pass
@@ -209,11 +221,14 @@ class PetWindow(QWidget):
         if e.button() == Qt.MouseButton.LeftButton:
             if self._drag_pos is not None and self._moved:
                 self.save_position()  # v0.1.6：拖动结束记位置
+            elif self._drag_pos is not None:
+                self._click_timer.start()
             self._drag_pos = None
         super().mouseReleaseEvent(e)
 
     def mouseDoubleClickEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton and not self._moved:
+            self._click_timer.stop()
             self.summon_requested.emit()
         else:
             super().mouseDoubleClickEvent(e)

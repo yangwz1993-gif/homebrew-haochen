@@ -109,6 +109,7 @@ class PetApp(QObject):
         self.bubble.expand_detail.connect(self._on_expand_detail)
         self.bubble.continue_requested.connect(self._on_continue)
         self.bubble.retry_requested.connect(self._on_retry)
+        self.bubble.settings_requested.connect(self._on_settings)
         self.bubble.confirm_resolved.connect(self._on_confirm_resolved)
 
         # ── v0.1.6：人物/气泡联动拖动（关系恒为「气泡在人物正上方」）──
@@ -201,6 +202,8 @@ class PetApp(QObject):
                 self.bubble.start_input()
             self._place_bubble()
             self.bubble.summon(show_input=show_input)
+            self.pet.show()
+            self.pet.raise_()
             if self._state is PetState.IDLE:
                 self._set_state(PetState.LISTENING)
 
@@ -444,6 +447,8 @@ class PetApp(QObject):
             self.bubble.summon(show_input=False)
         else:
             self._place_bubble()
+        self.pet.show()
+        self.pet.raise_()
         self._result_timer.start()
         self._set_state(PetState.PRESENTING)
 
@@ -472,13 +477,14 @@ class PetApp(QObject):
 
         self._result_timer.stop()
         self._status_block = None
+        self.bubble.clear_flow()
+        self.bubble.set_input_visible(False)
         self.bubble.add_error(humanize_error(err))
-        self.bubble.set_input_visible(True)  # 出错可重试/重新提问
+        self._set_state(PetState.LISTENING)
         self._alert_pose_then_idle()
         if not self.bubble.summoned:
             self._place_bubble()
             self.bubble.summon()
-        self._set_state(PetState.LISTENING)
 
     def _on_retry(self) -> None:
         if self.ctrl.busy:

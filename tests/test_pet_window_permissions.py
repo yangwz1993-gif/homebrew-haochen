@@ -170,6 +170,39 @@ def test_pet_window_double_click_summons(qtbot, tmp_path: Path) -> None:
     assert summoned == [True]
 
 
+def test_pet_window_single_click_summons_without_double_click_duplicate(qtbot, tmp_path: Path) -> None:
+    window = make_pet_window(qtbot, tmp_path)
+    summoned: list[bool] = []
+    window.summon_requested.connect(lambda: summoned.append(True))
+    center = QPoint(window.width() // 2, window.height() // 2)
+
+    window.mousePressEvent(mouse(
+        window, QMouseEvent.Type.MouseButtonPress, center,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+    ))
+    window.mouseReleaseEvent(mouse(
+        window, QMouseEvent.Type.MouseButtonRelease, center,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+    ))
+    qtbot.waitUntil(lambda: summoned == [True], timeout=800)
+
+    summoned.clear()
+    window.mousePressEvent(mouse(
+        window, QMouseEvent.Type.MouseButtonPress, center,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+    ))
+    window.mouseReleaseEvent(mouse(
+        window, QMouseEvent.Type.MouseButtonRelease, center,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+    ))
+    window.mouseDoubleClickEvent(mouse(
+        window, QMouseEvent.Type.MouseButtonDblClick, center,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+    ))
+    qtbot.wait(400)
+    assert summoned == [True]
+
+
 def test_pet_window_context_menu_emits_actions(qtbot, tmp_path: Path) -> None:
     window = make_pet_window(qtbot, tmp_path)
     new_sessions: list[bool] = []

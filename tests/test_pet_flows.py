@@ -6,6 +6,8 @@ import importlib
 import sys
 from pathlib import Path
 
+from PyQt6.QtWidgets import QLabel
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
@@ -73,6 +75,20 @@ def test_result_continue_restores_only_input(qtbot, tmp_path: Path) -> None:
     assert pet.bubble._input_visible()
     assert not pet.bubble.findChildren(SummaryBlock)
     assert not pet._result_timer.isActive()
+
+
+def test_continue_cancels_an_inflight_auto_dismiss(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet._on_summary_done("已经处理好了。")
+    pet.bubble.dismiss()  # 模拟 8 秒计时器刚进入 150ms 退场阶段
+
+    pet._on_continue()
+    qtbot.wait(250)
+
+    assert pet.bubble.summoned
+    assert pet.bubble.isVisible()
+    assert pet.bubble._input_visible()
 
 
 def test_result_auto_dismisses_without_interaction(qtbot, tmp_path: Path) -> None:
@@ -155,6 +171,21 @@ def test_crash_without_supervisor_shows_error_and_summons(qtbot, tmp_path: Path)
     client.crashed.emit(7)
     from haochen_app.pet.bubble import ErrorBlock  # noqa: E402
     assert pet.bubble.findChildren(ErrorBlock)
+
+
+def test_failure_replaces_working_status_with_human_error(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet.send("你好")
+    pet._on_failed("Header 'Authorization' has invalid value 'Bearer sk-secret'")
+
+    from haochen_app.pet.bubble import ErrorBlock, StatusBlock  # noqa: E402
+    assert not pet.bubble.findChildren(StatusBlock)
+    errors = pet.bubble.findChildren(ErrorBlock)
+    assert len(errors) == 1
+    text = " ".join(label.text() for label in errors[0].findChildren(QLabel))
+    assert "API Key 无效" in text
+    assert "sk-secret" not in text
 
 
 def test_state_transitions_and_pose(qtbot, tmp_path: Path) -> None:

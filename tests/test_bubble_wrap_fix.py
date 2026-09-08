@@ -73,3 +73,31 @@ def test_humanize_error_passthrough_for_plain_messages() -> None:
     assert conversation.humanize_error("引擎已退出") == "引擎已退出"
     assert conversation.humanize_error("") == ""
     assert conversation.humanize_error("503: 不是json") == "503: 不是json"
+
+
+def test_input_state_drops_stale_result_height(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(bubble_module.a11y, "reduce_motion_enabled", lambda: True)
+    win = BubbleWindow()
+    qtbot.addWidget(win)
+    win.summon()
+    win.present_summary("结论。\n- 这是一个用于撑高旧结果状态的长要点。" * 8)
+    qtbot.wait(50)
+
+    win.start_input()
+    qtbot.wait(50)
+    metrics = win.layout_metrics()
+
+    assert metrics["input_visible"] is True
+    assert metrics["scroll_visible"] is False
+    assert metrics["flow_content_height"] == 0
+    assert metrics["input_top_gap"] <= 24
+    assert metrics["height"] <= 190
+
+
+def test_humanize_error_redacts_invalid_authorization_value() -> None:
+    raw = "Header 'Authorization' has invalid value 'Bearer sk-在此填入你的-DeepSeek-Key'"
+    out = conversation.humanize_error(raw)
+
+    assert out == "API Key 无效或格式不正确。请打开设置重新配置后再试。"
+    assert "Bearer" not in out
+    assert "sk-" not in out

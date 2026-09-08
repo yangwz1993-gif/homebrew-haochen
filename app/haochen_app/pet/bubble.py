@@ -265,20 +265,36 @@ class ErrorBlock(QWidget):
     """错误块：color-danger 文案 + 重试入口（interaction-spec §6.4 / rpc-contract §6）。"""
 
     retry_clicked = pyqtSignal()
+    settings_clicked = pyqtSignal()
 
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
         self.setStyleSheet("background: transparent;")
-        lay = QHBoxLayout(self)
+        lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 2, 4, 2)
         lb = _text_label("⚠ " + text, "", T.FONT_BODY_SM)
         lb.setStyleSheet(f"QLabel {{ color: {T.COLOR_DANGER}; font-size: {T.FONT_BODY_SM}px;"
                          f" padding: 2px 4px; }}")
-        lay.addWidget(lb, 1)
-        btn = QPushButton("重试")
-        btn.setObjectName("outlineBtn")
-        btn.clicked.connect(self.retry_clicked.emit)
-        lay.addWidget(btn)
+        lay.addWidget(lb)
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        settings = QPushButton("检查设置")
+        settings.setAccessibleName("打开设置检查模型和 API Key")
+        settings.setStyleSheet(
+            f"QPushButton {{ background: {T.COLOR_SURFACE}; color: {T.COLOR_INK_SOFT};"
+            f" border: 1px solid {T.COLOR_LINE_SOFT}; border-radius: {T.RADIUS_BUTTON}px;"
+            f" padding: 5px 10px; font-size: {T.FONT_BODY_SM}px; }}")
+        settings.clicked.connect(self.settings_clicked.emit)
+        actions.addWidget(settings)
+        retry = QPushButton("重试")
+        retry.setStyleSheet(
+            f"QPushButton {{ background: {T.COLOR_ACCENT}; color: #fff; border: none;"
+            f" border-radius: {T.RADIUS_BUTTON}px; padding: 5px 14px;"
+            f" font-weight: bold; font-size: {T.FONT_BODY_SM}px; }}"
+            f"QPushButton:hover {{ background: {T.COLOR_ACCENT_DEEP}; }}")
+        retry.clicked.connect(self.retry_clicked.emit)
+        actions.addWidget(retry)
+        lay.addLayout(actions)
 
 
 class ConfirmBar(QWidget):
@@ -340,6 +356,7 @@ class BubbleWindow(QWidget):
     expand_detail = pyqtSignal()        # 「查看详情」→ 对话窗口从气泡展开
     continue_requested = pyqtSignal()   # 结果卡「继续问」→ 回到轻量输入
     retry_requested = pyqtSignal()      # 错误块重试
+    settings_requested = pyqtSignal()   # 错误块「检查设置」
     confirm_resolved = pyqtSignal(bool) # 读屏确认条结果
     moved = pyqtSignal(int, int)        # v0.1.6：气泡拖动中（外层联动桌宠跟随）
     drag_finished = pyqtSignal()        # v0.1.6：拖动结束（外层持久化位置）
@@ -392,6 +409,7 @@ class BubbleWindow(QWidget):
         head = QHBoxLayout()
         title = QLabel("👓 haochen")
         title.setObjectName("title")
+        self.title_label = title
         head.addWidget(title)
         head.addStretch(1)
         btn_close = QPushButton("✕")
@@ -489,9 +507,10 @@ class BubbleWindow(QWidget):
         # 对话流（消息区）在输入区上方自适应高度
         self._anims: list[QPropertyAnimation] = []
         self._shown = False
-        self._min_h = 170
+        self._min_h = 72
         self.setMinimumHeight(self._min_h)
         self._drag_pos: QPoint | None = None  # 拖动中（标题/空白区按下左键）
+        self._dismiss_anim: QPropertyAnimation | None = None
 
     # ── 输入区收起/弹出（§5 动态对话流）＋ 窗口自适应高度 ────────
 
@@ -500,20 +519,53 @@ class BubbleWindow(QWidget):
 
     def set_input_visible(self, on: bool) -> None:
         """发送后收起输入区；需再输入/可追问时弹出。"""
-        if on == self._input_panel.isVisible():
-            return
-        self._input_panel.setVisible(on)
+        if on != self._input_panel.isVisible():
+            self._input_panel.setVisible(on)
         if on:
             self.input.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self._refresh_height()
 
+    def _flow_content_height(self) -> int:
+        """只计算真实内容，不让旧窗口高度或 layout stretch 污染新状态。"""
+        heights = []
+        for index in range(self.flow.count() - 1):  # 最后一项是 stretch
+            item = self.flow.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if widget is not None and not widget.isHidden():
+                heights.append(widget.sizeHint().height())
+        if not heights:
+            return 0
+        return sum(heights) + self.flow.spacing() * (len(heights) - 1)
+
     def _refresh_height(self) -> None:
         """自适应高度：内容 + 输入区（若可见）+ 标题 + 尾巴，封顶 _max_h。"""
-        flow_h = self.flow.sizeHint().height()
+        self.flow.invalidate()
+        self.flow.activate()
+        flow_h = self._flow_content_height()
         panel_h = self._input_panel.sizeHint().height() if self._input_panel.isVisible() else 0
-        want = 34 + flow_h + panel_h + T.TAIL_SIZE + 8
+        flow_cap = max(0, self._max_h - 34 - panel_h - T.TAIL_SIZE - 8)
+        shown_flow_h = min(flow_h, flow_cap)
+        self.scroll.setVisible(shown_flow_h > 0)
+        self.scroll.setFixedHeight(shown_flow_h)
+        want = 34 + shown_flow_h + panel_h + T.TAIL_SIZE + 8
         want = max(self._min_h, min(want, self._max_h))
         self.setFixedHeight(want)
+
+    def layout_metrics(self) -> dict[str, int | bool]:
+        """Return stable geometry evidence for visual QA without inspecting implementation."""
+        title_bottom = self.title_label.geometry().bottom()
+        input_rect = self._input_panel.geometry()
+        input_gap = 0
+        if self._input_panel.isVisible():
+            input_gap = max(0, input_rect.top() - title_bottom - self.layout().spacing())
+        return {
+            "width": self.width(),
+            "height": self.height(),
+            "flow_content_height": self._flow_content_height(),
+            "scroll_visible": self.scroll.isVisible(),
+            "input_visible": self._input_panel.isVisible(),
+            "input_top_gap": input_gap,
+        }
 
     # ── 对话流 ────────────────────────────────────────────────
 
@@ -554,8 +606,12 @@ class BubbleWindow(QWidget):
 
     def remove_widget(self, w: QWidget) -> None:
         self.flow.removeWidget(w)
+        w.hide()
+        w.setParent(None)
         w.deleteLater()
+        self.flow.invalidate()
         self._refresh_height()
+        QTimer.singleShot(0, self._refresh_height)
 
     def add_perception_hint(self, text: str) -> None:
         self._append(HintBlock(text))
@@ -580,6 +636,7 @@ class BubbleWindow(QWidget):
 
     def start_input(self) -> None:
         """进入 LISTENING：清掉旧临时层，只显示输入区。"""
+        self.cancel_dismiss()
         self.clear_flow()
         self.set_input_visible(True)
         self.focus_input()
@@ -591,6 +648,7 @@ class BubbleWindow(QWidget):
     def add_error(self, text: str) -> None:
         block = ErrorBlock(text)
         block.retry_clicked.connect(self.retry_requested.emit)
+        block.settings_clicked.connect(self.settings_requested.emit)
         self._append(block)
 
     def clear_flow(self) -> None:
@@ -599,10 +657,13 @@ class BubbleWindow(QWidget):
             item = self.flow.takeAt(0)
             w = item.widget()
             if w:
+                w.hide()
                 w.setParent(None)
                 w.deleteLater()
+        self.flow.invalidate()
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._refresh_height()
+        QTimer.singleShot(0, self._refresh_height)
 
     # ── 读屏确认条 ────────────────────────────────────────────
 
@@ -712,12 +773,16 @@ class BubbleWindow(QWidget):
             self.dismissed.emit()
             return
         anim = QPropertyAnimation(self, b"windowOpacity", self)
+        self._dismiss_anim = anim
         anim.setDuration(T.ANIM_DISMISS_MS)
         anim.setStartValue(self.windowOpacity())
         anim.setEndValue(0.0)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         def _after():
+            if self._dismiss_anim is not anim:
+                return
+            self._dismiss_anim = None
             QWidget.hide(self)  # 嵌套闭包里不能用零参 super()
             self.setWindowOpacity(1.0)
             self.dismissed.emit()
@@ -725,6 +790,16 @@ class BubbleWindow(QWidget):
         anim.finished.connect(_after)
         anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
         self._anims.append(anim)
+
+    def cancel_dismiss(self) -> None:
+        """用户继续交互时撤销已开始的自动退场，避免按钮点击后仍被隐藏。"""
+        if self._dismiss_anim is not None:
+            self._dismiss_anim.stop()
+            self._dismiss_anim = None
+        self._shown = True
+        self.setWindowOpacity(1.0)
+        if not self.isVisible():
+            super().show()
 
     @property
     def summoned(self) -> bool:

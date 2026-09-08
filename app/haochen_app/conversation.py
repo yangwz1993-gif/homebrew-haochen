@@ -54,6 +54,16 @@ def humanize_error(text: str) -> str:
     import json as _json
 
     raw = (text or "").strip()
+    low = raw.lower()
+    if any(token in low for token in (
+        "authorization", "invalid api key", "incorrect api key", "authentication",
+        "unauthorized", "bearer sk-",
+    )):
+        return "API Key 无效或格式不正确。请打开设置重新配置后再试。"
+    if any(token in low for token in ("timed out", "timeout", "connection refused", "network")):
+        return "暂时连不上模型服务。请检查网络，稍后重试。"
+    if "rate limit" in low or raw.startswith("429:"):
+        return "请求太频繁，模型服务暂时限流。请稍等片刻再试。"
     m = re.match(r"^(\d{3}):\s*(\{.*\})\s*$", raw, re.S)
     if not m:
         return raw
@@ -64,6 +74,8 @@ def humanize_error(text: str) -> str:
         return raw
     if "insufficient balance" in message.lower():
         return f"API 账户余额不足（HTTP {code}）——请到服务商控制台充值，或在设置中更换 Key"
+    if code in ("401", "403"):
+        return "API Key 无效或没有访问权限。请打开设置检查配置。"
     return f"API 错误 {code}：{message}"
 
 
