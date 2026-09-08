@@ -93,6 +93,7 @@ class PetApp(QObject):
         self._result_timer.setSingleShot(True)
         self._result_timer.setInterval(RESULT_AUTO_DISMISS_MS)
         self._result_timer.timeout.connect(self._dismiss_result_if_idle)
+        self.bubble.destroyed.connect(self._on_bubble_destroyed)
 
         # ── L0 桌宠 ──
         self.pet.summon_requested.connect(self._toggle_bubble)
@@ -141,6 +142,7 @@ class PetApp(QObject):
         self._set_state(PetState.IDLE)
 
     def quit(self) -> None:
+        self._result_timer.stop()
         try:
             if self.supervisor is not None:
                 self.supervisor.stop()      # P4：整个 App 的引擎一起停
@@ -150,6 +152,13 @@ class PetApp(QObject):
             pass
         QApplication.instance().quit()
         QTimer.singleShot(800, lambda: __import__("os")._exit(0))  # 兜底强退
+
+    def _on_bubble_destroyed(self) -> None:
+        """窗口销毁时解除长生命周期回调，避免计时器访问失效的 Qt 对象。"""
+        self._result_timer.stop()
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
 
     # ── 状态机 ────────────────────────────────────────────────
 
@@ -434,8 +443,14 @@ class PetApp(QObject):
 
     def _dismiss_result_if_idle(self) -> None:
         """结果卡无交互 8 秒后退场；工作、确认和详情阶段绝不误收起。"""
+        try:
+            input_visible = self.bubble._input_visible()
+            summoned = self.bubble.summoned
+        except RuntimeError:
+            self._result_timer.stop()
+            return
         if (self.ctrl.busy or self._confirm_id is not None or self._detail_open
-                or self.bubble._input_visible() or not self.bubble.summoned):
+                or input_visible or not summoned):
             return
         self.bubble.dismiss()
 

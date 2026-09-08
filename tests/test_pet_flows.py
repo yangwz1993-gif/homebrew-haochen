@@ -86,6 +86,21 @@ def test_result_auto_dismisses_without_interaction(qtbot, tmp_path: Path) -> Non
     assert pet.state is PetState.IDLE
 
 
+def test_destroying_bubble_stops_result_timer(qtbot, tmp_path: Path) -> None:
+    """CI 慢机回归：清理窗口后，自动退场不得访问已删除的 Qt 子控件。"""
+    client = harness.FakeClient()
+    client.home = tmp_path
+    pet = PetApp(client=client, supervisor=None)
+    qtbot.addWidget(pet.pet)
+    pet._result_timer.setInterval(20)
+    pet._result_timer.start()
+
+    pet.bubble.deleteLater()
+    qtbot.wait(60)
+
+    assert not pet._result_timer.isActive()
+
+
 def test_abort_stops_round_and_keeps_state_visible(qtbot, tmp_path: Path) -> None:
     pet, client = make_pet(qtbot, tmp_path)
     pet.bubble.summon()
