@@ -14,7 +14,7 @@ import json
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QPixmap
 from PyQt6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLabel, QMenu, QVBoxLayout, QWidget
 
@@ -31,6 +31,7 @@ PET_SIZE = 96            # 常驻尺寸（visual-spec §4）；set_pet_size 留�
 _FLOAT_MS = 600
 _FLOAT_PX = 2
 _SINGLE_CLICK_MS = 220
+_SCREEN_MARGIN = 8
 
 
 class PetWindow(QWidget):
@@ -171,8 +172,26 @@ class PetWindow(QWidget):
 
     def _float(self) -> None:
         if self._floating_enabled and self._drag_pos is None:
-            self.move(self.x(), self.y() + self._float_dir * _FLOAT_PX)
+            proposed = QPoint(self.x(), self.y() + self._float_dir * _FLOAT_PX)
+            self.move(self._clamped_position(proposed, self.geometry().center()))
             self._float_dir *= -1
+
+    def _clamped_position(self, proposed: QPoint, pointer: QPoint | None = None) -> QPoint:
+        """Keep the whole character inside the target screen's visible work area."""
+        anchor = pointer or QPoint(
+            proposed.x() + self.width() // 2,
+            proposed.y() + self.height() // 2,
+        )
+        screen = QApplication.screenAt(anchor) or a11y.screen_of(self)
+        area = screen.availableGeometry()
+        width = max(1, self.width())
+        height = max(1, self.height())
+        return QPoint(
+            max(area.left() + _SCREEN_MARGIN,
+                min(proposed.x(), area.right() - width + 1 - _SCREEN_MARGIN)),
+            max(area.top() + _SCREEN_MARGIN,
+                min(proposed.y(), area.bottom() - height + 1 - _SCREEN_MARGIN)),
+        )
 
     # ── 位置记忆（v0.1.6）──────────────────────────────────────
 
@@ -220,7 +239,8 @@ class PetWindow(QWidget):
 
     def mouseMoveEvent(self, e):
         if self._drag_pos is not None:
-            self.move(e.globalPosition().toPoint() - self._drag_pos)
+            pointer = e.globalPosition().toPoint()
+            self.move(self._clamped_position(pointer - self._drag_pos, pointer))
             self._moved = True
             self.moved.emit(self.x(), self.y())  # v0.1.6：气泡跟随
         super().mouseMoveEvent(e)

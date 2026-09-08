@@ -268,5 +268,32 @@
       "input_top_gap": 143,
       "mode": "result"
     }
+  },
+  {
+    "file": "15-bottom-edge-result.png",
+    "state": "PRESENTING",
+    "bubble": {
+      "x": 101,
+      "y": 590,
+      "width": 380,
+      "height": 103
+    },
+    "pet": {
+      "x": 399,
+      "y": 696,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 8,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 380,
+      "height": 103,
+      "flow_content_height": 81,
+      "scroll_visible": true,
+      "input_visible": false,
+      "input_top_gap": 0,
+      "mode": "result"
+    }
   }
 ]

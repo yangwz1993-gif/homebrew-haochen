@@ -66,6 +66,25 @@ def test_send_runs_single_turn_and_shows_summary(qtbot, tmp_path: Path) -> None:
     assert pet._result_timer.isActive()
 
 
+def test_unstructured_exact_reply_still_shows_a_transient_result(qtbot, tmp_path: Path) -> None:
+    pet, client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet.send("只回复“好”")
+    request_id = pet.ctrl._answer_request_id
+    client.response.emit({"id": request_id, "success": True, "type": "response"})
+    getattr(client, "event").emit({"type": "message_end", "message": {"role": "user"}})
+    getattr(client, "event").emit({"type": "agent_end", "messages": [
+        user_message("只回复“好”"), assistant_message("好"),
+    ]})
+
+    from haochen_app.pet.bubble import SummaryBlock  # noqa: E402
+    blocks = pet.bubble.findChildren(SummaryBlock)
+    assert blocks
+    assert "好" in " ".join(label.text() for label in blocks[-1].findChildren(QLabel))
+    assert pet.bubble.summoned
+    assert pet._result_timer.isActive()
+
+
 def test_first_pet_message_names_new_session(qtbot, tmp_path: Path) -> None:
     pet, client = make_pet(qtbot, tmp_path)
     names: list[str] = []
@@ -181,7 +200,7 @@ def test_result_auto_dismisses_without_interaction(qtbot, tmp_path: Path) -> Non
 
 
 def test_default_result_dwell_is_long_enough_to_read() -> None:
-    assert pet_module.RESULT_AUTO_DISMISS_MS >= 10_000
+    assert pet_module.RESULT_AUTO_DISMISS_MS >= 18_000
 
 
 def test_destroying_bubble_stops_result_timer(qtbot, tmp_path: Path) -> None:

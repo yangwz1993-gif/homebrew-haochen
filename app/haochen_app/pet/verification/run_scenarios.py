@@ -41,7 +41,7 @@ os.environ.setdefault("MOCK_ACTION_DELAY_MS", "240")
 from PyQt6.QtCore import QPoint, Qt, QTimer
 from PyQt6.QtGui import QColor, QPainter, QPixmap
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QPushButton
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
 
 from haochen_app.pet import PetApp, PetState
 from haochen_app.pet import theme as T
@@ -538,6 +538,28 @@ class Runner:
                    and abs(b.tail_tip_global_x - center_x) <= 2,
                    f"side={b.tail_side} tail={b.tail_tip_global_x} center={center_x}")
         shot_pair(pa, "14-top-edge-tail.png")
+
+        # 模拟拖动指针越过 Dock：人物整体必须夹回 macOS 可用工作区。
+        proposed = QPoint(screen.center().x(), screen.bottom() + 200)
+        p.move(p._clamped_position(proposed, screen.center()))
+        pa._place_bubble()
+        self.check("底缘拖动后人物完整留在可用工作区",
+                   p.y() >= screen.top() and p.y() + p.height() - 1 <= screen.bottom(),
+                   f"pet={p.geometry()} available={screen}")
+        pa._aborted = False
+        pa._last_answer = "好"
+        pa._on_summary_done("好")
+        QTimer.singleShot(300, self._s8_bottom_ready)
+
+    def _s8_bottom_ready(self):
+        pa = self.pa
+        b = pa.bubble
+        self.check("无协议短答仍呈现可见结果",
+                   any("好" in label.text() for block in b.findChildren(SummaryBlock)
+                       for label in block.findChildren(QPushButton) + block.findChildren(QLabel)),
+                   "expected visible fallback summary")
+        pa._place_bubble()
+        shot_pair(pa, "15-bottom-edge-result.png")
         QTimer.singleShot(300, self.next)
 
     # ── 收尾 ──

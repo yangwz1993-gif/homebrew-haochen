@@ -159,6 +159,24 @@ def test_pet_window_drag_persists_position(qtbot, tmp_path: Path, monkeypatch) -
     assert data["x"] == window.x() and data["y"] == window.y()
 
 
+def test_pet_drag_is_clamped_above_dock_visible_area(qtbot, tmp_path: Path, monkeypatch) -> None:
+    window = make_pet_window(qtbot, tmp_path, monkeypatch)
+    screen = QApplication.primaryScreen()
+    area = screen.availableGeometry()
+
+    clamped = window._clamped_position(
+        QPoint(area.right() + 500, area.bottom() + 500),
+        area.center(),
+    )
+
+    assert clamped.x() + window.width() - 1 <= area.right()
+    assert clamped.y() + window.height() - 1 <= area.bottom()
+    assert clamped.x() >= area.left() + pet_window_module._SCREEN_MARGIN
+    assert clamped.y() >= area.top() + pet_window_module._SCREEN_MARGIN
+    assert clamped.x() + window.width() - 1 <= area.right() - pet_window_module._SCREEN_MARGIN
+    assert clamped.y() + window.height() - 1 <= area.bottom() - pet_window_module._SCREEN_MARGIN
+
+
 def test_pet_window_position_restore_and_offscreen_fallback(qtbot, tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "pet-pos.json").write_text(
         json.dumps({"x": -50000, "y": -50000}), encoding="utf-8"

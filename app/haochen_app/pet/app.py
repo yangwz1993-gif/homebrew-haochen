@@ -39,7 +39,7 @@ log = logging.getLogger("haochen.pet")
 
 # v0.1.7 首启问称呼：这些回复视为「跳过」（落盘空名，不再问）
 _NAME_SKIP_WORDS = ("算了", "跳过", "不用了", "不用", "skip")
-RESULT_AUTO_DISMISS_MS = 12_000
+RESULT_AUTO_DISMISS_MS = 20_000
 ACK_MIN_VISIBLE_MS = 520
 DISCOVERY_HINT_MS = 8_500
 PRIVACY_DECISION_MIN_VISIBLE_MS = 1_600
@@ -610,7 +610,7 @@ class PetApp(QObject):
         self._set_state(PetState.LISTENING)
 
     def _dismiss_result_if_idle(self) -> None:
-        """结果卡无交互 8 秒后退场；工作、确认和详情阶段绝不误收起。"""
+        """结果卡无交互后退场；工作、确认和详情阶段绝不误收起。"""
         try:
             input_visible = self.bubble._input_visible()
             summoned = self.bubble.summoned

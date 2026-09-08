@@ -6,6 +6,9 @@ import importlib
 import sys
 from pathlib import Path
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QKeyEvent, QTextCursor
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
@@ -68,6 +71,29 @@ def test_render_history_failure_is_silent(qtbot, tmp_path: Path) -> None:
     assert not window.findChildren(UserBubble)
 
 
+def test_user_bubble_preserves_literal_multiline_text(qtbot) -> None:
+    bubble = UserBubble("第一行\n第二行\n第三行")
+    qtbot.addWidget(bubble)
+
+    assert bubble.view.toPlainText() == "第一行\n第二行\n第三行"
+
+
+def test_plain_assistant_history_is_rendered_as_visible_conclusion(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+
+    window._render_history({
+        "success": True,
+        "data": {"messages": [
+            {"role": "assistant", "content": [{"type": "text", "text": "好"}]},
+        ]},
+    })
+
+    answers = window.findChildren(AssistantBubble)
+    assert len(answers) == 1
+    assert answers[0].kind == "summary"
+    assert answers[0].view.toPlainText() == "好"
+
+
 def test_render_history_collapses_identical_error_retries(qtbot, tmp_path: Path) -> None:
     window, _client = make_window(qtbot, tmp_path)
     pair = [
@@ -119,6 +145,39 @@ def test_state_refresh_replaces_existing_new_session_title(qtbot, tmp_path: Path
 
     assert window._sessions == [{"path": "/s/a.jsonl", "title": "2+2 等于几？"}]
     assert window.sidebar.list.item(0).text() == "2+2 等于几？"
+
+
+def test_state_refresh_does_not_replace_user_derived_title(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    window._sessions = [{"path": "/s/a.jsonl", "title": "请帮我解释为什么天空…"}]
+    window._current_path = "/s/a.jsonl"
+
+    window._on_state({
+        "success": True,
+        "data": {
+            "sessionFile": "/s/a.jsonl",
+            "sessionName": "请帮我解释为什么天空在晴朗白:",
+            "model": {"id": "deepseek-v4-flash-vision-exp"},
+        },
+    })
+
+    assert window._sessions[0]["title"] == "请帮我解释为什么天空…"
+
+
+def test_full_chat_command_return_inserts_newline_instead_of_sending(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    window.input.setPlainText("第一行")
+    window.input.moveCursor(QTextCursor.MoveOperation.End)
+    event = QKeyEvent(
+        QKeyEvent.Type.KeyPress,
+        Qt.Key.Key_Return,
+        Qt.KeyboardModifier.ControlModifier,
+    )
+
+    window.input.keyPressEvent(event)
+
+    assert window.input.toPlainText() == "第一行\n"
+    assert not window.findChildren(UserBubble)
 
 
 def test_rename_session_switches_engine_when_not_current(qtbot, tmp_path: Path) -> None:

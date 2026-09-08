@@ -95,7 +95,13 @@ class _InputBox(QPlainTextEdit):
 
     def keyPressEvent(self, ev) -> None:
         if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if ev.modifiers() & Qt.KeyboardModifier.MetaModifier:
+            # Qt maps the macOS Command key to ControlModifier; accept Meta as
+            # well so the contract remains stable on every platform/backend.
+            if ev.modifiers() & (
+                Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.MetaModifier
+                | Qt.KeyboardModifier.ShiftModifier
+            ):
                 self.insertPlainText("\n")
             else:
                 self._on_send()
@@ -366,7 +372,7 @@ class ChatWindow(QWidget):
             record = next((s for s in self._sessions if s["path"] == path), None)
             if record is None:
                 self._sessions.insert(0, {"path": path, "title": name})
-            elif name != "新会话" and record["title"] != name:
+            elif record["title"] == "新会话" and name != "新会话":
                 record["title"] = name
             changed_session = path != self._current_path
             self._current_path = path
@@ -1164,7 +1170,9 @@ class ChatWindow(QWidget):
             bubble.set_text(sanitize_runtime_details(answer))
             self._add_row(bubble, "left")
         elif text.strip():
-            bubble = AssistantBubble("answer")
+            # A plain response is itself the visible conclusion, not hidden
+            # implementation detail. The controller uses the same fallback.
+            bubble = AssistantBubble("summary")
             bubble.set_text(sanitize_runtime_details(strip_tags(text)))
             self._add_row(bubble, "left")
 

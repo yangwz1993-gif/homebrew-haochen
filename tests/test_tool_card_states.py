@@ -55,7 +55,7 @@ def test_historical_denied_read_screen_is_detected_from_result(qtbot) -> None:
     card = ToolCard("call-screen", "read_screen")
     card.mark_done("用户拒绝了读屏请求（或超时未确认）。", is_error=False)
 
-    assert card.status.text() == "未执行 · 已拒绝/超时"
+    assert card.status.text() == "未执行 · 未获授权"
 
 
 def test_read_screen_permission_failure_never_uses_success_checkmark(qtbot) -> None:

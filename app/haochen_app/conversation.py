@@ -151,7 +151,7 @@ def make_session_title(text: str, limit: int = 18) -> str:
     clean = " ".join((text or "").split()).strip()
     if not clean:
         return "新会话"
-    return clean if len(clean) <= limit else clean[:limit].rstrip("，,; ") + "…"
+    return clean if len(clean) <= limit else clean[:limit].rstrip("，,;；：:、。.!！?？ ") + "…"
 
 
 def _chinese_number(token: str) -> int | None:
@@ -187,9 +187,13 @@ def apply_user_output_constraints(user_text: str, result: TurnResult) -> TurnRes
     request = user_text or ""
     brief = result.brief.strip()
     strict_single = any(token in request for token in (
-        "只给答案", "只给结果", "只回答", "一句话", "一句就行",
+        "只给答案", "只给结果", "只回答", "只回复", "一句话", "一句就行",
     ))
-    if re.search(r"只(?:回答)?是或否|只(?:回答)?是/否", request):
+    quoted_reply = re.search(r"只(?:回复|回答|说)\s*[“‘\"']([^”’\"']+)[”’\"']", request)
+    if quoted_reply:
+        brief = quoted_reply.group(1).strip()
+        strict_single = True
+    elif re.search(r"只(?:回答)?是或否|只(?:回答)?是/否", request):
         match = re.search(r"(?<![不可])[是否]", _plain_visible(brief))
         if match:
             brief = match.group(0)

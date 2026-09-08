@@ -257,6 +257,13 @@ def test_explicit_short_answer_constraints_are_enforced() -> None:
     assert yes_no.brief == yes_no.detail == "是"
 
 
+def test_quoted_exact_reply_survives_unstructured_model_output() -> None:
+    parsed = conversation.parse_turn_result("模型多说了一句")
+    result = conversation.apply_user_output_constraints("只回复“好”", parsed)
+
+    assert result.brief == result.detail == "好"
+
+
 def test_chinese_character_limit_is_a_hard_visible_cap() -> None:
     result = conversation.apply_user_output_constraints(
         "请用一句不超过三十字总结。",

@@ -140,6 +140,11 @@ class MarkdownView(QTextBrowser):
         self.setMarkdown(_sanitize_markdown(text or ""))
         self._fit()
 
+    def set_plain_text(self, text: str) -> None:
+        """Render user-authored text literally, preserving line breaks."""
+        self.setPlainText(text or "")
+        self._fit()
+
     def set_max_width(self, w: int) -> None:
         self._max_w = max(160, w)
         self._fit()
@@ -202,7 +207,7 @@ class UserBubble(_BubbleFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 10, 14, 10)
         self.view = MarkdownView()
-        self.view.set_markdown(text)
+        self.view.set_plain_text(text)
         lay.addWidget(self.view)
 
     def set_max_width(self, w: int) -> None:
@@ -432,7 +437,7 @@ class ToolCard(QFrame):
             )
         )
         if self._not_run_reason or denied_read:
-            reason = self._not_run_reason or "已拒绝/超时"
+            reason = self._not_run_reason or "未获授权"
             self.status.setText(f"未执行 · {reason}")
             self._set_status_color(C["ink_soft"])
             self.retry_button.hide()
