@@ -5,7 +5,7 @@
     MOCK_TICK_MS=20 .venv/bin/python haochen_app/pet/verification/run_scenarios.py
 
 场景（对应验收清单）：
-  S0 首启问称呼  → 首次唤起即锚定人物正上方（间隙 8px）+ 问候块 → 输入称呼落盘不再问（v0.1.7）
+  S0 首启问称呼  → 首次唤起即锚定人物正上方（可见间隙 8px）+ 问候块 → 输入称呼落盘不再问（v0.1.7）
   S1 普通问答    → 输入退场/思考状态/单轮结果卡，姿态 idle→thinking→idle
   S2 读屏确认    → 感知提示（单行不折行）+「读吧/不读」确认条 → 回车=「读吧」→ 短结（v0.1.7）
   S3 错误路径    → 错误块 + alert(angry) 姿态
@@ -44,12 +44,23 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QPushButton
 
 from haochen_app.pet import PetApp, PetState
+from haochen_app.pet import theme as T
 from haochen_app.pet.bubble import GreetBlock, HintBlock, SummaryBlock
 from haochen_app.pet.pet_window import PetWindow
 from haochen_app.pet.profile import should_ask_name
 
 LOG: list[str] = []
 VISUAL_EVIDENCE: list[dict] = []
+
+
+def visible_bubble_pet_gap(pa: PetApp) -> int:
+    """Measure painted tail-tip to the first visible row of the pet asset."""
+    b, p = pa.bubble, pa.pet
+    if b.y() + b.height() <= p.y():
+        tail_tip_y = b.y() + b.height() - T.TAIL_TIP_BOTTOM_INSET
+        pet_visible_top = p.y() + T.PET_VISIBLE_TOP_INSET
+        return pet_visible_top - tail_tip_y
+    return b.y() - (p.y() + p.height())
 
 
 def note(msg: str) -> None:
@@ -82,7 +93,7 @@ def shot_pair(pa: PetApp, name: str) -> None:
         "state": pa.state.value,
         "bubble": {"x": b.x(), "y": b.y(), "width": b.width(), "height": b.height()},
         "pet": {"x": p.x(), "y": p.y(), "width": p.width(), "height": p.height()},
-        "bubble_pet_gap": p.y() - (b.y() + b.height()),
+        "bubble_pet_gap": visible_bubble_pet_gap(pa),
         "tail_center_delta_x": tail_x - pet_center_x,
         "layout": b.layout_metrics(),
     })
@@ -158,11 +169,11 @@ class Runner:
     def _s0_greeting(self):
         pa = self.pa
         b, p = pa.bubble, pa.pet
-        # 默认锚定：唤起后气泡即在人物正上方（间隙 8px，尾巴对中心），不用拖
-        gap = p.y() - (b.y() + b.height())
+        # 默认锚定：唤起后气泡即在人物正上方（可见间隙 8px，尾巴对中心），不用拖
+        gap = visible_bubble_pet_gap(pa)
         self.check("S0 首次唤起气泡在人物正上方", b.y() + b.height() <= p.y(),
                    f"b.bottom={b.y() + b.height()} p.top={p.y()}")
-        self.check("S0 间隙恰为 8px", gap == 8, f"gap={gap}")
+        self.check("S0 尾尖到人物可见发顶为 8px", gap == 8, f"gap={gap}")
         tail_x = b.x() + b.width() - 34
         self.check("S0 尾巴尖对准人物中心", abs(tail_x - (p.x() + p.width() // 2)) <= 2,
                    f"tail={tail_x} center={p.x() + p.width() // 2}")
@@ -429,11 +440,8 @@ class Runner:
         QTimer.singleShot(500, self._s8_geometry)
 
     def _s8_gap(self) -> int:
-        """气泡与人物的垂直间隙：上方 = 气泡底（含尾巴）到头顶；下方 = 人物底到气泡顶。"""
-        b, p = self.pa.bubble, self.pa.pet
-        if b.y() + b.height() <= p.y():
-            return p.y() - (b.y() + b.height())
-        return b.y() - (p.y() + p.height())
+        """气泡尾尖与人物可见像素的垂直间隙。"""
+        return visible_bubble_pet_gap(self.pa)
 
     def _s8_geometry(self):
         pa = self.pa
@@ -493,9 +501,9 @@ class Runner:
         tail_x = b.x() + b.width() - 34
         self.check("S8 拖气泡后人物跟到尾巴正下方",
                    abs(tail_x - (p.x() + p.width() // 2)) <= 2
-                   and p.y() - (b.y() + b.height()) == 8,
+                   and visible_bubble_pet_gap(pa) == 8,
                    f"tail={tail_x} center={p.x() + p.width() // 2} "
-                   f"gap={p.y() - b.y() - b.height()}")
+                   f"gap={visible_bubble_pet_gap(pa)}")
         # 拖气泡结束同样持久化人物位置
         data = json.loads((Path(os.environ["HAOCHEN_HOME"]) / "pet-pos.json")
                           .read_text(encoding="utf-8"))

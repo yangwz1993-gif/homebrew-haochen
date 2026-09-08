@@ -4,7 +4,7 @@
     "state": "LISTENING",
     "bubble": {
       "x": 373,
-      "y": 561,
+      "y": 566,
       "width": 372,
       "height": 76
     },
@@ -31,7 +31,7 @@
     "state": "ACKNOWLEDGING",
     "bubble": {
       "x": 453,
-      "y": 573,
+      "y": 578,
       "width": 292,
       "height": 64
     },
@@ -58,7 +58,7 @@
     "state": "COMPOSING",
     "bubble": {
       "x": 453,
-      "y": 573,
+      "y": 578,
       "width": 292,
       "height": 64
     },
@@ -85,7 +85,7 @@
     "state": "PRESENTING",
     "bubble": {
       "x": 365,
-      "y": 494,
+      "y": 499,
       "width": 380,
       "height": 143
     },
@@ -112,7 +112,7 @@
     "state": "ACTING",
     "bubble": {
       "x": 353,
-      "y": 555,
+      "y": 560,
       "width": 392,
       "height": 82
     },
@@ -139,7 +139,7 @@
     "state": "PERCEIVING",
     "bubble": {
       "x": 353,
-      "y": 461,
+      "y": 466,
       "width": 392,
       "height": 176
     },
@@ -166,7 +166,7 @@
     "state": "ERROR",
     "bubble": {
       "x": 365,
-      "y": 507,
+      "y": 512,
       "width": 380,
       "height": 130
     },
@@ -193,7 +193,7 @@
     "state": "CANCELLED",
     "bubble": {
       "x": 365,
-      "y": 469,
+      "y": 474,
       "width": 380,
       "height": 168
     },

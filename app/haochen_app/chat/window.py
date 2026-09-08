@@ -23,6 +23,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QLabel,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -208,6 +209,25 @@ class ChatWindow(QWidget):
         rlay.setContentsMargins(0, 0, 0, 10)
         rlay.setSpacing(0)
         root.addWidget(right, 1)
+
+        self.detail_header = QWidget()
+        detail_header_layout = QHBoxLayout(self.detail_header)
+        detail_header_layout.setContentsMargins(18, 14, 18, 8)
+        detail_header_layout.setSpacing(8)
+        detail_title = QLabel("当前会话详情")
+        detail_title.setAccessibleName("当前会话详情")
+        detail_title.setStyleSheet(
+            f"font-size: {FONT['title']}px; font-weight: bold; color: {C['ink']};"
+        )
+        detail_header_layout.addWidget(detail_title)
+        detail_header_layout.addStretch(1)
+        self.detail_close_button = QPushButton("收起  Esc")
+        self.detail_close_button.setAccessibleName("收起会话详情")
+        self.detail_close_button.setStyleSheet(button_outline())
+        self.detail_close_button.clicked.connect(self.collapse_detail)
+        detail_header_layout.addWidget(self.detail_close_button)
+        self.detail_header.hide()
+        rlay.addWidget(self.detail_header)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -467,6 +487,9 @@ class ChatWindow(QWidget):
         self._detail_mode = True
         self._detail_collapsing = False
         self._detail_source_rect = source_rect or QRect()
+        self.sidebar.hide()
+        self.detail_header.show()
+        self.input.setPlaceholderText("继续这个话题…（⏎ 发送，⌘⏎ 换行）")
         target = self._detail_target_rect()
         if self._detail_source_rect.isValid() and not self._detail_source_rect.isNull():
             # 动画期间放开最小尺寸，否则起点 rect 会被 minimumSize 钳大
@@ -485,7 +508,7 @@ class ChatWindow(QWidget):
 
     def _restore_min_size(self) -> None:
         if self._detail_mode and not self._detail_collapsing:
-            self.setMinimumSize(820, 560)
+            self.setMinimumSize(720, 500)
 
     def collapse_detail(self) -> None:
         """Esc / ⌘W：反向收回气泡 rect，播完隐藏并发 detail_collapsed。"""
@@ -503,14 +526,17 @@ class ChatWindow(QWidget):
         self._detail_mode = False
         self._detail_collapsing = False
         self.hide()
+        self.sidebar.show()
+        self.detail_header.hide()
+        self.input.setPlaceholderText("和 haochen 说点什么…（⏎ 发送，⌘⏎ 换行）")
         self.setMinimumSize(820, 560)
         self.detail_collapsed.emit()
 
     def _detail_target_rect(self) -> QRect:
-        """详情工作台保持紧凑（980×680），并夹回气泡所在屏幕。"""
+        """从桌宠进入的详情工作台保持紧凑，并夹回气泡所在屏幕。"""
         screen = screen_of(self).availableGeometry()
-        w = min(980, screen.width() - 16)
-        h = min(680, screen.height() - 16)
+        w = min(840, screen.width() - 16)
+        h = min(600, screen.height() - 16)
         if self._detail_source_rect.isValid() and not self._detail_source_rect.isNull():
             cx = self._detail_source_rect.center().x()
             cy = self._detail_source_rect.center().y()

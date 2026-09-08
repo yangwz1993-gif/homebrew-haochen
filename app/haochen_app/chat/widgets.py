@@ -220,13 +220,16 @@ class AssistantBubble(_BubbleFrame):
         lay.setSpacing(4)
         self.kind = kind
         self.tag: QLabel | None = None
-        if kind == "summary":
-            self.tag = QLabel("结论")
+        if kind in ("summary", "answer"):
+            label = "结论" if kind == "summary" else "依据与细节"
+            self.tag = QLabel(label)
             self.tag.setStyleSheet(f"""
-                color: {C['bg']}; background: {C['accent']};
+                color: {C['bg'] if kind == 'summary' else C['ink_soft']};
+                background: {C['accent'] if kind == 'summary' else C['bg']};
                 border-radius: 6px; padding: 1px 8px;
                 font-size: {FONT['body_sm']}px; font-weight: bold;
             """)
+            self.tag.setAccessibleName(label)
             lay.addWidget(self.tag, 0, Qt.AlignmentFlag.AlignLeft)
         self.view = MarkdownView()
         lay.addWidget(self.view)

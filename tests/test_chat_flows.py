@@ -127,11 +127,40 @@ def test_detail_mode_expand_and_collapse(qtbot, tmp_path: Path) -> None:
     window.open_from_bubble(QRect(100, 100, 320, 240))
     assert window._detail_mode is True
     assert window.isVisible()
+    assert window.sidebar.isHidden()
+    assert not window.detail_header.isHidden()
+    assert window.width() <= 840
+    assert window.height() <= 600
+    assert "继续这个话题" in window.input.placeholderText()
 
     window.collapse_detail()
     qtbot.waitUntil(lambda: bool(collapsed), timeout=2000)
     assert window._detail_mode is False
     assert not window.isVisible()
+    assert not window.sidebar.isHidden()
+    assert window.detail_header.isHidden()
+
+
+def test_detail_bubbles_have_distinct_section_labels(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    summary = AssistantBubble("summary")
+    detail = AssistantBubble("answer")
+    qtbot.addWidget(summary)
+    qtbot.addWidget(detail)
+
+    assert summary.tag is not None and summary.tag.text() == "结论"
+    assert detail.tag is not None and detail.tag.text() == "依据与细节"
+
+
+def test_sidebar_uses_readable_model_alias(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    model_id = "deepseek-v4-flash-vision-exp"
+
+    window.sidebar.set_model(model_id)
+
+    assert window.sidebar.status.text() == "模型  DeepSeek V4 Vision · 实验版"
+    assert window.sidebar.status.toolTip() == model_id
+    assert "»" not in window.sidebar.status.text()
 
 
 def test_escape_in_detail_collapses_instead_of_stopping(qtbot, tmp_path: Path) -> None:

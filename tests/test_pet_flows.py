@@ -122,6 +122,22 @@ def test_late_detail_collapse_does_not_hide_reopened_bubble(qtbot, tmp_path: Pat
     assert pet.bubble._input_visible()
 
 
+def test_detail_hides_topmost_pet_until_collapsed(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+    opened: list = []
+    pet.detail_opener = lambda rect: opened.append(rect)
+    pet.pet.show()
+    pet.bubble.summon(show_input=False)
+    pet._last_summary = "结论"
+
+    pet._on_expand_detail()
+
+    assert opened
+    assert not pet.pet.isVisible()
+    pet.restore_bubble()
+    assert pet.pet.isVisible()
+
+
 def test_short_results_survive_repeated_detail_close_races(qtbot, tmp_path: Path) -> None:
     """回归 B1：20 次详情收起竞态 + 50 次短结果均必须留在桌面层。"""
     pet, _client = make_pet(qtbot, tmp_path)

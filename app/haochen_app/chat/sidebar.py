@@ -16,6 +16,23 @@ from PyQt6.QtWidgets import (
 
 from .theme import BORDER, FONT, RADIUS_BTN, C, button_solid
 
+_MODEL_LABELS = {
+    "deepseek-v4-flash-vision-exp": "DeepSeek V4 Vision · 实验版",
+    "deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek-v4-pro": "DeepSeek V4 Pro",
+}
+
+
+def model_display_name(model: str) -> str:
+    """Return a compact product label while preserving the exact id in the tooltip."""
+    model_id = model.rsplit("/", 1)[-1] if model else ""
+    if not model_id:
+        return "未连接"
+    if model_id in _MODEL_LABELS:
+        return _MODEL_LABELS[model_id]
+    words = [part for part in model_id.replace("_", "-").split("-") if part]
+    return " ".join(word.upper() if len(word) <= 3 else word.capitalize() for word in words)
+
 
 class SessionSidebar(QWidget):
     session_selected = pyqtSignal(str)          # session_path
@@ -111,9 +128,11 @@ class SessionSidebar(QWidget):
 
     def set_model(self, model: str) -> None:
         """窄侧栏只显示可辨认的模型名，完整 provider/id 留在悬停提示。"""
-        short = model.rsplit("/", 1)[-1] if model else "未连接"
-        self.status.setText(f"模型  {short}")
+        self.status.setText(f"模型  {model_display_name(model)}")
         self.status.setToolTip(model or "模型尚未连接")
+        self.status.setAccessibleName(
+            f"当前模型 {model_display_name(model)}" if model else "模型尚未连接"
+        )
 
     # ── 交互 ──────────────────────────────────────────────────
 

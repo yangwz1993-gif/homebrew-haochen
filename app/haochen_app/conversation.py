@@ -56,6 +56,10 @@ def humanize_error(text: str) -> str:
     raw = (text or "").strip()
     low = raw.lower()
     if any(token in low for token in (
+        "no api key found", "api key not found", "missing api key", "use /login",
+    )):
+        return "当前模型还没有配置 API Key。请打开设置，保存并验证后再试。"
+    if any(token in low for token in (
         "authorization", "invalid api key", "incorrect api key", "authentication",
         "unauthorized", "bearer sk-",
     )):
@@ -64,6 +68,13 @@ def humanize_error(text: str) -> str:
         return "暂时连不上模型服务。请检查网络，稍后重试。"
     if "rate limit" in low or raw.startswith("429:"):
         return "请求太频繁，模型服务暂时限流。请稍等片刻再试。"
+    # GUI 用户无法使用引擎 CLI 指令和包内文档路径。未知错误只要混入这些
+    # 实现细节，就安全降级为可执行的用户提示，避免泄露本机绝对路径。
+    if any(token in low for token in (
+        "/private/", "/contents/resources/engine", "providers.md", "models.md",
+        "\\contents\\resources\\engine", "\\private\\",
+    )):
+        return "模型连接失败。请打开设置检查 API Key 和模型，验证后再试。"
     m = re.match(r"^(\d{3}):\s*(\{.*\})\s*$", raw, re.S)
     if not m:
         return raw

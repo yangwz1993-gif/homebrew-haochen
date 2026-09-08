@@ -123,3 +123,17 @@ def test_humanize_error_redacts_invalid_authorization_value() -> None:
     assert out == "API Key 无效或格式不正确。请打开设置重新配置后再试。"
     assert "Bearer" not in out
     assert "sk-" not in out
+
+
+def test_humanize_error_hides_cli_help_and_internal_paths() -> None:
+    raw = (
+        "No API key found for the selected model. Use /login to log into a provider. "
+        "See /private/tmp/build/haochen.app/Contents/Resources/engine/docs/providers.md "
+        "and models.md."
+    )
+    out = conversation.humanize_error(raw)
+
+    assert out == "当前模型还没有配置 API Key。请打开设置，保存并验证后再试。"
+    assert "/private" not in out
+    assert "/login" not in out
+    assert ".md" not in out

@@ -325,7 +325,7 @@ class PetApp(QObject):
         self.bubble.set_input_visible(True)
 
     def _place_bubble(self) -> None:
-        """气泡固定在桌宠正上方：底边（含尾巴）与桌宠头顶留 BUBBLE_PET_GAP 间隙，
+        """气泡固定在桌宠正上方：尾尖与人物可见发顶保持约 8px，
         右下尾巴尖对准桌宠中心；顶部空间不足时落桌宠下方，同样不重叠（v0.1.6）。"""
         from ..a11y import screen_of
 
@@ -777,11 +777,15 @@ class PetApp(QObject):
         rect = self.bubble.geometry()
         self._detail_open = True
         self.bubble.hide()
+        # 详情是普通工作窗口；置顶桌宠继续显示会压住右下输入区。
+        self.pet.hide()
         self.detail_opener(rect)
 
     def restore_bubble(self) -> None:
         """详情收起后回到纯桌宠，不让旧结果重新常驻。"""
         self._detail_open = False
+        self.pet.show()
+        self.pet.raise_()
         # 只收起打开详情时被隐藏的旧气泡。若用户已重新唤起可见气泡，晚到的
         # collapse 回调不能把新的输入、工作态或结果一起关掉。
         if self.bubble.summoned and not self.bubble.isVisible():
