@@ -37,6 +37,11 @@ _PAIRS = {
 }
 _ANY_TAG = re.compile(r"【/?(?:brief|detail|answer|summary)】|==/?(?:brief|detail|answer|summary)==")
 _ANY_CLOSE = r"(?:【/(?:brief|detail|answer|summary)】|==/(?:brief|detail|answer|summary)==)"
+_INTERNAL_RUNTIME_SENTENCE = re.compile(
+    r"[^。！？\n]*(?:pi-home|HAOCHEN_HOME|/private/tmp/|/Contents/Resources/engine)"
+    r"[^。！？\n]*(?:[。！？]|$)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +117,30 @@ def parse_loose_block(text: str, kind: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def parse_open_tail(text: str, kind: str) -> str:
+    """Recover the final protocol block when the model omitted its closing tag."""
+    if kind not in _PAIRS:
+        return ""
+    pattern = re.compile(rf"(?:【{kind}】|=={kind}==)\s*(.*)$", re.S)
+    match = pattern.search(text or "")
+    return strip_tags(match.group(1)).strip() if match else ""
+
+
+def sanitize_runtime_details(text: str) -> str:
+    """Remove implementation-only runtime locations from user-visible answers."""
+    cleaned = _INTERNAL_RUNTIME_SENTENCE.sub("", text or "")
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def same_visible_text(left: str, right: str) -> bool:
+    """Compare two rendered answer layers while ignoring whitespace-only drift."""
+    def normalize(value: str) -> str:
+        return re.sub(r"\s+", "", strip_tags(value or ""))
+
+    return bool(normalize(left)) and normalize(left) == normalize(right)
+
+
 def extractive_summary(text: str, limit: int = 160) -> str:
     """从详答抽高密度短结：优先首句结论 + 少量要点行（沿用上一版逻辑）。"""
     raw = strip_tags(text)
@@ -159,11 +188,21 @@ def parse_turn_result(text: str) -> TurnResult:
     raw = text or ""
     current_brief = parse_paired(raw, "brief")
     current_detail = parse_paired(raw, "detail")
-    detail = current_detail or parse_paired(raw, "answer") or parse_loose_block(raw, "detail")
+    detail = (
+        current_detail
+        or parse_paired(raw, "answer")
+        or parse_loose_block(raw, "detail")
+        or parse_open_tail(raw, "detail")
+        or parse_open_tail(raw, "answer")
+    )
     brief = current_brief or parse_paired(raw, "summary") or parse_loose_block(raw, "brief")
     fallback_used = not (current_brief and current_detail)
     if not detail:
         detail = strip_tags(raw)
+    if not brief:
+        brief = extractive_summary(detail)
+    brief = sanitize_runtime_details(brief)
+    detail = sanitize_runtime_details(detail)
     if not brief:
         brief = extractive_summary(detail)
     return TurnResult(

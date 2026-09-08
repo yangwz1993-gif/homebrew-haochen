@@ -219,6 +219,32 @@ def test_parse_turn_result_removes_duplicate_brief_heading() -> None:
         assert result.brief == "可以直接使用。"
 
 
+def test_parse_turn_result_recovers_unclosed_detail_without_copying_brief() -> None:
+    result = conversation.parse_turn_result(
+        "【brief】4。【/brief】\n【detail】4。"
+    )
+
+    assert result.brief == "4。"
+    assert result.detail == "4。"
+    assert result.fallback_used is True
+
+
+def test_parse_turn_result_removes_internal_runtime_sentence() -> None:
+    result = conversation.parse_turn_result(
+        "【brief】还缺候选项。【/brief】\n"
+        "【detail】当前工作目录 pi-home 是空的。请给我候选项和取舍标准。【/detail】"
+    )
+
+    assert result.brief == "还缺候选项。"
+    assert "pi-home" not in result.detail
+    assert result.detail == "请给我候选项和取舍标准。"
+
+
+def test_same_visible_text_ignores_protocol_tags_and_whitespace() -> None:
+    assert conversation.same_visible_text("【detail】是。", "  是。\n")
+    assert not conversation.same_visible_text("是。", "是，因为…")
+
+
 def test_parse_turn_result_recovers_mismatched_brief_closing_tag() -> None:
     raw = (
         "【brief】没读到屏——还缺辅助功能权限。【/detail】\n"

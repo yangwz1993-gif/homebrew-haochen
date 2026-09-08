@@ -68,6 +68,19 @@ def test_render_history_failure_is_silent(qtbot, tmp_path: Path) -> None:
     assert not window.findChildren(UserBubble)
 
 
+def test_render_history_collapses_identical_error_retries(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    pair = [
+        {"role": "user", "content": [{"type": "text", "text": "帮我看看"}]},
+        {"role": "assistant", "stopReason": "error", "errorMessage": "missing API key"},
+    ]
+
+    window._render_history({"success": True, "data": {"messages": pair * 3}})
+
+    assert len(window.findChildren(UserBubble)) == 1
+    assert len(window.findChildren(ErrorBanner)) == 1
+
+
 def test_auto_title_renames_current_new_session(qtbot, tmp_path: Path) -> None:
     window, client = make_window(qtbot, tmp_path)
     window._sessions = [{"path": "/s/a.jsonl", "title": "新会话"}]
@@ -139,6 +152,27 @@ def test_detail_mode_expand_and_collapse(qtbot, tmp_path: Path) -> None:
     assert not window.isVisible()
     assert not window.sidebar.isHidden()
     assert window.detail_header.isHidden()
+    assert window.width() >= 820
+    assert window.height() >= 560
+
+    window.show_normal()
+    assert window.isVisible()
+    assert window.width() >= 820
+    assert window.height() >= 560
+
+
+def test_unclosed_duplicate_short_answer_renders_once(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    window._clear_flow()
+
+    window._render_history_assistant({
+        "role": "assistant",
+        "content": [{"type": "text", "text": "【brief】4。【/brief】\n【detail】4。"}],
+    })
+
+    answers = window.findChildren(AssistantBubble)
+    assert len(answers) == 1
+    assert answers[0].view.toPlainText().strip() == "4。"
 
 
 def test_detail_bubbles_have_distinct_section_labels(qtbot, tmp_path: Path) -> None:

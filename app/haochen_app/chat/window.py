@@ -34,7 +34,16 @@ from PyQt6.QtWidgets import (
 
 from ..a11y import screen_of
 from ..app_tracking import write_last_user_text
-from ..conversation import SUMMARY_KICK_PREFIX, ConversationController, humanize_error, parse_paired, strip_tags
+from ..conversation import (
+    SUMMARY_KICK_PREFIX,
+    ConversationController,
+    humanize_error,
+    parse_paired,
+    parse_turn_result,
+    same_visible_text,
+    sanitize_runtime_details,
+    strip_tags,
+)
 from ..engine_client import EngineClient, delete_session, restore_session
 from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
@@ -105,6 +114,7 @@ class ChatWindow(QWidget):
     SCROLL_FOLLOW_THRESHOLD = 24     # 距底小于该像素视为“用户在底部”
 
     detail_collapsed = pyqtSignal()   # 详情模式收起动画播完、窗口已隐藏
+    normal_closed = pyqtSignal()      # 普通完整对话窗关闭，壳层恢复桌宠
     read_permission_requested = pyqtSignal()  # 用户明确同意后才请求系统读屏权限
 
     def __init__(self, client: EngineClient | None = None, supervisor=None, parent=None):
@@ -147,12 +157,14 @@ class ChatWindow(QWidget):
         self._detail_mode = False
         self._detail_collapsing = False
         self._detail_source_rect = QRect()
+        self._normal_geometry = QRect()
         self._geom_anim: QPropertyAnimation | None = None
 
         self._build_ui()
         self._wire()
         self._sync_queue_banners()
         self._restore_geometry()
+        self._remember_normal_geometry()
 
         # ⌘W：详情模式 = 收起；正常模式不拦截（行为不变）
         sc = QShortcut(QKeySequence.StandardKey.Close, self)
@@ -184,6 +196,7 @@ class ChatWindow(QWidget):
     def _save_geometry(self) -> None:
         """关闭时保存当前几何（0600，原子写）。"""
         geo = self.geometry()
+        self._normal_geometry = QRect(geo)
         try:
             atomic_write_private(
                 self._geometry_file(),
@@ -471,19 +484,22 @@ class ChatWindow(QWidget):
             self.collapse_detail()
 
     def closeEvent(self, ev) -> None:
-        self._save_geometry()
         # 详情模式下系统级关闭（⌘W/Mission Control 等）也走收起，绝不退出 app
         if self._detail_mode:
             ev.ignore()
             self.collapse_detail()
             return
-        super().closeEvent(ev)
+        self._save_geometry()
+        ev.ignore()
+        self.hide()
+        self.normal_closed.emit()
 
     # ── 详情模式：从气泡展开 / 收回气泡 ─────────────────────────
 
     def open_from_bubble(self, source_rect: QRect | None = None) -> None:
         """「展开详细」：从短会话气泡 rect 平滑扩展（OutCubic ~220ms）到正常尺寸，
         并滚动定位到当前轮（对话流尾部）。"""
+        self._remember_normal_geometry()
         self._detail_mode = True
         self._detail_collapsing = False
         self._detail_source_rect = source_rect or QRect()
@@ -530,7 +546,45 @@ class ChatWindow(QWidget):
         self.detail_header.hide()
         self.input.setPlaceholderText("和 haochen 说点什么…（⏎ 发送，⌘⏎ 换行）")
         self.setMinimumSize(820, 560)
+        self.setGeometry(self._normal_target_rect())
         self.detail_collapsed.emit()
+
+    def _remember_normal_geometry(self) -> None:
+        """Keep detail animations and their tiny source rect out of normal-window state."""
+        geo = self.geometry()
+        if (not self._detail_mode and geo.width() >= 820 and geo.height() >= 560
+                and any(s.availableGeometry().intersects(geo) for s in QApplication.screens())):
+            self._normal_geometry = QRect(geo)
+
+    def _normal_target_rect(self) -> QRect:
+        if (self._normal_geometry.isValid()
+                and self._normal_geometry.width() >= 820
+                and self._normal_geometry.height() >= 560
+                and any(s.availableGeometry().intersects(self._normal_geometry)
+                        for s in QApplication.screens())):
+            return QRect(self._normal_geometry)
+        screen = screen_of(self).availableGeometry()
+        w = min(980, max(820, screen.width() - 32))
+        h = min(680, max(560, screen.height() - 32))
+        return QRect(
+            screen.center().x() - w // 2,
+            screen.center().y() - h // 2,
+            w,
+            h,
+        )
+
+    def show_normal(self) -> None:
+        """Open the full workspace with a sane geometry after any detail animation."""
+        self._detail_mode = False
+        self._detail_collapsing = False
+        self.sidebar.show()
+        self.detail_header.hide()
+        self.input.setPlaceholderText("和 haochen 说点什么…（⏎ 发送，⌘⏎ 换行）")
+        self.setMinimumSize(820, 560)
+        self.setGeometry(self._normal_target_rect())
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _detail_target_rect(self) -> QRect:
         """从桌宠进入的详情工作台保持紧凑，并夹回气泡所在屏幕。"""
@@ -735,7 +789,7 @@ class ChatWindow(QWidget):
             bubble = AssistantBubble("summary")
             bubble.set_text(summary)
             self._add_row(bubble, "left")
-        if self._pending_answer and self._pending_answer.strip() != summary.strip():
+        if self._pending_answer and not same_visible_text(self._pending_answer, summary):
             detail = AssistantBubble("answer")
             detail.set_text(self._pending_answer)
             self._add_row(detail, "left")
@@ -1001,7 +1055,9 @@ class ChatWindow(QWidget):
         if not resp.get("success"):
             return
         self._clear_flow()
-        messages = (resp.get("data") or {}).get("messages") or []
+        messages = self._collapse_repeated_error_retries(
+            (resp.get("data") or {}).get("messages") or []
+        )
         for msg in messages:
             role = msg.get("role")
             if role == "user":
@@ -1027,6 +1083,36 @@ class ChatWindow(QWidget):
         self._follow_stream = True
         self.jump_to_latest_button.hide()
 
+    @staticmethod
+    def _collapse_repeated_error_retries(messages: list[dict]) -> list[dict]:
+        """Render an unchanged user/error retry pair once instead of flooding history."""
+        collapsed: list[dict] = []
+        previous_pair: tuple[str, str] | None = None
+        index = 0
+        while index < len(messages):
+            current = messages[index]
+            following = messages[index + 1] if index + 1 < len(messages) else None
+            if current.get("role") == "user" and following and (
+                    following.get("role") == "assistant"
+                    and following.get("stopReason") == "error"):
+                user_text = "".join(
+                    part.get("text", "") for part in current.get("content", [])
+                    if part.get("type") == "text"
+                ).strip()
+                error_text = humanize_error(
+                    following.get("errorMessage") or "引擎错误"
+                )
+                pair = (user_text, error_text)
+                if pair != previous_pair:
+                    collapsed.extend((current, following))
+                previous_pair = pair
+                index += 2
+                continue
+            previous_pair = None
+            collapsed.append(current)
+            index += 1
+        return collapsed
+
     def _render_history_assistant(self, msg: dict) -> None:
         if msg.get("stopReason") == "error":
             self._add_row(
@@ -1038,28 +1124,31 @@ class ChatWindow(QWidget):
             return
         answer = parse_paired(text, "answer")
         summary = parse_paired(text, "summary")
-        brief = parse_paired(text, "brief")
-        detail = parse_paired(text, "detail")
-        if brief or detail:
+        has_current_protocol = any(tag in text for tag in (
+            "【brief】", "==brief==", "【detail】", "==detail==",
+        ))
+        if has_current_protocol:
+            result = parse_turn_result(text)
+            brief, detail = result.brief, result.detail
             if brief:
                 bubble = AssistantBubble("summary")
                 bubble.set_text(brief)
                 self._add_row(bubble, "left")
-            if detail and detail.strip() != brief.strip():
+            if detail and not same_visible_text(detail, brief):
                 bubble = AssistantBubble("answer")
                 bubble.set_text(detail)
                 self._add_row(bubble, "left")
         elif summary:
             bubble = AssistantBubble("summary")
-            bubble.set_text(summary)
+            bubble.set_text(sanitize_runtime_details(summary))
             self._add_row(bubble, "left")
         elif answer:
             bubble = AssistantBubble("answer")
-            bubble.set_text(answer)
+            bubble.set_text(sanitize_runtime_details(answer))
             self._add_row(bubble, "left")
         elif text.strip():
             bubble = AssistantBubble("answer")
-            bubble.set_text(strip_tags(text))
+            bubble.set_text(sanitize_runtime_details(strip_tags(text)))
             self._add_row(bubble, "left")
 
     def _clear_flow(self) -> None:

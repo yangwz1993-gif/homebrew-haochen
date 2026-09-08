@@ -133,6 +133,23 @@ def test_show_chat_and_settings_raise_windows(qtbot, tmp_path: Path) -> None:
     # offscreen raise() 不可用但不应崩溃
 
 
+def test_normal_chat_hides_pet_and_close_restores_it(qtbot, tmp_path: Path) -> None:
+    shell = AppShell(mock=True, home=tmp_path)
+    qtbot.addWidget(shell.chat)
+    qtbot.addWidget(shell.pet.pet)
+    qtbot.addWidget(shell.pet.bubble)
+    shell.pet.pet.show()
+
+    shell.show_chat()
+    assert shell.chat.isVisible()
+    assert not shell.pet.pet.isVisible()
+
+    shell.chat.close()
+    qtbot.wait(20)
+    assert not shell.chat.isVisible()
+    assert shell.pet.pet.isVisible()
+
+
 def test_settings_round_trip_restores_error_and_retry_context(qtbot, tmp_path: Path) -> None:
     from haochen_app.pet.bubble import ErrorBlock
 

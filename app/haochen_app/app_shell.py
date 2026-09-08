@@ -55,6 +55,7 @@ class AppShell:
         # 双入口联动：气泡「展开详细」→ 对话窗口从气泡 rect 动画展开（v0.1.4 hotfix）
         self.pet.detail_opener = self.chat.open_from_bubble
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
+        self.chat.normal_closed.connect(self._restore_pet_after_chat)
         self.pet.settings_requested.connect(self.show_settings)
         self.pet.credential_validation.connect(self._on_credential_validation)
         self.pet.read_permission_requested.connect(self._request_read_permission)
@@ -95,9 +96,15 @@ class AppShell:
     # ── 双入口动作 ─────────────────────────────────────────────
 
     def show_chat(self) -> None:
-        self.chat.show()
-        self.chat.raise_()
-        self.chat.activateWindow()
+        self.pet._result_timer.stop()
+        if self.pet.bubble.summoned:
+            self.pet.bubble.dismiss()
+        self.pet.pet.hide()
+        self.chat.show_normal()
+
+    def _restore_pet_after_chat(self) -> None:
+        self.pet.pet.show()
+        self.pet.pet.raise_()
 
     def show_settings(self) -> None:
         self.pet.suspend_for_settings()
