@@ -42,6 +42,7 @@ _NAME_SKIP_WORDS = ("算了", "跳过", "不用了", "不用", "skip")
 RESULT_AUTO_DISMISS_MS = 12_000
 ACK_MIN_VISIBLE_MS = 520
 DISCOVERY_HINT_MS = 8_500
+PRIVACY_DECISION_MIN_VISIBLE_MS = 1_600
 
 
 class PetApp(QObject):
@@ -110,6 +111,11 @@ class PetApp(QObject):
         self._ack_timer.setInterval(ACK_MIN_VISIBLE_MS)
         self._ack_timer.timeout.connect(self._finish_ack_dwell)
         self._deferred_work_state: tuple[PetState, str] | None = None
+        self._privacy_timer = QTimer(self)
+        self._privacy_timer.setSingleShot(True)
+        self._privacy_timer.setInterval(PRIVACY_DECISION_MIN_VISIBLE_MS)
+        self._privacy_timer.timeout.connect(self._finish_privacy_dwell)
+        self._pending_privacy_summary: str | None = None
         self.bubble.destroyed.connect(self._on_bubble_destroyed)
 
         # ── L0 桌宠 ──
@@ -178,6 +184,7 @@ class PetApp(QObject):
         self._result_timer.stop()
         self._ack_timer.stop()
         self._discovery_timer.stop()
+        self._privacy_timer.stop()
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
@@ -423,6 +430,8 @@ class PetApp(QObject):
         if self.ctrl.busy or (self.supervisor is not None and self.supervisor.busy_except(self.ctrl)):
             return
         self._aborted = False
+        self._privacy_timer.stop()
+        self._pending_privacy_summary = None
         # 详情收起或旧结果退场可能仍有淡出回调在飞；新请求一开始就取得气泡所有权。
         self.bubble.cancel_dismiss()
         self._perception_hint = None
@@ -498,6 +507,8 @@ class PetApp(QObject):
         if self._confirm_id:
             self._resolve_confirm(cancelled=True)
         if self.ctrl.busy:
+            self._privacy_timer.stop()
+            self._pending_privacy_summary = None
             self._ack_timer.stop()
             self._deferred_work_state = None
             self._aborted = True
@@ -528,6 +539,8 @@ class PetApp(QObject):
                     "已停止（正在整理已有内容）", animated=False, cancellable=False)
             self._set_state(PetState.CANCELLED)
             return
+        if self._privacy_timer.isActive():
+            return  # 明确的隐私决定先说够时间，再换成结果态
         if self._status_block is not None:
             self._status_block.set_text(STATUS_LINE[PetState.PRESENTING])
         self._set_state(PetState.PRESENTING)
@@ -535,6 +548,9 @@ class PetApp(QObject):
     def _on_summary_done(self, summary: str) -> None:
         self._ack_timer.stop()
         self._deferred_work_state = None
+        if self._privacy_timer.isActive() and not self._aborted:
+            self._pending_privacy_summary = summary
+            return
         if self._status_block is not None:
             self._status_block.set_text(
                 "想好了 ✓" if not self._aborted else "已停止（基于已产内容）",
@@ -589,6 +605,8 @@ class PetApp(QObject):
 
         message = humanize_error(err)
         self._result_timer.stop()
+        self._privacy_timer.stop()
+        self._pending_privacy_summary = None
         self._ack_timer.stop()
         self._deferred_work_state = None
         self._status_block = None
@@ -663,11 +681,14 @@ class PetApp(QObject):
 
     def _on_confirm_resolved(self, ok: bool) -> None:
         if not ok:
+            self.bubble.cancel_dismiss()
             self._perception_hint = None
             self._status_block = self.bubble.present_status(
                 "好，不读屏，我用已有信息回答", cancellable=True
             )
             self._set_state(PetState.COMPOSING)
+            self._pending_privacy_summary = None
+            self._privacy_timer.start()
             self._resolve_confirm(confirmed=False)
             return
         if self._status_block is not None:
@@ -678,6 +699,12 @@ class PetApp(QObject):
             self._perception_hint = None
         self._set_state(PetState.ACTING)
         self._resolve_confirm(confirmed=True)
+
+    def _finish_privacy_dwell(self) -> None:
+        """拒绝读屏至少保持一个可确认的首帧，再呈现已经到达的模型回答。"""
+        summary, self._pending_privacy_summary = self._pending_privacy_summary, None
+        if summary is not None:
+            self._on_summary_done(summary)
 
     def _resolve_confirm(self, confirmed: bool = None, cancelled: bool = None) -> None:
         rid, self._confirm_id = self._confirm_id, None
@@ -769,19 +796,23 @@ class PetApp(QObject):
     # ── P4：supervisor 重启链路反馈 ───────────────────────────
 
     def _on_sup_restarting(self, attempt: int) -> None:
-        self._status_block = None
-        self.bubble.add_error(f"引擎已退出，自动重启中（第 {attempt} 次）…")
+        self.bubble.cancel_dismiss()
+        self._status_block = self.bubble.present_status(
+            f"连接中断，正在自动恢复（第 {attempt} 次）…", cancellable=False
+        )
         self._alert_pose_then_idle()
         if not self.bubble.summoned:
             self._place_bubble()
             self.bubble.summon()
 
     def _on_sup_restarted(self) -> None:
-        self.bubble.add_status("引擎已自动重启 ✓ 会话已恢复")
+        self._status_block = self.bubble.present_status("连接已恢复 ✓ 会话还在")
         QTimer.singleShot(0, self._drain_queue)
 
     def _on_sup_restart_failed(self) -> None:
         self._status_block = None
+        self.bubble.clear_flow()
+        self.bubble.set_input_visible(False)
         self.bubble.add_error("引擎连续重启失败。请检查配置（API Key / 模型）后，发送任意消息重试。")
         self._alert_pose_then_idle()
         if not self.bubble.summoned:

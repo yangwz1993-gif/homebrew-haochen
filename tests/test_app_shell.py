@@ -142,3 +142,19 @@ def test_onboarding_trial_sends_via_pet(qtbot, tmp_path: Path) -> None:
     shell.pet.send = lambda text: sent.append(text)
     shell._send_onboarding_trial("你好")
     assert sent == ["你好"]
+
+
+def test_restart_failure_marks_current_connection_invalid_in_settings(qtbot, tmp_path: Path) -> None:
+    shell = make_shell(tmp_path)
+    qtbot.addWidget(shell.chat)
+    qtbot.addWidget(shell.settings)
+
+    shell.supervisor.restart_failed.emit()
+
+    labels = shell.settings.findChildren(app_shell_module.QWidget)
+    badge_texts = [
+        widget.text() for widget in labels
+        if hasattr(widget, "text") and widget.objectName() == "badgeErr"
+    ]
+    assert "当前凭据验证失败" in badge_texts
+    assert "当前模型连接失败" in shell.settings._status.text()

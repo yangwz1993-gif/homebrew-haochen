@@ -57,6 +57,11 @@ class AppShell:
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
         self.pet.settings_requested.connect(self.show_settings)
         self.pet.credential_validation.connect(self._on_credential_validation)
+        sup.restart_failed.connect(
+            lambda: self._on_credential_validation(
+                False, "当前模型连接失败，请检查凭据或模型设置"
+            )
+        )
         self.settings.closed.connect(self.pet.restore_after_settings)
 
         # 配置 → 引擎生效链（M-D 预留信号，P4 接线）

@@ -265,6 +265,28 @@ def test_rejecting_screen_read_immediately_removes_reading_semantics(qtbot, tmp_
     assert not pet.bubble.findChildren(HintBlock)
 
 
+def test_rejecting_screen_read_keeps_confirmation_visible_before_fast_result(
+    qtbot, tmp_path: Path
+) -> None:
+    from haochen_app.pet.bubble import SummaryBlock
+
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet._on_confirm_resolved(False)
+    pet._on_summary_done("我没有读取屏幕，所以无法判断。")
+
+    qtbot.wait(1_000)
+    assert pet.bubble.summoned
+    assert pet.bubble.isVisible()
+    labels = " ".join(label.text() for label in pet.bubble.findChildren(QLabel))
+    assert "不读屏" in labels
+    assert not pet.bubble.findChildren(SummaryBlock)
+
+    qtbot.waitUntil(lambda: bool(pet.bubble.findChildren(SummaryBlock)), timeout=1_000)
+    assert pet.bubble.summoned
+    assert pet.bubble.isVisible()
+
+
 def test_first_use_hint_turns_first_click_into_input(qtbot, tmp_path: Path) -> None:
     pet, _client = make_pet(qtbot, tmp_path)
     pet._discovery_hint_retries = 30  # 测试进程中的其他顶层窗口不应阻止本断言
@@ -284,6 +306,24 @@ def test_first_use_hint_turns_first_click_into_input(qtbot, tmp_path: Path) -> N
     assert "点击开始对话" in pet.pet.accessibleName()
     assert pet.bubble._input_visible()
     assert pet.state is PetState.LISTENING
+
+
+def test_restarting_feedback_replaces_previous_attempt_instead_of_accumulating(
+    qtbot, tmp_path: Path
+) -> None:
+    from haochen_app.pet.bubble import ErrorBlock, StatusBlock
+
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet._on_sup_restarting(1)
+    pet._on_sup_restarting(2)
+    pet._on_sup_restarting(3)
+
+    assert len(pet.bubble.findChildren(StatusBlock)) == 1
+    assert not pet.bubble.findChildren(ErrorBlock)
+
+    pet._on_sup_restart_failed()
+    assert len(pet.bubble.findChildren(ErrorBlock)) == 1
+    assert not pet.bubble.findChildren(StatusBlock)
 
 
 def test_crash_without_supervisor_shows_error_and_summons(qtbot, tmp_path: Path) -> None:
