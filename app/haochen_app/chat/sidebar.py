@@ -70,7 +70,7 @@ class SessionSidebar(QWidget):
         root.addWidget(btn_new)
 
         self.status = QLabel("")
-        self.status.setWordWrap(True)
+        self.status.setWordWrap(False)
         self.status.setStyleSheet(f"color: {C['ink_soft']}; font-size: {FONT['body_sm']}px;")
         root.addWidget(self.status)
 
@@ -107,6 +107,13 @@ class SessionSidebar(QWidget):
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)
+        self.status.setToolTip(text)
+
+    def set_model(self, model: str) -> None:
+        """窄侧栏只显示可辨认的模型名，完整 provider/id 留在悬停提示。"""
+        short = model.rsplit("/", 1)[-1] if model else "未连接"
+        self.status.setText(f"模型  {short}")
+        self.status.setToolTip(model or "模型尚未连接")
 
     # ── 交互 ──────────────────────────────────────────────────
 

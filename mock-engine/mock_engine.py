@@ -26,6 +26,7 @@ from pathlib import Path
 
 TICK = max(0, int(os.environ.get("MOCK_TICK_MS", "30"))) / 1000.0
 ACCEPT_DELAY = max(0, int(os.environ.get("MOCK_ACCEPT_DELAY_MS", "0"))) / 1000.0
+ACTION_DELAY = max(0, int(os.environ.get("MOCK_ACTION_DELAY_MS", "0"))) / 1000.0
 MOCK_MODEL = "mock/mock-v1"
 ZERO_USAGE = {
     "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0,
@@ -332,6 +333,8 @@ class MockEngine:
         # 工具执行 + 读屏确认（阻塞等壳答复）
         self.send({"type": "tool_execution_start", "toolCallId": call_id,
                    "toolName": "read_screen", "args": args})
+        if ACTION_DELAY:
+            time.sleep(ACTION_DELAY)
         req_id = str(uuid.uuid4())
         self.send({"type": "extension_ui_request", "id": req_id,
                    "method": "confirm", "title": CONFIRM_TITLE,

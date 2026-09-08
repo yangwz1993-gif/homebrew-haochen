@@ -38,7 +38,10 @@ from .. import a11y
 from ..chat.widgets import QueueIndicator
 from . import theme as T
 
-BUBBLE_WIDTH = 400          # ≤420（visual-spec §6.1）
+BUBBLE_WIDTH = 380          # 结果/错误卡；各状态按内容进一步收紧
+INPUT_WIDTH = 372
+PROGRESS_WIDTH = 292
+ACTION_WIDTH = 392
 _MAX_H_RATIO = 0.70         # 最大高度 ~70% 屏
 _SLIDE_PX = 10              # 唤起上滑距离
 
@@ -213,7 +216,7 @@ class SummaryBlock(QWidget):
         cl.setContentsMargins(12, 10, 12, 10)
         if cancelled:
             stopped = _text_label(
-                "已停止 · 以下是停止前已完成的内容",
+                "已停止",
                 f"color: {T.COLOR_WARN};",
                 T.FONT_BODY_SM,
             )
@@ -236,6 +239,8 @@ class SummaryBlock(QWidget):
         self.continue_button = continue_btn
         row.addWidget(continue_btn)
         detail_btn = QPushButton("查看详情")
+        if cancelled:
+            detail_btn.setText("查看已有内容")
         detail_btn.setAccessibleName("查看当前会话详情")
         detail_btn.setToolTip("打开完整对话窗口（Esc / ⌘W 收起）")
         detail_btn.setStyleSheet(
@@ -379,7 +384,7 @@ class BubbleWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
-        self.setFixedWidth(BUBBLE_WIDTH)
+        self.setFixedWidth(INPUT_WIDTH)
 
         screen = QApplication.primaryScreen().availableGeometry()
         self._max_h = int(screen.height() * _MAX_H_RATIO)
@@ -410,11 +415,14 @@ class BubbleWindow(QWidget):
         """)
 
         root = QVBoxLayout(self)
+        self._root = root
         root.setContentsMargins(12, 10, 12, 0)  # 底部留给自绘尾巴
         root.setSpacing(6)
 
-        # 标题行：小图标 + 名 + ✕
-        head = QHBoxLayout()
+        # 旧窗口式标题只保留为兼容控件；轻量漫画气泡各状态默认隐藏它。
+        self._head_panel = QWidget()
+        head = QHBoxLayout(self._head_panel)
+        head.setContentsMargins(0, 0, 0, 0)
         title = QLabel("👓 haochen")
         title.setObjectName("title")
         self.title_label = title
@@ -425,7 +433,8 @@ class BubbleWindow(QWidget):
         btn_close.setToolTip("收起（Esc）")
         btn_close.clicked.connect(self.dismiss)
         head.addWidget(btn_close)
-        root.addLayout(head)
+        root.addWidget(self._head_panel)
+        self._head_panel.hide()
 
         # 动态对话流（滚动区）
         # v0.1.4 hotfix 问题2：viewport / flow_host 默认会填系统灰底，必须显式透明，
@@ -451,19 +460,17 @@ class BubbleWindow(QWidget):
         # 输入区（交互规范 §5：发送后收起，仅消息气泡流；需再输入时才出现）
         self._input_panel = QWidget()
         self._input_panel.setObjectName("inputPanel")
-        ip = QVBoxLayout(self._input_panel)
+        ip = QHBoxLayout(self._input_panel)
         ip.setContentsMargins(0, 0, 0, 0)
-        ip.setSpacing(6)
+        ip.setSpacing(8)
 
         self.input = ChatInput()
         self.input.setObjectName("input")
-        self.input.setPlaceholderText("问点什么…（↩ 发送，⌘↩ 换行）")
-        self.input.setFixedHeight(64)
+        self.input.setPlaceholderText("问我点什么…  ↩ 发送 · ⌘↩ 换行")
+        self.input.setFixedHeight(54)
         self.input.submit_pressed.connect(self._on_send)
         self.input.escape_pressed.connect(self.escape_requested.emit)
-        ip.addWidget(self.input)
-
-        row = QHBoxLayout()
+        ip.addWidget(self.input, 1)
         self.btn_stop = QPushButton("■ 停")
         self.btn_stop.setObjectName("outlineBtn")
         self.btn_stop.setAccessibleName("停止生成")
@@ -483,9 +490,8 @@ class BubbleWindow(QWidget):
         """)
         self.btn_stop.clicked.connect(self.abort_requested.emit)
         self.btn_stop.hide()
-        row.addWidget(self.btn_stop)
-        row.addStretch(1)
-        self.btn_send = QPushButton("发送 ➤")
+        ip.addWidget(self.btn_stop)
+        self.btn_send = QPushButton("发送")
         self.btn_send.setObjectName("sendBtn")
         self.btn_send.setAccessibleName("发送")
         self.btn_send.setStyleSheet(f"""
@@ -507,15 +513,16 @@ class BubbleWindow(QWidget):
             }}
         """)
         self.btn_send.clicked.connect(self._on_send)
-        row.addWidget(self.btn_send)
-        ip.addLayout(row)
+        self.btn_send.setFixedHeight(34)
+        ip.addWidget(self.btn_send)
         root.addWidget(self._input_panel)
         root.addSpacing(T.TAIL_SIZE)  # 尾巴占位（paintEvent 自绘）
 
         # 对话流（消息区）在输入区上方自适应高度
         self._anims: list[QPropertyAnimation] = []
         self._shown = False
-        self._min_h = 72
+        self._mode = "input"
+        self._min_h = 76
         self.setMinimumHeight(self._min_h)
         self._drag_pos: QPoint | None = None  # 拖动中（标题/空白区按下左键）
         self._dismiss_anim: QPropertyAnimation | None = None
@@ -523,11 +530,36 @@ class BubbleWindow(QWidget):
     # ── 输入区收起/弹出（§5 动态对话流）＋ 窗口自适应高度 ────────
 
     def _input_visible(self) -> bool:
-        return self._input_panel.isVisible()
+        # isVisible() 还会受父窗口当前是否显示影响；这里需要控件自己的显隐意图。
+        return not self._input_panel.isHidden()
+
+    def _set_mode(self, mode: str) -> None:
+        """给每个语义状态独立体量，避免所有内容都套进同一个小窗口。"""
+        widths = {
+            "input": INPUT_WIDTH,
+            "progress": PROGRESS_WIDTH,
+            "action": ACTION_WIDTH,
+            "result": BUBBLE_WIDTH,
+            "error": BUBBLE_WIDTH,
+        }
+        minimums = {
+            "input": 76,
+            "progress": 64,
+            "action": 82,
+            "result": 82,
+            "error": 82,
+        }
+        self._mode = mode
+        self._head_panel.hide()
+        self._min_h = minimums[mode]
+        self.setMinimumHeight(self._min_h)
+        self.setFixedWidth(widths[mode])
 
     def set_input_visible(self, on: bool) -> None:
         """发送后收起输入区；需再输入/可追问时弹出。"""
-        if on != self._input_panel.isVisible():
+        if on:
+            self._set_mode("input")
+        if on != self._input_visible():
             self._input_panel.setVisible(on)
         if on:
             self.input.setFocus(Qt.FocusReason.ShortcutFocusReason)
@@ -540,7 +572,7 @@ class BubbleWindow(QWidget):
             item = self.flow.itemAt(index)
             widget = item.widget() if item is not None else None
             if widget is not None and not widget.isHidden():
-                heights.append(widget.sizeHint().height())
+                heights.append(max(widget.sizeHint().height(), widget.minimumSizeHint().height()))
         if not heights:
             return 0
         return sum(heights) + self.flow.spacing() * (len(heights) - 1)
@@ -550,29 +582,31 @@ class BubbleWindow(QWidget):
         self.flow.invalidate()
         self.flow.activate()
         flow_h = self._flow_content_height()
-        panel_h = self._input_panel.sizeHint().height() if self._input_panel.isVisible() else 0
+        panel_h = self._input_panel.sizeHint().height() if self._input_visible() else 0
         flow_cap = max(0, self._max_h - 34 - panel_h - T.TAIL_SIZE - 8)
         shown_flow_h = min(flow_h, flow_cap)
         self.scroll.setVisible(shown_flow_h > 0)
         self.scroll.setFixedHeight(shown_flow_h)
-        want = 34 + shown_flow_h + panel_h + T.TAIL_SIZE + 8
+        head_h = 34 if self._head_panel.isVisible() else 0
+        want = head_h + shown_flow_h + panel_h + T.TAIL_SIZE + 8
         want = max(self._min_h, min(want, self._max_h))
         self.setFixedHeight(want)
 
-    def layout_metrics(self) -> dict[str, int | bool]:
+    def layout_metrics(self) -> dict[str, int | bool | str]:
         """Return stable geometry evidence for visual QA without inspecting implementation."""
-        title_bottom = self.title_label.geometry().bottom()
+        title_bottom = self.title_label.geometry().bottom() if self._head_panel.isVisible() else 0
         input_rect = self._input_panel.geometry()
         input_gap = 0
-        if self._input_panel.isVisible():
+        if self._input_visible():
             input_gap = max(0, input_rect.top() - title_bottom - self.layout().spacing())
         return {
             "width": self.width(),
             "height": self.height(),
             "flow_content_height": self._flow_content_height(),
             "scroll_visible": self.scroll.isVisible(),
-            "input_visible": self._input_panel.isVisible(),
+            "input_visible": self._input_visible(),
             "input_top_gap": input_gap,
+            "mode": self._mode,
         }
 
     # ── 对话流 ────────────────────────────────────────────────
@@ -605,9 +639,11 @@ class BubbleWindow(QWidget):
         sb.setValue(sb.maximum())
 
     def add_user_message(self, text: str) -> None:
+        self._set_mode("result")
         self._append(UserBlock(text))
 
     def add_queue_indicator(self, preview: str) -> QueueIndicator:
+        self._set_mode("result")
         indicator = QueueIndicator(preview)
         self._append(indicator)
         return indicator
@@ -621,15 +657,27 @@ class BubbleWindow(QWidget):
         self._refresh_height()
         QTimer.singleShot(0, self._refresh_height)
 
-    def add_perception_hint(self, text: str) -> None:
-        self._append(HintBlock(text))
+    def add_perception_hint(self, text: str) -> HintBlock:
+        self._set_mode("action")
+        block = HintBlock(text)
+        self._append(block)
+        return block
 
     def add_status(self, text: str, *, cancellable: bool = False) -> StatusBlock:
+        self._set_mode("progress")
         block = StatusBlock(text, cancellable=cancellable)
         block.stop_requested.connect(self.abort_requested.emit)
         return self._append(block)
 
+    def present_status(self, text: str, *, cancellable: bool = False) -> StatusBlock:
+        """工作态只显示一句漫画式状态，不保留输入和用户消息历史。"""
+        self._set_mode("progress")
+        self.clear_flow()
+        self.set_input_visible(False)
+        return self.add_status(text, cancellable=cancellable)
+
     def add_summary(self, text: str, *, cancelled: bool = False) -> None:
+        self._set_mode("result")
         block = SummaryBlock(text, cancelled=cancelled)
         block.expand_clicked.connect(self.expand_detail.emit)
         block.continue_clicked.connect(self.continue_requested.emit)
@@ -637,6 +685,7 @@ class BubbleWindow(QWidget):
 
     def present_summary(self, text: str, *, cancelled: bool = False) -> None:
         """结果阶段只显示当前简答，不保留历史流、输入框或滚动条。"""
+        self._set_mode("result")
         self.clear_flow()
         self.set_input_visible(False)
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -645,15 +694,18 @@ class BubbleWindow(QWidget):
     def start_input(self) -> None:
         """进入 LISTENING：清掉旧临时层，只显示输入区。"""
         self.cancel_dismiss()
+        self._set_mode("input")
         self.clear_flow()
         self.set_input_visible(True)
         self.focus_input()
 
     def add_greeting(self, text: str) -> None:
         """系统发言卡（v0.1.7：首启问称呼 / 称呼确认回复）。"""
+        self._set_mode("result")
         self._append(GreetBlock(text))
 
     def add_error(self, text: str) -> None:
+        self._set_mode("error")
         block = ErrorBlock(text)
         block.retry_clicked.connect(self.retry_requested.emit)
         block.settings_clicked.connect(self.settings_requested.emit)
@@ -676,6 +728,7 @@ class BubbleWindow(QWidget):
     # ── 读屏确认条 ────────────────────────────────────────────
 
     def show_confirm(self, text: str) -> None:
+        self._set_mode("action")
         self.hide_confirm(emit_result=None)
         self._confirm_bar = ConfirmBar(text)
         self._confirm_bar.resolved.connect(self._on_confirm_resolved)

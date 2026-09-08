@@ -141,7 +141,7 @@ def test_cancelled_result_says_it_only_contains_completed_content(qtbot, tmp_pat
     assert pet.state is PetState.CANCELLED
     labels = " ".join(label.text() for label in pet.bubble.findChildren(QLabel))
     assert "已停止" in labels
-    assert "停止前已完成的内容" in labels
+    assert "停止前生成的内容已经保留" in labels
 
 
 def test_retry_resends_pending_review_item(qtbot, tmp_path: Path) -> None:
@@ -179,6 +179,47 @@ def test_engine_event_routes_confirm_to_initiator(qtbot, tmp_path: Path) -> None
     pet._resolve_confirm(confirmed=True)
     assert pet._confirm_id is None
     pet.ctrl._phase = ""
+
+
+def test_rejecting_screen_read_immediately_removes_reading_semantics(qtbot, tmp_path: Path) -> None:
+    from haochen_app.pet.bubble import HintBlock
+
+    pet, client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet.send("看看屏幕")
+    getattr(client, "event").emit({"type": "tool_execution_start", "toolName": "read_screen"})
+    getattr(client, "event").emit({
+        "type": "extension_ui_request",
+        "id": "ui-deny",
+        "method": "confirm",
+        "title": "读屏",
+        "message": "确认？",
+    })
+
+    pet._on_confirm_resolved(False)
+
+    assert pet.state is PetState.COMPOSING
+    assert pet._status_block.text == "好，不读屏，我用已有信息回答"
+    assert not pet.bubble.findChildren(HintBlock)
+
+
+def test_first_use_hint_turns_first_click_into_input(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet._discovery_hint_retries = 30  # 测试进程中的其他顶层窗口不应阻止本断言
+
+    pet._maybe_show_discovery_hint()
+
+    assert pet._discovery_hint_active
+    assert pet.bubble.summoned
+    assert not pet.bubble._input_visible()
+    assert (tmp_path / "interaction-hint-v1").exists()
+
+    pet._toggle_bubble()
+
+    assert not pet._discovery_hint_active
+    assert pet.bubble.summoned
+    assert pet.bubble._input_visible()
+    assert pet.state is PetState.LISTENING
 
 
 def test_crash_without_supervisor_shows_error_and_summons(qtbot, tmp_path: Path) -> None:
@@ -230,7 +271,8 @@ def test_engine_events_drive_visible_work_phases(qtbot, tmp_path: Path) -> None:
 
     request_id = pet.ctrl._answer_request_id
     client.response.emit({"id": request_id, "success": True, "type": "response"})
-    assert pet.state is PetState.COMPOSING
+    assert pet.state is PetState.ACKNOWLEDGING
+    qtbot.waitUntil(lambda: pet.state is PetState.COMPOSING, timeout=1000)
     assert pet._status_block.text == "正在组织回答"
 
     client.event.emit({"type": "tool_execution_start", "toolName": "bash"})

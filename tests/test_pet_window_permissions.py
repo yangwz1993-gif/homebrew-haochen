@@ -118,6 +118,21 @@ def mouse(window, kind, local: QPoint, button, buttons) -> QMouseEvent:
     )
 
 
+def test_pet_uses_retina_physical_pixels_without_changing_logical_size(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    window = make_pet_window(qtbot, tmp_path, monkeypatch)
+    monkeypatch.setattr(window, "devicePixelRatioF", lambda: 2.0)
+    window._pixmaps.clear()
+
+    pixmap = window._pixmap("idle")
+
+    assert pixmap is not None
+    assert pixmap.width() == pet_window_module.PET_SIZE * 2
+    assert pixmap.devicePixelRatio() == 2.0
+    assert round(pixmap.deviceIndependentSize().width()) == pet_window_module.PET_SIZE
+
+
 def test_pet_window_drag_persists_position(qtbot, tmp_path: Path, monkeypatch) -> None:
     window = make_pet_window(qtbot, tmp_path, monkeypatch)
     center = QPoint(window.width() // 2, window.height() // 2)

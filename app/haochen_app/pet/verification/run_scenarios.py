@@ -36,6 +36,7 @@ OUT = Path(__file__).resolve().parent
 os.environ.setdefault("HAOCHEN_HOME", tempfile.mkdtemp(prefix="haochen-pet-verify-"))
 # 留出足够时间让 ACK 卡完成淡入；只影响本视觉证据进程，mock 默认仍为零延迟。
 os.environ.setdefault("MOCK_ACCEPT_DELAY_MS", "240")
+os.environ.setdefault("MOCK_ACTION_DELAY_MS", "240")
 
 from PyQt6.QtCore import QPoint, Qt, QTimer
 from PyQt6.QtGui import QColor, QPainter, QPixmap
@@ -116,7 +117,7 @@ class Runner:
                 and state not in self._captured_transitions
                 and self.pa.bubble.summoned):
             self._captured_transitions.add(state)
-            delay = 190 if state == "ACKNOWLEDGING" else 0
+            delay = 190
             QTimer.singleShot(
                 delay,
                 lambda captured=state: shot_pair(

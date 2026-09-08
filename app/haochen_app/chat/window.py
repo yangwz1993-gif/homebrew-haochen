@@ -108,8 +108,8 @@ class ChatWindow(QWidget):
     def __init__(self, client: EngineClient | None = None, supervisor=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("haochen")
-        self.resize(1200, 800)
-        self.setMinimumSize(900, 600)
+        self.resize(980, 680)
+        self.setMinimumSize(820, 560)
         # 防御性加固（v0.1.4 hotfix 问题4）：关窗永不退出 app
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
 
@@ -321,7 +321,7 @@ class ChatWindow(QWidget):
         data = resp.get("data") or {}
         path = data.get("sessionFile") or ""
         model = (data.get("model") or {}).get("id", "")
-        self.sidebar.set_status(f"模型：{model}")
+        self.sidebar.set_model(model)
         if path:
             self.coordinator.set_current_session(path)
         if path and path != self._current_path:
@@ -484,7 +484,7 @@ class ChatWindow(QWidget):
 
     def _restore_min_size(self) -> None:
         if self._detail_mode and not self._detail_collapsing:
-            self.setMinimumSize(900, 600)
+            self.setMinimumSize(820, 560)
 
     def collapse_detail(self) -> None:
         """Esc / ⌘W：反向收回气泡 rect，播完隐藏并发 detail_collapsed。"""
@@ -502,14 +502,14 @@ class ChatWindow(QWidget):
         self._detail_mode = False
         self._detail_collapsing = False
         self.hide()
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(820, 560)
         self.detail_collapsed.emit()
 
     def _detail_target_rect(self) -> QRect:
-        """正常尺寸（默认 1200×800，夹回屏幕），以气泡中心锚定（气泡所在屏）。"""
+        """详情工作台保持紧凑（980×680），并夹回气泡所在屏幕。"""
         screen = screen_of(self).availableGeometry()
-        w = min(1200, screen.width() - 16)
-        h = min(800, screen.height() - 16)
+        w = min(980, screen.width() - 16)
+        h = min(680, screen.height() - 16)
         if self._detail_source_rect.isValid() and not self._detail_source_rect.isNull():
             cx = self._detail_source_rect.center().x()
             cy = self._detail_source_rect.center().y()

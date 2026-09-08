@@ -133,6 +133,16 @@ def extractive_summary(text: str, limit: int = 160) -> str:
     return cut.rstrip("，,;；") + "…"
 
 
+def normalize_brief(text: str) -> str:
+    """结果卡已有“结论”标签，去掉模型重复生成的同名 Markdown 标题。"""
+    return re.sub(
+        r"^\s*(?:#{1,3}\s*)?(?:结论|简答|答案)(?:\s*[:：]\s*|\s*\n+)",
+        "",
+        text or "",
+        count=1,
+    ).strip()
+
+
 def parse_turn_result(text: str) -> TurnResult:
     """优先解析新协议，并对旧协议或无标记回答做确定性降级。"""
     raw = text or ""
@@ -145,7 +155,12 @@ def parse_turn_result(text: str) -> TurnResult:
         detail = strip_tags(raw)
     if not brief:
         brief = extractive_summary(detail)
-    return TurnResult(brief=brief, detail=detail, raw=raw, fallback_used=fallback_used)
+    return TurnResult(
+        brief=normalize_brief(brief),
+        detail=detail,
+        raw=raw,
+        fallback_used=fallback_used,
+    )
 
 
 class ConversationController(QObject):

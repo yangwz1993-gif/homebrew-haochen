@@ -210,6 +210,15 @@ def test_parse_turn_result_falls_back_for_plain_text() -> None:
     assert result.fallback_used is True
 
 
+def test_parse_turn_result_removes_duplicate_brief_heading() -> None:
+    for brief in ("## 结论：可以直接使用。", "结论\n可以直接使用。"):
+        result = conversation.parse_turn_result(
+            f"【brief】{brief}【/brief】\n【detail】详细依据。【/detail】"
+        )
+
+        assert result.brief == "可以直接使用。"
+
+
 def test_parse_turn_result_recovers_mismatched_brief_closing_tag() -> None:
     raw = (
         "【brief】没读到屏——还缺辅助功能权限。【/detail】\n"

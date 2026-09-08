@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import QApplication
 from ..app_tracking import write_last_user_text
 from ..conversation import ConversationController
 from ..engine_client import EngineClient
+from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
 from . import theme as T
 from .bubble import BubbleWindow
@@ -39,6 +40,7 @@ log = logging.getLogger("haochen.pet")
 # v0.1.7 首启问称呼：这些回复视为「跳过」（落盘空名，不再问）
 _NAME_SKIP_WORDS = ("算了", "跳过", "不用了", "不用", "skip")
 RESULT_AUTO_DISMISS_MS = 8_000
+ACK_MIN_VISIBLE_MS = 520
 
 
 class PetApp(QObject):
@@ -58,11 +60,17 @@ class PetApp(QObject):
         self._last_user_text = ""
         self._aborted = False
         self._status_block = None
+        self._perception_hint = None
         self._queue_requests: dict[str, str] = {}
         self._queue_indicators: dict[str, object] = {}
         self._detail_open = False                       # 详情（对话窗口展开模式）打开中
         self._settings_open = False                     # 设置打开时暂停临时层，而不是丢弃上下文
         self._resume_bubble_after_settings = False
+        self._discovery_hint_active = False
+        self._discovery_hint_retries = 0
+        self._discovery_timer = QTimer(self)
+        self._discovery_timer.setSingleShot(True)
+        self._discovery_timer.timeout.connect(self._hide_discovery_hint)
         # v0.1.7 首启问称呼：等待用户输入称呼中 / 本次会话已问过（避免重复问候块）
         self._awaiting_name = False
         self._name_greeted = False
@@ -95,6 +103,11 @@ class PetApp(QObject):
         self._result_timer.setSingleShot(True)
         self._result_timer.setInterval(RESULT_AUTO_DISMISS_MS)
         self._result_timer.timeout.connect(self._dismiss_result_if_idle)
+        self._ack_timer = QTimer(self)
+        self._ack_timer.setSingleShot(True)
+        self._ack_timer.setInterval(ACK_MIN_VISIBLE_MS)
+        self._ack_timer.timeout.connect(self._finish_ack_dwell)
+        self._deferred_work_state: tuple[PetState, str] | None = None
         self.bubble.destroyed.connect(self._on_bubble_destroyed)
 
         # ── L0 桌宠 ──
@@ -144,6 +157,7 @@ class PetApp(QObject):
         self.client.start()
         self.pet.show()
         self._set_state(PetState.IDLE)
+        QTimer.singleShot(900, self._maybe_show_discovery_hint)
 
     def quit(self) -> None:
         self._result_timer.stop()
@@ -160,6 +174,8 @@ class PetApp(QObject):
     def _on_bubble_destroyed(self) -> None:
         """窗口销毁时解除长生命周期回调，避免计时器访问失效的 Qt 对象。"""
         self._result_timer.stop()
+        self._ack_timer.stop()
+        self._discovery_timer.stop()
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
@@ -192,9 +208,33 @@ class PetApp(QObject):
 
         QTimer.singleShot(2500, _back_to_pose)
 
+    def _request_work_state(self, state: PetState, text: str) -> None:
+        """真实工作不延迟；仅让首个“收到”视觉回执至少可被人眼识别。"""
+        if self._ack_timer.isActive() and self._state is PetState.ACKNOWLEDGING:
+            self._deferred_work_state = (state, text)
+            return
+        if self._status_block is not None:
+            self._status_block.set_text(text)
+        self._set_state(state)
+
+    def _finish_ack_dwell(self) -> None:
+        pending, self._deferred_work_state = self._deferred_work_state, None
+        if pending is not None and self.ctrl.busy:
+            try:
+                self._request_work_state(*pending)
+            except RuntimeError:
+                pass  # 窗口已销毁，延迟状态无需再渲染
+
     # ── 唤起 / 收起 ───────────────────────────────────────────
 
     def _toggle_bubble(self) -> None:
+        if self._discovery_hint_active:
+            self._discovery_hint_active = False
+            self._discovery_timer.stop()
+            self.bubble.start_input()
+            self._place_bubble()
+            self._set_state(PetState.LISTENING)
+            return
         if self.bubble.summoned:
             self.bubble.dismiss()
         else:
@@ -208,6 +248,39 @@ class PetApp(QObject):
             self.pet.raise_()
             if self._state is PetState.IDLE:
                 self._set_state(PetState.LISTENING)
+
+    def _maybe_show_discovery_hint(self) -> None:
+        """全新数据目录只展示一次短促漫画提示，不依赖用户先悬停发现 tooltip。"""
+        marker = self.client.home / "interaction-hint-v1"
+        if marker.exists() or self.bubble.summoned:
+            return
+        other_windows = [
+            window for window in QApplication.topLevelWidgets()
+            if window.isVisible() and window not in (self.pet, self.bubble)
+        ]
+        if other_windows and self._discovery_hint_retries < 30:
+            self._discovery_hint_retries += 1
+            QTimer.singleShot(1000, self._maybe_show_discovery_hint)
+            return
+        try:
+            atomic_write_private(marker, "seen\n")
+        except OSError:
+            pass
+        self.bubble.clear_flow()
+        self.bubble.set_input_visible(False)
+        self.bubble.add_greeting("点一下我，随时开聊")
+        self._place_bubble()
+        self.bubble.summon(show_input=False)
+        self.pet.raise_()
+        self._discovery_hint_active = True
+        self._discovery_timer.start(4200)
+
+    def _hide_discovery_hint(self) -> None:
+        if not self._discovery_hint_active:
+            return
+        self._discovery_hint_active = False
+        if self.bubble.summoned:
+            self.bubble.dismiss()
 
     # ── 首启问称呼（v0.1.7）───────────────────────────────────
 
@@ -289,7 +362,9 @@ class PetApp(QObject):
         # 收起时确认条还悬着 → 按「取消」答复引擎（rpc-contract §5.3 cancelled）
         if self._confirm_id:
             self._resolve_confirm(cancelled=True)
-        if self._state in (PetState.LISTENING, PetState.PRESENTING, PetState.CANCELLED):
+        if self._state in (
+            PetState.LISTENING, PetState.PRESENTING, PetState.CANCELLED, PetState.ERROR
+        ):
             self._set_state(PetState.IDLE)
 
     def _on_escape(self) -> None:
@@ -325,9 +400,12 @@ class PetApp(QObject):
         # 每次新请求只占用当前临时层；历史仍由完整会话窗口保存。
         if not self.ctrl.busy and self._confirm_id is None and not self.bubble._input_visible():
             self.bubble.clear_flow()
+        waiting = self.ctrl.busy or (
+            self.supervisor is not None and self.supervisor.busy_except(self.ctrl)
+        )
         item = self.coordinator.enqueue(text, "pet")
-        self.bubble.add_user_message(text)
-        if self.ctrl.busy or (self.supervisor is not None and self.supervisor.busy_except(self.ctrl)):
+        if waiting:
+            self.bubble.add_user_message(text)
             self._status_block = self.bubble.add_status("消息已排队，可在完整窗口取消")
             return
         if not self.client.alive:
@@ -343,11 +421,14 @@ class PetApp(QObject):
         if self.ctrl.busy or (self.supervisor is not None and self.supervisor.busy_except(self.ctrl)):
             return
         self._aborted = False
+        self._perception_hint = None
         self._last_user_text = item.text
         write_last_user_text(self.client.home, item.text)
-        self._status_block = self.bubble.add_status(
+        self._status_block = self.bubble.present_status(
             STATUS_LINE[PetState.ACKNOWLEDGING], cancellable=True)
         self._set_state(PetState.ACKNOWLEDGING)
+        self._deferred_work_state = None
+        self._ack_timer.start()
         self.bubble.set_busy(True)
         request_id = self.ctrl.send(item.text)
         if request_id is None:
@@ -402,9 +483,7 @@ class PetApp(QObject):
 
     def _on_request_accepted(self, _request_id: str) -> None:
         """只有引擎确认接单后才进入组织阶段，避免用计时器伪造进度。"""
-        if self._status_block is not None:
-            self._status_block.set_text(STATUS_LINE[PetState.COMPOSING])
-        self._set_state(PetState.COMPOSING)
+        self._request_work_state(PetState.COMPOSING, STATUS_LINE[PetState.COMPOSING])
 
     def _on_request_failed(self, request_id: str, _error: str) -> None:
         if request_id in self._queue_requests:
@@ -415,6 +494,8 @@ class PetApp(QObject):
         if self._confirm_id:
             self._resolve_confirm(cancelled=True)
         if self.ctrl.busy:
+            self._ack_timer.stop()
+            self._deferred_work_state = None
             self._aborted = True
             self.ctrl.abort()
             if self._status_block is not None:
@@ -435,6 +516,8 @@ class PetApp(QObject):
         self._last_answer = answer
 
     def _on_summarizing(self) -> None:
+        self._ack_timer.stop()
+        self._deferred_work_state = None
         if self._aborted:
             if self._status_block is not None:
                 self._status_block.set_text(
@@ -446,6 +529,8 @@ class PetApp(QObject):
         self._set_state(PetState.PRESENTING)
 
     def _on_summary_done(self, summary: str) -> None:
+        self._ack_timer.stop()
+        self._deferred_work_state = None
         if self._status_block is not None:
             self._status_block.set_text(
                 "想好了 ✓" if not self._aborted else "已停止（基于已产内容）",
@@ -453,7 +538,11 @@ class PetApp(QObject):
                 cancellable=False,
             )
             self._status_block = None
-        brief = summary.strip() or self._last_answer.strip() or "这次没有生成可显示的简答，请查看详情。"
+        if self._aborted:
+            # 终止竞争中引擎可能仍返回“写好了”等完成式 brief；停止后的 UI 不再信任它。
+            brief = "我停下来了。停止前生成的内容已经保留。"
+        else:
+            brief = summary.strip() or self._last_answer.strip() or "这次没有生成可显示的简答，请查看详情。"
         self._last_summary = brief
         self.bubble.present_summary(brief, cancelled=self._aborted)
         # 短结是「需要用户注意」的时刻：气泡没挂着就轻提示唤起
@@ -492,11 +581,14 @@ class PetApp(QObject):
         from ..conversation import humanize_error
 
         self._result_timer.stop()
+        self._ack_timer.stop()
+        self._deferred_work_state = None
         self._status_block = None
+        self._perception_hint = None
         self.bubble.clear_flow()
         self.bubble.set_input_visible(False)
         self.bubble.add_error(humanize_error(err))
-        self._set_state(PetState.LISTENING)
+        self._set_state(PetState.ERROR)
         self._alert_pose_then_idle()
         if not self.bubble.summoned:
             self._place_bubble()
@@ -527,6 +619,8 @@ class PetApp(QObject):
             return
         if t == "extension_ui_request":
             if ev.get("method") == "confirm":
+                self._ack_timer.stop()
+                self._deferred_work_state = None
                 self._confirm_id = ev.get("id")
                 text = "；".join(x for x in (str(ev.get("title", "")).strip(),
                                              str(ev.get("message", "")).strip()) if x)
@@ -539,10 +633,8 @@ class PetApp(QObject):
                 # 未实现的 method 一律取消（rpc-contract §5.3）
                 self.client.respond_ui(ev.get("id"), cancelled=True)
         elif t == "tool_execution_start" and ev.get("toolName") == "read_screen":
-            self.bubble.add_perception_hint("我正看一下你允许的屏幕内容")
-            if self._status_block is not None:
-                self._status_block.set_text("正在读取屏幕")
-            self._set_state(PetState.ACTING)
+            self._perception_hint = self.bubble.add_perception_hint("准备读取当前屏幕")
+            self._request_work_state(PetState.ACTING, "准备读取屏幕")
         elif t == "tool_execution_start":
             tool_name = str(ev.get("toolName") or "")
             label = {
@@ -550,22 +642,31 @@ class PetApp(QObject):
                 "browser": "正在查看网页",
                 "write_file": "正在整理文件",
             }.get(tool_name, "正在使用工具")
-            if self._status_block is not None:
-                self._status_block.set_text(label)
-            self._set_state(PetState.ACTING)
+            self._request_work_state(PetState.ACTING, label)
         elif t == "tool_execution_end" and self._state is PetState.ACTING:
-            if self._status_block is not None:
-                self._status_block.set_text(STATUS_LINE[PetState.COMPOSING])
-            self._set_state(PetState.COMPOSING)
+            self._request_work_state(PetState.COMPOSING, STATUS_LINE[PetState.COMPOSING])
         elif t == "message_update" and self.ctrl.busy:
             update = ev.get("assistantMessageEvent") or {}
             if update.get("type") == "text_delta":
-                if self._status_block is not None:
-                    self._status_block.set_text(STATUS_LINE[PetState.COMPOSING])
-                self._set_state(PetState.COMPOSING)
+                self._request_work_state(PetState.COMPOSING, STATUS_LINE[PetState.COMPOSING])
 
     def _on_confirm_resolved(self, ok: bool) -> None:
-        self._resolve_confirm(confirmed=ok)
+        if not ok:
+            self._perception_hint = None
+            self._status_block = self.bubble.present_status(
+                "好，不读屏，我用已有信息回答", cancellable=True
+            )
+            self._set_state(PetState.COMPOSING)
+            self._resolve_confirm(confirmed=False)
+            return
+        if self._status_block is not None:
+            self._status_block.set_text("正在读取屏幕", animated=True, cancellable=True)
+        hint = getattr(self, "_perception_hint", None)
+        if hint is not None:
+            hint.label.setText("👀 已允许，正在读取当前屏幕")
+            self._perception_hint = None
+        self._set_state(PetState.ACTING)
+        self._resolve_confirm(confirmed=True)
 
     def _resolve_confirm(self, confirmed: bool = None, cancelled: bool = None) -> None:
         rid, self._confirm_id = self._confirm_id, None

@@ -3,10 +3,10 @@
     "file": "evidence-listening.png",
     "state": "LISTENING",
     "bubble": {
-      "x": 345,
-      "y": 484,
-      "width": 400,
-      "height": 153
+      "x": 373,
+      "y": 561,
+      "width": 372,
+      "height": 76
     },
     "pet": {
       "x": 663,
@@ -17,22 +17,23 @@
     "bubble_pet_gap": 8,
     "tail_center_delta_x": 0,
     "layout": {
-      "width": 400,
-      "height": 153,
+      "width": 372,
+      "height": 76,
       "flow_content_height": 0,
       "scroll_visible": false,
       "input_visible": true,
-      "input_top_gap": 1
+      "input_top_gap": 4,
+      "mode": "input"
     }
   },
   {
     "file": "evidence-acknowledging.png",
     "state": "ACKNOWLEDGING",
     "bubble": {
-      "x": 345,
-      "y": 490,
-      "width": 400,
-      "height": 147
+      "x": 453,
+      "y": 573,
+      "width": 292,
+      "height": 64
     },
     "pet": {
       "x": 663,
@@ -43,22 +44,23 @@
     "bubble_pet_gap": 8,
     "tail_center_delta_x": 0,
     "layout": {
-      "width": 400,
-      "height": 147,
-      "flow_content_height": 91,
+      "width": 292,
+      "height": 64,
+      "flow_content_height": 27,
       "scroll_visible": true,
       "input_visible": false,
-      "input_top_gap": 0
+      "input_top_gap": 0,
+      "mode": "progress"
     }
   },
   {
     "file": "evidence-composing.png",
     "state": "COMPOSING",
     "bubble": {
-      "x": 345,
-      "y": 490,
-      "width": 400,
-      "height": 147
+      "x": 453,
+      "y": 573,
+      "width": 292,
+      "height": 64
     },
     "pet": {
       "x": 663,
@@ -69,22 +71,23 @@
     "bubble_pet_gap": 8,
     "tail_center_delta_x": 0,
     "layout": {
-      "width": 400,
-      "height": 147,
-      "flow_content_height": 91,
+      "width": 292,
+      "height": 64,
+      "flow_content_height": 27,
       "scroll_visible": true,
       "input_visible": false,
-      "input_top_gap": 0
+      "input_top_gap": 0,
+      "mode": "progress"
     }
   },
   {
     "file": "evidence-presenting.png",
     "state": "PRESENTING",
     "bubble": {
-      "x": 345,
-      "y": 460,
-      "width": 400,
-      "height": 177
+      "x": 365,
+      "y": 494,
+      "width": 380,
+      "height": 143
     },
     "pet": {
       "x": 663,
@@ -95,22 +98,23 @@
     "bubble_pet_gap": 8,
     "tail_center_delta_x": 0,
     "layout": {
-      "width": 400,
-      "height": 177,
+      "width": 380,
+      "height": 143,
       "flow_content_height": 121,
       "scroll_visible": true,
       "input_visible": false,
-      "input_top_gap": 0
+      "input_top_gap": 0,
+      "mode": "result"
     }
   },
   {
     "file": "evidence-acting.png",
-    "state": "PERCEIVING",
+    "state": "ACTING",
     "bubble": {
-      "x": 345,
-      "y": 363,
-      "width": 400,
-      "height": 274
+      "x": 353,
+      "y": 555,
+      "width": 392,
+      "height": 82
     },
     "pet": {
       "x": 663,
@@ -121,22 +125,23 @@
     "bubble_pet_gap": 8,
     "tail_center_delta_x": 0,
     "layout": {
-      "width": 400,
-      "height": 274,
-      "flow_content_height": 218,
+      "width": 392,
+      "height": 82,
+      "flow_content_height": 58,
       "scroll_visible": true,
       "input_visible": false,
-      "input_top_gap": 0
+      "input_top_gap": 0,
+      "mode": "action"
     }
   },
   {
     "file": "evidence-perceiving.png",
     "state": "PERCEIVING",
     "bubble": {
-      "x": 345,
-      "y": 363,
-      "width": 400,
-      "height": 274
+      "x": 353,
+      "y": 461,
+      "width": 392,
+      "height": 176
     },
     "pet": {
       "x": 663,
@@ -147,22 +152,23 @@
     "bubble_pet_gap": 8,
     "tail_center_delta_x": 0,
     "layout": {
-      "width": 400,
-      "height": 274,
-      "flow_content_height": 218,
+      "width": 392,
+      "height": 176,
+      "flow_content_height": 154,
       "scroll_visible": true,
       "input_visible": false,
-      "input_top_gap": 0
+      "input_top_gap": 0,
+      "mode": "action"
     }
   },
   {
     "file": "evidence-error.png",
-    "state": "LISTENING",
+    "state": "ERROR",
     "bubble": {
-      "x": 345,
-      "y": 473,
-      "width": 400,
-      "height": 164
+      "x": 365,
+      "y": 507,
+      "width": 380,
+      "height": 130
     },
     "pet": {
       "x": 663,
@@ -173,22 +179,23 @@
     "bubble_pet_gap": 8,
     "tail_center_delta_x": 0,
     "layout": {
-      "width": 400,
-      "height": 164,
+      "width": 380,
+      "height": 130,
       "flow_content_height": 108,
       "scroll_visible": true,
       "input_visible": false,
-      "input_top_gap": 0
+      "input_top_gap": 0,
+      "mode": "error"
     }
   },
   {
     "file": "evidence-cancelled.png",
     "state": "CANCELLED",
     "bubble": {
-      "x": 345,
-      "y": 416,
-      "width": 400,
-      "height": 221
+      "x": 365,
+      "y": 469,
+      "width": 380,
+      "height": 168
     },
     "pet": {
       "x": 663,
@@ -199,12 +206,13 @@
     "bubble_pet_gap": 8,
     "tail_center_delta_x": 0,
     "layout": {
-      "width": 400,
-      "height": 221,
-      "flow_content_height": 165,
+      "width": 380,
+      "height": 168,
+      "flow_content_height": 146,
       "scroll_visible": true,
       "input_visible": false,
-      "input_top_gap": 0
+      "input_top_gap": 0,
+      "mode": "result"
     }
   }
 ]

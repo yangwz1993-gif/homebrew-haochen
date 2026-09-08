@@ -99,13 +99,18 @@ class PetWindow(QWidget):
             if not p.exists():
                 log.warning("pet asset missing: %s", p)
                 return None
+            dpr = max(1.0, float(self.devicePixelRatioF()))
+            physical_size = round(self._size * dpr)
             pm = QPixmap(str(p)).scaled(
-                self._size, self._size,
+                physical_size, physical_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation)
             if pm.isNull():
                 log.warning("pet asset load failed: %s", p)
                 return None
+            # QLabel 仍占 96×96 逻辑像素，但 Retina 屏使用 2× 物理采样，避免先缩成
+            # 96px 再由系统放大；人物风格不变，只提升眼镜、肤色和轮廓的清晰度。
+            pm.setDevicePixelRatio(dpr)
             self._pixmaps[pose] = pm
         return self._pixmaps[pose]
 
