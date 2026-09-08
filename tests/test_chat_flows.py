@@ -94,6 +94,77 @@ def test_plain_assistant_history_is_rendered_as_visible_conclusion(qtbot, tmp_pa
     assert answers[0].view.toPlainText() == "好"
 
 
+def test_aborted_history_is_clearly_marked_as_incomplete(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+
+    window._render_history({
+        "success": True,
+        "data": {"messages": [
+            {"role": "user", "content": [{"type": "text", "text": "写长文"}]},
+            {"role": "assistant", "stopReason": "aborted", "content": [
+                {"type": "text", "text": "【brief】概览【/brief】【detail】正文停在时空【/detail】"},
+            ]},
+        ]},
+    })
+
+    partials = [b for b in window.findChildren(AssistantBubble) if b.kind == "partial"]
+    assert len(partials) == 1
+    assert partials[0].tag is not None
+    assert partials[0].tag.text() == "未完成内容"
+    assert partials[0].view.toPlainText() == "正文停在时空"
+    statuses = [s.label.text() for s in window.findChildren(window_module.StatusBubble)]
+    assert any("以下是停止前" in text for text in statuses)
+    assert any("上述内容未完成" in text for text in statuses)
+
+
+def test_aborted_history_without_output_still_shows_stopped_status(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+
+    window._render_history({"success": True, "data": {"messages": [
+        {"role": "assistant", "stopReason": "aborted", "content": []},
+    ]}})
+
+    assert any("已停止生成" in s.label.text() for s in window.findChildren(window_module.StatusBubble))
+    assert not window.findChildren(AssistantBubble)
+
+
+def test_live_aborted_turn_never_renders_a_normal_conclusion(qtbot, tmp_path: Path) -> None:
+    window, client = make_window(qtbot, tmp_path)
+    window._clear_flow()
+
+    window.input.setPlainText("写长文")
+    window._on_send()
+    request_id = window.ctrl._answer_request_id
+    client.response.emit({"id": request_id, "success": True})
+    getattr(client, "event").emit({"type": "message_end", "message": {"role": "user"}})
+    window._on_stop()
+    getattr(client, "event").emit({"type": "agent_end", "messages": [
+        {"role": "assistant", "stopReason": "aborted", "content": [
+            {"type": "text", "text": "【brief】完整概览【/brief】【detail】只写了一半【/detail】"},
+        ]},
+    ]})
+
+    answers = window.findChildren(AssistantBubble)
+    assert any(b.kind == "partial" and "只写了一半" in b.view.toPlainText() for b in answers)
+    assert not any(b.kind == "summary" for b in answers)
+
+
+def test_private_resume_context_is_hidden_from_user_history(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    payload = (
+        "<haochen_resume_context>\n半截上下文\n</haochen_resume_context>\n"
+        "<haochen_user_message>\n继续说"
+    )
+
+    window._render_history({"success": True, "data": {"messages": [
+        {"role": "user", "content": [{"type": "text", "text": payload}]},
+    ]}})
+
+    users = window.findChildren(UserBubble)
+    assert len(users) == 1
+    assert users[0].view.toPlainText() == "继续说"
+
+
 def test_render_history_collapses_identical_error_retries(qtbot, tmp_path: Path) -> None:
     window, _client = make_window(qtbot, tmp_path)
     pair = [

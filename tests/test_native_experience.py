@@ -41,6 +41,7 @@ def test_menu_bar_provides_required_native_entries(qtbot) -> None:
     shell = SimpleNamespace(
         show_chat=lambda: calls.append("chat"),
         show_settings=lambda: calls.append("settings"),
+        new_session=lambda: calls.append("new"),
         chat=SimpleNamespace(_new_session=lambda: calls.append("new")),
     )
     bar = menu_module.install_menu_bar(QApplication.instance(), shell)
@@ -60,9 +61,9 @@ def test_menu_bar_provides_required_native_entries(qtbot) -> None:
     for label in ("打开对话", "设置…", "新会话", "关于 haochen", "退出 haochen"):
         find(label)
 
-    assert find("打开对话").shortcut().toString() == "Meta+1"
-    assert find("设置…").shortcut().toString() == "Meta+,"
-    assert find("退出 haochen").shortcut().toString() == "Meta+Q"
+    assert find("打开对话").shortcut().toString() == "Ctrl+1"
+    assert find("设置…").shortcut().toString() == "Ctrl+,"
+    assert find("退出 haochen").shortcut().toString() == "Ctrl+Q"
 
     find("打开对话").trigger()
     find("设置…").trigger()

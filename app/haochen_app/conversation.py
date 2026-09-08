@@ -47,6 +47,12 @@ _CHAR_LIMIT = re.compile(
     r"([0-9]{1,3}|[一二两三四五六七八九十零〇]{1,4})\s*(?:个)?字"
 )
 _VISIBLE_MARKDOWN = re.compile(r"(?:\*\*|__|`|^#{1,6}\s*|^[-*•]\s+)", re.M)
+_FOLLOW_UP_AFTER_ABORT = re.compile(
+    r"(?:继续|接着|刚才|方才|上面|前面|没说完|未完成|停在|停到|从那里|从这[里儿])"
+)
+_RESUME_CONTEXT_PREFIX = "<haochen_resume_context>"
+_RESUME_CONTEXT_SUFFIX = "</haochen_resume_context>"
+_VISIBLE_USER_MARKER = "<haochen_user_message>"
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +108,14 @@ def humanize_error(text: str) -> str:
 
 def strip_tags(text: str) -> str:
     return _ANY_TAG.sub("", text or "").strip()
+
+
+def visible_user_text(text: str) -> str:
+    """Hide the private continuation context injected after an aborted turn."""
+    raw = text or ""
+    if raw.startswith(_RESUME_CONTEXT_PREFIX) and _VISIBLE_USER_MARKER in raw:
+        return raw.split(_VISIBLE_USER_MARKER, 1)[1].lstrip("\n")
+    return raw
 
 
 def parse_paired(text: str, kind: str) -> str:
@@ -310,6 +324,7 @@ class ConversationController(QObject):
     request_accepted = pyqtSignal(str)
     request_committed = pyqtSignal(str)
     request_failed = pyqtSignal(str, str)
+    turn_aborted = pyqtSignal(str)   # 已停止回合的可见残片，供 UI 明确标注
 
     def __init__(self, client: EngineClient, parent=None):
         super().__init__(parent)
@@ -322,6 +337,7 @@ class ConversationController(QObject):
         self._answer_accepted = False
         self._user_message_seen = False
         self._current_user_text = ""
+        self._resume_context = ""
         client.event.connect(self._on_event)
         client.response.connect(self._on_response)
         client.crashed.connect(self._on_crashed)
@@ -339,15 +355,36 @@ class ConversationController(QObject):
         self._current_user_text = text
         self.busy_changed.emit(True)
         try:
-            request_id = self.client.prompt(text)
+            request_id = self.client.prompt(self._prompt_with_resume_context(text))
         except RuntimeError as exc:
             self._finish_error(str(exc))
             return None
+        self._resume_context = ""
         self._requests[request_id] = "answer"
         self._answer_request_id = request_id
         self._answer_accepted = False
         self._user_message_seen = False
         return request_id
+
+    def remember_aborted_context(self, text: str) -> None:
+        """Remember the latest partial answer for one immediate referential follow-up."""
+        cleaned = sanitize_runtime_details(strip_tags(text)).strip()
+        self._resume_context = cleaned[-1600:] if cleaned else ""
+
+    def clear_resume_context(self) -> None:
+        self._resume_context = ""
+
+    def _prompt_with_resume_context(self, user_text: str) -> str:
+        context = self._resume_context
+        if not context or not _FOLLOW_UP_AFTER_ABORT.search(user_text):
+            return user_text
+        return (
+            f"{_RESUME_CONTEXT_PREFIX}\n"
+            "上一条回答被用户主动停止，模型历史可能不会自动包含它。"
+            "请把下面残片作为最近上下文，只回答用户的新问题，不要提及本标签。\n"
+            f"{context}\n{_RESUME_CONTEXT_SUFFIX}\n"
+            f"{_VISIBLE_USER_MARKER}\n{user_text}"
+        )
 
     def abort(self) -> None:
         if self.busy:
@@ -412,7 +449,7 @@ class ConversationController(QObject):
                 self._finish_error(err)
                 return
             if self._phase == "answer":
-                self._end_answer_round(msgs)
+                self._end_answer_round(msgs, stop)
 
     def _final_text(self, msgs: list) -> str:
         """agent_end 携带的完整消息里取最后一条 assistant 文本（比流式 buffer 可靠）。"""
@@ -424,12 +461,17 @@ class ConversationController(QObject):
                 return "".join(parts)
         return ""
 
-    def _end_answer_round(self, msgs: list) -> None:
+    def _end_answer_round(self, msgs: list, stop_reason: str = "stop") -> None:
         raw = self._final_text(msgs) or self._answer_buf
         result = apply_user_output_constraints(
             self._current_user_text, parse_turn_result(raw)
         )
         self._answer_text = result.detail
+        if stop_reason in ("aborted", "cancelled"):
+            self.remember_aborted_context(result.detail or result.brief)
+            self.turn_aborted.emit(result.detail or result.brief)
+        else:
+            self.clear_resume_context()
         self.answer_done.emit(result.detail)
         self.summarizing.emit()
         self._phase = ""

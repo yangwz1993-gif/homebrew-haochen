@@ -216,7 +216,7 @@ class UserBubble(_BubbleFrame):
 
 class AssistantBubble(_BubbleFrame):
     """haochen 气泡：居左，color-surface 卡面浮在 color-bg 底上（v0.1.4 §2）。
-    kind: answer（详答）/ summary（短结，结论在详答之后）。"""
+    kind: answer（详答）/ summary（短结）/ partial（用户停止后的残片）。"""
 
     def __init__(self, kind: str = "answer", parent=None):
         super().__init__(C["surface"], parent)
@@ -225,12 +225,18 @@ class AssistantBubble(_BubbleFrame):
         lay.setSpacing(4)
         self.kind = kind
         self.tag: QLabel | None = None
-        if kind in ("summary", "answer"):
-            label = "结论" if kind == "summary" else "依据与细节"
+        if kind in ("summary", "answer", "partial"):
+            label = {
+                "summary": "结论",
+                "answer": "依据与细节",
+                "partial": "未完成内容",
+            }[kind]
+            highlighted = kind == "summary"
+            warning = kind == "partial"
             self.tag = QLabel(label)
             self.tag.setStyleSheet(f"""
-                color: {C['bg'] if kind == 'summary' else C['ink_soft']};
-                background: {C['accent'] if kind == 'summary' else C['bg']};
+                color: {C['bg'] if highlighted else (C['warn'] if warning else C['ink_soft'])};
+                background: {C['accent'] if highlighted else C['bg']};
                 border-radius: 6px; padding: 1px 8px;
                 font-size: {FONT['body_sm']}px; font-weight: bold;
             """)

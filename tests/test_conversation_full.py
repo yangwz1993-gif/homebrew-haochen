@@ -113,6 +113,38 @@ def test_error_stop_reason_finishes_round_with_error() -> None:
     assert not controller.busy
 
 
+def test_aborted_turn_is_exposed_and_supplies_one_referential_follow_up() -> None:
+    client = FakeClient()
+    controller = ConversationController(client)
+    aborted: list[str] = []
+    controller.turn_aborted.connect(aborted.append)
+
+    controller.send("写一篇长文")
+    client_event_emit(client, {"type": "agent_end", "messages": [
+        user_message("写一篇长文"),
+        assistant_message("【brief】概览【/brief】【detail】正文停在时空弯曲【/detail】", "aborted"),
+    ]})
+    assert aborted == ["正文停在时空弯曲"]
+
+    controller.send("继续，用一句话告诉我刚才停在哪里")
+    assert "正文停在时空弯曲" in client.sent[-1]
+    assert "继续，用一句话告诉我刚才停在哪里" in client.sent[-1]
+    assert conversation.visible_user_text(client.sent[-1]) == "继续，用一句话告诉我刚才停在哪里"
+
+
+def test_aborted_context_is_not_injected_into_unrelated_next_question() -> None:
+    client = FakeClient()
+    controller = ConversationController(client)
+    controller.send("写长文")
+    client_event_emit(client, {"type": "agent_end", "messages": [
+        assistant_message("半截内容", "aborted"),
+    ]})
+
+    controller.send("今天天气如何")
+
+    assert client.sent[-1] == "今天天气如何"
+
+
 def test_send_while_busy_fails_without_touching_engine() -> None:
     client = FakeClient()
     controller = ConversationController(client)

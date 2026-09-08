@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 from ..app_tracking import write_last_user_text
@@ -50,6 +50,7 @@ class PetApp(QObject):
 
     state_changed = pyqtSignal(str)         # PetState.value
     expand_detail_answer = pyqtSignal(str)  # 旧 P4 接口（详情改走 detail_opener 注入，不再 emit）
+    chat_requested = pyqtSignal()           # 右键「打开完整对话」
     settings_requested = pyqtSignal()       # 右键「设置…」
     credential_validation = pyqtSignal(bool, str)  # 最近一次真实请求是否证明当前凭据可用
     read_permission_requested = pyqtSignal()  # 仅用户明确点「读吧」后请求系统权限
@@ -64,6 +65,7 @@ class PetApp(QObject):
         self._last_user_text = ""
         self._retry_attempt = 0
         self._session_needs_title = True
+        self._pending_session_title = ""
         self._known_session_path = ""
         self._aborted = False
         self._status_block = None
@@ -83,6 +85,8 @@ class PetApp(QObject):
         self._name_greeted = False
         # 壳层注入：callable(source_rect: QRect)，把「展开详细」路由到 ChatWindow
         self.detail_opener = None
+        # 壳层注入：统一由 ChatWindow 创建新会话，保证侧栏能跟踪全部会话。
+        self.new_session_opener = None
 
         # 引擎 + 单回合分层结果（共享模块）；P4：注入共享 client/supervisor
         self.supervisor = supervisor
@@ -109,6 +113,7 @@ class PetApp(QObject):
         self.bubble = BubbleWindow()
         self._result_timer = QTimer(self)
         self._result_timer.setSingleShot(True)
+        self._result_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._result_timer.setInterval(RESULT_AUTO_DISMISS_MS)
         self._result_timer.timeout.connect(self._dismiss_result_if_idle)
         self._ack_timer = QTimer(self)
@@ -125,6 +130,7 @@ class PetApp(QObject):
 
         # ── L0 桌宠 ──
         self.pet.summon_requested.connect(self._toggle_bubble)
+        self.pet.open_chat_requested.connect(self.chat_requested.emit)
         self.pet.new_session_requested.connect(self.new_session)
         self.pet.settings_requested.connect(self._on_settings)
         self.pet.quit_requested.connect(self.quit)
@@ -450,11 +456,7 @@ class PetApp(QObject):
         self._last_user_text = item.text
         write_last_user_text(self.client.home, item.text)
         if self._session_needs_title:
-            try:
-                self.client.set_session_name(make_session_title(item.text))
-            except RuntimeError:
-                pass
-            self._session_needs_title = False
+            self._pending_session_title = make_session_title(item.text)
         status_text = (
             f"正在重试（第 {self._retry_attempt} 次）"
             if self._retry_attempt else STATUS_LINE[PetState.ACKNOWLEDGING]
@@ -515,6 +517,17 @@ class PetApp(QObject):
         if request_id in self._queue_requests:
             self._queue_requests.pop(request_id, None)
             self.coordinator.acknowledge(request_id)
+        self._apply_pending_session_title()
+
+    def _apply_pending_session_title(self) -> None:
+        """Name only after the first user message created a real session file."""
+        if not self._pending_session_title:
+            return
+        try:
+            self.client.set_session_name(self._pending_session_title)
+        except RuntimeError:
+            return
+        self._session_needs_title = False
 
     def _on_request_accepted(self, _request_id: str) -> None:
         """只有引擎确认接单后才进入组织阶段，避免用计时器伪造进度。"""
@@ -668,10 +681,19 @@ class PetApp(QObject):
 
     def _on_session_state(self, data: dict) -> None:
         path = str(data.get("sessionFile") or "")
-        if not path or path == self._known_session_path:
+        if not path:
             return
+        changed_session = path != self._known_session_path
         self._known_session_path = path
-        self._session_needs_title = (data.get("sessionName") or "") in ("", "新会话")
+        name = str(data.get("sessionName") or "")
+        if self._pending_session_title and name == self._pending_session_title:
+            self._pending_session_title = ""
+        elif self._pending_session_title and name in ("", "新会话"):
+            # get_state can race the rename response at agent_end; retry now that
+            # the supervisor has confirmed the concrete session file.
+            self._apply_pending_session_title()
+        if changed_session and not self._pending_session_title:
+            self._session_needs_title = name in ("", "新会话")
 
     # ── 读屏确认 / 感知提示 ───────────────────────────────────
 
@@ -769,7 +791,12 @@ class PetApp(QObject):
         self._last_user_text = ""
         self._retry_attempt = 0
         self._session_needs_title = True
-        self.client.new_session()
+        self._pending_session_title = ""
+        self.ctrl.clear_resume_context()
+        if self.new_session_opener is not None:
+            self.new_session_opener()
+        else:
+            self.client.new_session()
         self._set_state(PetState.LISTENING if self.bubble.summoned else PetState.IDLE)
 
     def _on_settings(self) -> None:

@@ -45,18 +45,19 @@ def install_menu_bar(app: QApplication, shell: AppShell):
     menu.setObjectName("haochen-app-menu")
 
     open_chat = QAction("打开对话", menu)
-    open_chat.setShortcut(QKeySequence("Meta+1"))
+    # Qt on macOS maps ControlModifier to the native Command key.
+    open_chat.setShortcut(QKeySequence("Ctrl+1"))
     open_chat.triggered.connect(shell.show_chat)
     menu.addAction(open_chat)
 
     settings = QAction("设置…", menu)
-    settings.setShortcut(QKeySequence("Meta+,"))
+    settings.setShortcut(QKeySequence("Ctrl+,"))
     settings.triggered.connect(shell.show_settings)
     menu.addAction(settings)
 
     new_session = QAction("新会话", menu)
-    new_session.setShortcut(QKeySequence("Meta+N"))
-    new_session.triggered.connect(shell.chat._new_session)
+    new_session.setShortcut(QKeySequence("Ctrl+N"))
+    new_session.triggered.connect(shell.new_session)
     menu.addAction(new_session)
 
     menu.addSeparator()
@@ -69,7 +70,7 @@ def install_menu_bar(app: QApplication, shell: AppShell):
     menu.addSeparator()
 
     quit_action = QAction("退出 haochen", menu)
-    quit_action.setShortcut(QKeySequence("Meta+Q"))
+    quit_action.setShortcut(QKeySequence("Ctrl+Q"))
     quit_action.setMenuRole(QAction.MenuRole.QuitRole)
     quit_action.triggered.connect(app.quit)
     menu.addAction(quit_action)

@@ -44,6 +44,7 @@ from ..conversation import (
     same_visible_text,
     sanitize_runtime_details,
     strip_tags,
+    visible_user_text,
 )
 from ..engine_client import EngineClient, delete_session, restore_session
 from ..secure_storage import atomic_write_private
@@ -152,6 +153,7 @@ class ChatWindow(QWidget):
         self._stream_buf = ""
         self._stream_dirty = False      # 节流窗口内已有新增量待渲染
         self._pending_answer = ""       # brief 到达后再按“结论→详情”落位
+        self._turn_aborted = False       # 中止回合绝不能伪装成正常完成答案
         self._stream_timer: QTimer | None = None
         self._follow_stream = True      # 用户是否在底部（决定是否自动跟随）
         self._thinking_row: BubbleRow | None = None
@@ -311,6 +313,7 @@ class ChatWindow(QWidget):
             sup.restarting.connect(self._on_sup_restarting)
             sup.restarted.connect(self._on_sup_restarted)
             sup.restart_failed.connect(self._on_sup_restart_failed)
+            sup.state_changed.connect(self._on_supervisor_state)
             self.client.event.connect(self._on_foreign_turn_end)
         else:
             self.client.crashed.connect(self._on_crash)
@@ -335,6 +338,7 @@ class ChatWindow(QWidget):
         self.ctrl.busy_changed.connect(self._on_busy_changed)
         self.ctrl.request_committed.connect(self._on_request_committed)
         self.ctrl.request_failed.connect(self._on_request_failed)
+        self.ctrl.turn_aborted.connect(self._on_turn_aborted)
         if self._supervisor is not None:
             self._supervisor.register(self.ctrl)
 
@@ -379,6 +383,10 @@ class ChatWindow(QWidget):
             self._refresh_sidebar()
             if changed_session:
                 self._rpc(self.client.get_messages, self._render_history)
+
+    def _on_supervisor_state(self, data: dict) -> None:
+        """Keep hidden-window session titles in sync with pet-originated turns."""
+        self._on_state({"success": True, "data": data})
 
     # ── 对话流渲染 ─────────────────────────────────────────────
 
@@ -475,6 +483,7 @@ class ChatWindow(QWidget):
         return self.coordinator.texts("chat")
 
     def _send_queued_item(self, item: QueueItem) -> None:
+        self._turn_aborted = False
         self._last_user_text = item.text
         # 仅落盘派生的看图意图 boolean，绝不持久化用户原文
         write_last_user_text(self.client.home, item.text)
@@ -489,6 +498,8 @@ class ChatWindow(QWidget):
     def _on_stop(self) -> None:
         if self._confirm:
             self._answer_confirm(None)        # Esc/停止时取消确认（契约 §5.3 cancelled）
+        if self.ctrl.busy:
+            self._turn_aborted = True
         self.ctrl.abort()
 
     def keyPressEvent(self, ev) -> None:
@@ -794,6 +805,9 @@ class ChatWindow(QWidget):
             self._stream_row.content.set_text(answer)
         QTimer.singleShot(0, self._maybe_follow)
 
+    def _on_turn_aborted(self, _partial: str) -> None:
+        self._turn_aborted = True
+
     def _on_summarizing(self) -> None:
         self._status_row = self._add_row(StatusBubble("正在提炼结论", "thinking"), "left")
 
@@ -808,6 +822,20 @@ class ChatWindow(QWidget):
         if self._stream_timer is not None:
             self._stream_timer.stop()
             self._stream_timer = None
+        if self._turn_aborted:
+            self._add_row(
+                StatusBubble("已停止生成，以下是停止前的未完成内容", "warn"), "left"
+            )
+            partial = self._pending_answer.strip() or summary.strip()
+            if partial:
+                bubble = AssistantBubble("partial")
+                bubble.set_text(partial)
+                self._add_row(bubble, "left")
+                self._add_row(StatusBubble("已停止生成 · 上述内容未完成", "warn"), "left")
+            self._pending_answer = ""
+            self._turn_aborted = False
+            QTimer.singleShot(0, self._maybe_follow)
+            return
         if summary:
             bubble = AssistantBubble("summary")
             bubble.set_text(summary)
@@ -826,6 +854,7 @@ class ChatWindow(QWidget):
         self._stream_buf = ""
         self._stream_dirty = False
         self._pending_answer = ""
+        self._turn_aborted = False
         if self._stream_timer is not None:
             self._stream_timer.stop()
             self._stream_timer = None
@@ -1089,7 +1118,8 @@ class ChatWindow(QWidget):
                 if text.startswith(SUMMARY_KICK_PREFIX):
                     continue          # 契约 §4.4：summary 踢令永不渲染
                 if text:
-                    self._add_row(UserBubble(text), "right")
+                    self.ctrl.clear_resume_context()
+                    self._add_row(UserBubble(visible_user_text(text)), "right")
             elif role == "assistant":
                 self._render_history_assistant(msg)
             elif role == "toolResult":
@@ -1143,6 +1173,19 @@ class ChatWindow(QWidget):
             return
         text = "".join(c.get("text", "") for c in msg.get("content", [])
                        if c.get("type") == "text")
+        if msg.get("stopReason") in ("aborted", "cancelled"):
+            result = parse_turn_result(text)
+            partial = result.detail or result.brief or strip_tags(text)
+            self._add_row(
+                StatusBubble("已停止生成，以下是停止前的未完成内容", "warn"), "left"
+            )
+            if partial:
+                bubble = AssistantBubble("partial")
+                bubble.set_text(partial)
+                self._add_row(bubble, "left")
+                self.ctrl.remember_aborted_context(partial)
+                self._add_row(StatusBubble("已停止生成 · 上述内容未完成", "warn"), "left")
+            return
         if not text:
             return
         answer = parse_paired(text, "answer")
@@ -1179,6 +1222,8 @@ class ChatWindow(QWidget):
     def _clear_flow(self) -> None:
         self._thinking_row = self._status_row = self._stream_row = None
         self._pending_answer = ""
+        self._turn_aborted = False
+        self.ctrl.clear_resume_context()
         self._confirm = None
         self._tool_cards.clear()
         self._queue_banners.clear()

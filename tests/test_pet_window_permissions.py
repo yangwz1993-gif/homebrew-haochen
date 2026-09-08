@@ -239,9 +239,11 @@ def test_pet_window_single_click_summons_without_double_click_duplicate(qtbot, t
 def test_pet_window_context_menu_emits_actions(qtbot, tmp_path: Path) -> None:
     window = make_pet_window(qtbot, tmp_path)
     new_sessions: list[bool] = []
+    chats: list[bool] = []
     settings: list[bool] = []
     quit_requested: list[bool] = []
     window.new_session_requested.connect(lambda: new_sessions.append(True))
+    window.open_chat_requested.connect(lambda: chats.append(True))
     window.settings_requested.connect(lambda: settings.append(True))
     window.quit_requested.connect(lambda: quit_requested.append(True))
 
@@ -261,4 +263,6 @@ def test_pet_window_context_menu_emits_actions(qtbot, tmp_path: Path) -> None:
     finally:
         QMenu.exec = original_exec
 
-    assert len(triggered) >= 5  # 菜单已构建（唤起/打开/新会话/设置/退出）
+    labels = [action.text() for action in triggered]
+    assert "打开完整对话" in labels
+    assert len(triggered) >= 6  # 唤起/气泡/完整对话/新会话/设置/退出

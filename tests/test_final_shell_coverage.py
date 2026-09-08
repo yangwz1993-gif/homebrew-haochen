@@ -133,6 +133,23 @@ def test_show_chat_and_settings_raise_windows(qtbot, tmp_path: Path) -> None:
     # offscreen raise() 不可用但不应崩溃
 
 
+def test_shell_routes_pet_chat_and_new_session_actions(qtbot, tmp_path: Path) -> None:
+    shell = AppShell(mock=True, home=tmp_path)
+    qtbot.addWidget(shell.chat)
+    qtbot.addWidget(shell.pet.pet)
+    qtbot.addWidget(shell.pet.bubble)
+    new_calls: list[bool] = []
+    shell.chat._new_session = lambda: new_calls.append(True)
+    shell.pet.new_session_opener = shell.chat._new_session
+
+    shell.new_session()
+    assert new_calls == [True]
+    assert shell.pet._session_needs_title is True
+
+    shell.pet.chat_requested.emit()
+    assert shell.chat.isVisible()
+
+
 def test_normal_chat_hides_pet_and_close_restores_it(qtbot, tmp_path: Path) -> None:
     shell = AppShell(mock=True, home=tmp_path)
     qtbot.addWidget(shell.chat)

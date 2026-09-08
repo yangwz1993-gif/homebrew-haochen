@@ -54,6 +54,8 @@ class AppShell:
 
         # 双入口联动：气泡「展开详细」→ 对话窗口从气泡 rect 动画展开（v0.1.4 hotfix）
         self.pet.detail_opener = self.chat.open_from_bubble
+        self.pet.new_session_opener = self.chat._new_session
+        self.pet.chat_requested.connect(self.show_chat)
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
         self.chat.normal_closed.connect(self._restore_pet_after_chat)
         self.pet.settings_requested.connect(self.show_settings)
@@ -101,6 +103,10 @@ class AppShell:
             self.pet.bubble.dismiss()
         self.pet.pet.hide()
         self.chat.show_normal()
+
+    def new_session(self) -> None:
+        """Create through the pet state reset and the chat session tracker exactly once."""
+        self.pet.new_session()
 
     def _restore_pet_after_chat(self) -> None:
         self.pet.pet.show()

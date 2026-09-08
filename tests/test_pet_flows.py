@@ -91,8 +91,32 @@ def test_first_pet_message_names_new_session(qtbot, tmp_path: Path) -> None:
     client.set_session_name = lambda name: names.append(name) or "name-1"
 
     pet.send("2+2 等于几？只给答案。")
+    assert names == []  # 会话文件尚未由首条 user message 创建
+    request_id = pet.ctrl._answer_request_id
+    client.response.emit({"id": request_id, "success": True})
+    getattr(client, "event").emit({"type": "message_end", "message": {"role": "user"}})
 
     assert names == ["2+2 等于几？只给答案。"]
+    assert pet._session_needs_title is False
+
+
+def test_result_timer_uses_precise_twenty_second_dwell(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+
+    assert pet._result_timer.timerType() is Qt.TimerType.PreciseTimer
+    assert pet._result_timer.interval() == 20_000
+
+
+def test_pending_pet_title_retries_after_session_path_is_confirmed(qtbot, tmp_path: Path) -> None:
+    pet, client = make_pet(qtbot, tmp_path)
+    names: list[str] = []
+    client.set_session_name = lambda name: names.append(name) or f"name-{len(names)}"
+    pet._pending_session_title = "彩虹为什么出现"
+    pet._session_needs_title = True
+
+    pet._on_session_state({"sessionFile": "/sessions/new.jsonl", "sessionName": "新会话"})
+
+    assert names == ["彩虹为什么出现"]
     assert pet._session_needs_title is False
 
 

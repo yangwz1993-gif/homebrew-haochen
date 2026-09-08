@@ -38,6 +38,7 @@ class PetWindow(QWidget):
     """L0 桌面宠物本体。"""
 
     summon_requested = pyqtSignal()      # 双击 / 热键唤起（或收起）气泡
+    open_chat_requested = pyqtSignal()   # 直接打开完整对话窗口
     new_session_requested = pyqtSignal()
     settings_requested = pyqtSignal()    # 设置占位（P4 接配置面板）
     quit_requested = pyqtSignal()
@@ -269,6 +270,9 @@ class PetWindow(QWidget):
         act_open = QAction("打开气泡", self)
         act_open.triggered.connect(self.summon_requested.emit)
         menu.addAction(act_open)
+        act_chat = QAction("打开完整对话", self)
+        act_chat.triggered.connect(self.open_chat_requested.emit)
+        menu.addAction(act_chat)
         menu.addSeparator()
         act_new = QAction("新会话", self)
         act_new.triggered.connect(self.new_session_requested.emit)
