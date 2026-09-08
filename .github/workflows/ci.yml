@@ -38,7 +38,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: .python-version
+          # Hosted arm64 macOS images don't necessarily carry every patch pinned
+          # for local development; CI enforces the project's 3.12 minor line.
+          python-version: "3.12"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
