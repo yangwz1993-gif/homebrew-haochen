@@ -24,7 +24,7 @@ from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 from ..app_tracking import write_last_user_text
-from ..conversation import ConversationController
+from ..conversation import ConversationController, make_session_title
 from ..engine_client import EngineClient
 from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
@@ -62,6 +62,9 @@ class PetApp(QObject):
         self._last_answer = ""
         self._last_summary = ""
         self._last_user_text = ""
+        self._retry_attempt = 0
+        self._session_needs_title = True
+        self._known_session_path = ""
         self._aborted = False
         self._status_block = None
         self._perception_hint = None
@@ -93,6 +96,7 @@ class PetApp(QObject):
             supervisor.restarting.connect(self._on_sup_restarting)
             supervisor.restarted.connect(self._on_sup_restarted)
             supervisor.restart_failed.connect(self._on_sup_restart_failed)
+            supervisor.state_changed.connect(self._on_session_state)
 
         # 热键（不可用时降级为仅双击，README 有说明）
         ok, hint = install_hotkey(self._toggle_bubble)
@@ -337,9 +341,12 @@ class PetApp(QObject):
         y_above = p.y() - b.height() - T.BUBBLE_PET_GAP  # 气泡底含尾巴，间隙即不压人物
         if y_above >= screen.top() + 8:
             y = y_above
+            tail_side = "bottom"
         else:  # 上方空间不足 → 放桌宠下方
             y = p.y() + p.height() + T.BUBBLE_PET_GAP
+            tail_side = "top"
         b.move(x, y)
+        b.set_tail_anchor(p.x() + p.width() // 2, tail_side)
 
     def _on_pet_moved(self, _x: int, _y: int) -> None:
         """拖人物 → 气泡实时跟随，保持正上方（v0.1.6）。"""
@@ -352,8 +359,11 @@ class PetApp(QObject):
 
         b, p = self.bubble, self.pet
         screen = screen_of(b).availableGeometry()
-        x = b.x() + (b.width() - 44 + 10) - p.width() // 2  # 桌宠中心对尾巴尖
-        y = b.y() + b.height() + T.BUBBLE_PET_GAP
+        x = b.tail_tip_global_x - p.width() // 2
+        if b.tail_side == "top":
+            y = b.y() - p.height() - T.BUBBLE_PET_GAP
+        else:
+            y = b.y() + b.height() + T.BUBBLE_PET_GAP
         x = max(screen.left() + 4, min(x, screen.right() - p.width() - 4))
         y = max(screen.top() + 4, min(y, screen.bottom() - p.height() - 4))
         p.move(x, y)
@@ -400,6 +410,7 @@ class PetApp(QObject):
 
     def send(self, text: str) -> None:
         self._result_timer.stop()
+        self._retry_attempt = 0
         # v0.1.7 首启问称呼：等待称呼时，像称呼的输入拦截落盘，不进引擎；
         # 不像称呼（长句/带标点）则当正常提问放行，本次会话不再拦。
         if self._awaiting_name:
@@ -438,8 +449,18 @@ class PetApp(QObject):
         self._perception_hint = None
         self._last_user_text = item.text
         write_last_user_text(self.client.home, item.text)
+        if self._session_needs_title:
+            try:
+                self.client.set_session_name(make_session_title(item.text))
+            except RuntimeError:
+                pass
+            self._session_needs_title = False
+        status_text = (
+            f"正在重试（第 {self._retry_attempt} 次）"
+            if self._retry_attempt else STATUS_LINE[PetState.ACKNOWLEDGING]
+        )
         self._status_block = self.bubble.present_status(
-            STATUS_LINE[PetState.ACKNOWLEDGING], cancellable=True)
+            status_text, cancellable=True)
         self._set_state(PetState.ACKNOWLEDGING)
         self._deferred_work_state = None
         self._ack_timer.start()
@@ -578,6 +599,7 @@ class PetApp(QObject):
         self.pet.show()
         self.pet.raise_()
         self._result_timer.start()
+        self._retry_attempt = 0
         self._set_state(PetState.CANCELLED if self._aborted else PetState.PRESENTING)
 
     def _on_continue(self) -> None:
@@ -615,6 +637,8 @@ class PetApp(QObject):
         self.bubble.clear_flow()
         self.bubble.set_input_visible(False)
         self.bubble.cancel_dismiss()
+        if self._retry_attempt:
+            message += f"\n刚刚完成第 {self._retry_attempt} 次重试，仍未连接成功。"
         self.bubble.add_error(message)
         if message.startswith("API Key 无效"):
             self.credential_validation.emit(False, message.split("。", 1)[0])
@@ -627,6 +651,12 @@ class PetApp(QObject):
     def _on_retry(self) -> None:
         if self.ctrl.busy:
             return
+        self._retry_attempt += 1
+        self._status_block = self.bubble.present_status(
+            f"正在重试（第 {self._retry_attempt} 次）", cancellable=False
+        )
+        self._place_bubble()
+        self._set_state(PetState.ACKNOWLEDGING)
         pending = next(
             (item for item in self.coordinator.queue if item.source == "pet" and item.needs_review),
             None,
@@ -634,7 +664,14 @@ class PetApp(QObject):
         if pending is not None:
             self.coordinator.retry(pending.id)
         elif self._last_user_text:
-            self.send(self._last_user_text)
+            self.coordinator.enqueue(self._last_user_text, "pet")
+
+    def _on_session_state(self, data: dict) -> None:
+        path = str(data.get("sessionFile") or "")
+        if not path or path == self._known_session_path:
+            return
+        self._known_session_path = path
+        self._session_needs_title = (data.get("sessionName") or "") in ("", "新会话")
 
     # ── 读屏确认 / 感知提示 ───────────────────────────────────
 
@@ -730,6 +767,8 @@ class PetApp(QObject):
         self._last_answer = ""
         self._last_summary = ""
         self._last_user_text = ""
+        self._retry_attempt = 0
+        self._session_needs_title = True
         self.client.new_session()
         self._set_state(PetState.LISTENING if self.bubble.summoned else PetState.IDLE)
 

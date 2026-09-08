@@ -93,7 +93,7 @@ def main() -> int:
     print("── S1 气泡提问（窗口隐藏）──", flush=True)
     session_at_start = chat._current_path
     pet.send("自我介绍")
-    ok = wait_until(lambda: not pet.ctrl.busy and pet.state.value == "AWAKE",
+    ok = wait_until(lambda: not pet.ctrl.busy and pet.state.value == "PRESENTING",
                     30, "气泡回合完成")
     check("S1 气泡单回合完成（简答已出）", ok)
 

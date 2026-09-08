@@ -38,6 +38,7 @@ from ..conversation import (
     SUMMARY_KICK_PREFIX,
     ConversationController,
     humanize_error,
+    make_session_title,
     parse_paired,
     parse_turn_result,
     same_visible_text,
@@ -263,12 +264,14 @@ class ChatWindow(QWidget):
         self.jump_to_latest_button.clicked.connect(self._jump_to_latest)
         self.jump_to_latest_button.hide()
         jump_row = QHBoxLayout()
+        self._jump_row = jump_row
         jump_row.setContentsMargins(16, 0, 16, 0)
         jump_row.addStretch(1)
         jump_row.addWidget(self.jump_to_latest_button)
         rlay.addLayout(jump_row)
 
         input_bar = QHBoxLayout()
+        self._input_bar = input_bar
         input_bar.setContentsMargins(16, 8, 16, 0)
         input_bar.setSpacing(8)
         self.input = _InputBox(self._on_send)
@@ -358,18 +361,31 @@ class ChatWindow(QWidget):
         self.sidebar.set_model(model)
         if path:
             self.coordinator.set_current_session(path)
-        if path and path != self._current_path:
-            self._current_path = path
-            if not any(s["path"] == path for s in self._sessions):
-                name = data.get("sessionName") or "新会话"
+        if path:
+            name = data.get("sessionName") or "新会话"
+            record = next((s for s in self._sessions if s["path"] == path), None)
+            if record is None:
                 self._sessions.insert(0, {"path": path, "title": name})
+            elif name != "新会话" and record["title"] != name:
+                record["title"] = name
+            changed_session = path != self._current_path
+            self._current_path = path
             self._refresh_sidebar()
-            self._rpc(self.client.get_messages, self._render_history)
+            if changed_session:
+                self._rpc(self.client.get_messages, self._render_history)
 
     # ── 对话流渲染 ─────────────────────────────────────────────
 
     def _bubble_max_w(self) -> int:
-        return int(self.scroll.viewport().width() * 0.72)
+        content_width = min(920, max(320, self.scroll.viewport().width()))
+        return min(680, int(content_width * 0.72))
+
+    def _apply_responsive_margins(self) -> None:
+        """Keep conversation and composer on one centered reading column on wide screens."""
+        side = max(0, (self.scroll.viewport().width() - 920) // 2)
+        self.flow.setContentsMargins(side, 12, side, 12)
+        self._jump_row.setContentsMargins(side + 16, 0, side + 16, 0)
+        self._input_bar.setContentsMargins(side + 16, 8, side + 16, 0)
 
     def _add_row(self, content: QWidget, align: str, before: QWidget | None = None) -> BubbleRow:
         row = BubbleRow(content, align)
@@ -420,6 +436,7 @@ class ChatWindow(QWidget):
 
     def resizeEvent(self, ev) -> None:
         super().resizeEvent(ev)
+        self._apply_responsive_margins()
         w = self._bubble_max_w()
         for i in range(self.flow.count()):
             item = self.flow.itemAt(i)
@@ -628,7 +645,7 @@ class ChatWindow(QWidget):
         """首条用户消息自动命名会话（§6 标题自动/可重命名）。"""
         for s in self._sessions:
             if s["path"] == self._current_path and s["title"] == "新会话":
-                title = text[:20] + ("…" if len(text) > 20 else "")
+                title = make_session_title(text)
                 s["title"] = title
                 self.sidebar.update_title(s["path"], title)
                 self._rpc(self.client.set_session_name, lambda r: None, title)

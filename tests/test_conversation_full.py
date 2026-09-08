@@ -245,6 +245,38 @@ def test_same_visible_text_ignores_protocol_tags_and_whitespace() -> None:
     assert not conversation.same_visible_text("是。", "是，因为…")
 
 
+def test_explicit_short_answer_constraints_are_enforced() -> None:
+    raw = conversation.TurnResult(brief="等于 4。", detail="等于 4。", raw="raw")
+    exact = conversation.apply_user_output_constraints("2+2 等于几？只给答案。", raw)
+    yes_no = conversation.apply_user_output_constraints(
+        "北京是中国首都吗？只回答是或否。",
+        conversation.TurnResult(brief="是。", detail="是，因为北京是首都。"),
+    )
+
+    assert exact.brief == exact.detail == "4"
+    assert yes_no.brief == yes_no.detail == "是"
+
+
+def test_chinese_character_limit_is_a_hard_visible_cap() -> None:
+    result = conversation.apply_user_output_constraints(
+        "请用一句不超过三十字总结。",
+        conversation.TurnResult(
+            brief="这是一段明显超过三十个字的摘要内容，模型本来还想继续补充更多细节。",
+            detail="更长的详情。",
+        ),
+    )
+
+    assert len(result.brief) <= 30
+    assert result.detail == result.brief
+
+
+def test_session_title_is_distinguishable_and_elided() -> None:
+    assert conversation.make_session_title("2+2 等于几？") == "2+2 等于几？"
+    title = conversation.make_session_title("桌面应用本地保存少量配置，SQLite 和 JSON 哪个更合适？")
+    assert title.endswith("…")
+    assert len(title) == 19
+
+
 def test_parse_turn_result_recovers_mismatched_brief_closing_tag() -> None:
     raw = (
         "【brief】没读到屏——还缺辅助功能权限。【/detail】\n"

@@ -66,6 +66,17 @@ def test_send_runs_single_turn_and_shows_summary(qtbot, tmp_path: Path) -> None:
     assert pet._result_timer.isActive()
 
 
+def test_first_pet_message_names_new_session(qtbot, tmp_path: Path) -> None:
+    pet, client = make_pet(qtbot, tmp_path)
+    names: list[str] = []
+    client.set_session_name = lambda name: names.append(name) or "name-1"
+
+    pet.send("2+2 等于几？只给答案。")
+
+    assert names == ["2+2 等于几？只给答案。"]
+    assert pet._session_needs_title is False
+
+
 def test_result_continue_restores_only_input(qtbot, tmp_path: Path) -> None:
     pet, _client = make_pet(qtbot, tmp_path)
     pet.bubble.summon()
@@ -238,6 +249,41 @@ def test_retry_resends_pending_review_item(qtbot, tmp_path: Path) -> None:
         or not pet.coordinator.queue,
         timeout=1000,
     )
+    labels = " ".join(label.text() for label in pet.bubble.findChildren(QLabel))
+    assert "正在重试（第 1 次）" in labels
+
+    pet._on_failed("missing API key")
+    labels = " ".join(label.text() for label in pet.bubble.findChildren(QLabel))
+    assert "刚刚完成第 1 次重试" in labels
+
+
+def test_edge_clamped_bubble_tail_tracks_pet_center(qtbot, tmp_path: Path) -> None:
+    from haochen_app.a11y import screen_of
+
+    pet, _client = make_pet(qtbot, tmp_path)
+    screen = screen_of(pet.pet).availableGeometry()
+    pet.pet.move(screen.left() + 4, screen.center().y())
+    pet.bubble.start_input()
+
+    pet._place_bubble()
+
+    assert pet.bubble.tail_side == "bottom"
+    assert abs(pet.bubble.tail_tip_global_x - (pet.pet.x() + pet.pet.width() // 2)) <= 1
+
+
+def test_top_edge_flips_tail_above_bubble(qtbot, tmp_path: Path) -> None:
+    from haochen_app.a11y import screen_of
+
+    pet, _client = make_pet(qtbot, tmp_path)
+    screen = screen_of(pet.pet).availableGeometry()
+    pet.pet.move(screen.center().x(), screen.top() + 4)
+    pet.bubble.start_input()
+
+    pet._place_bubble()
+
+    assert pet.bubble.tail_side == "top"
+    assert pet.bubble.y() > pet.pet.y()
+    assert abs(pet.bubble.tail_tip_global_x - (pet.pet.x() + pet.pet.width() // 2)) <= 1
 
 
 def test_engine_event_routes_confirm_to_initiator(qtbot, tmp_path: Path) -> None:

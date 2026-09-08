@@ -214,5 +214,59 @@
       "input_top_gap": 0,
       "mode": "result"
     }
+  },
+  {
+    "file": "13-left-edge-tail.png",
+    "state": "LISTENING",
+    "bubble": {
+      "x": 8,
+      "y": 179,
+      "width": 380,
+      "height": 217
+    },
+    "pet": {
+      "x": 4,
+      "y": 399,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 8,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 380,
+      "height": 217,
+      "flow_content_height": 141,
+      "scroll_visible": true,
+      "input_visible": true,
+      "input_top_gap": 143,
+      "mode": "result"
+    }
+  },
+  {
+    "file": "14-top-edge-tail.png",
+    "state": "LISTENING",
+    "bubble": {
+      "x": 53,
+      "y": 103,
+      "width": 380,
+      "height": 217
+    },
+    "pet": {
+      "x": 351,
+      "y": 4,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 3,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 380,
+      "height": 217,
+      "flow_content_height": 141,
+      "scroll_visible": true,
+      "input_visible": true,
+      "input_top_gap": 143,
+      "mode": "result"
+    }
   }
 ]

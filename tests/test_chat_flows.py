@@ -103,6 +103,24 @@ def test_auto_title_skips_named_sessions(qtbot, tmp_path: Path) -> None:
     assert not any(r.startswith("set_session_name-") for r in window._pending_rpc)
 
 
+def test_state_refresh_replaces_existing_new_session_title(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    window._sessions = [{"path": "/s/a.jsonl", "title": "新会话"}]
+    window._current_path = "/s/a.jsonl"
+
+    window._on_state({
+        "success": True,
+        "data": {
+            "sessionFile": "/s/a.jsonl",
+            "sessionName": "2+2 等于几？",
+            "model": {"id": "deepseek-v4-flash-vision-exp"},
+        },
+    })
+
+    assert window._sessions == [{"path": "/s/a.jsonl", "title": "2+2 等于几？"}]
+    assert window.sidebar.list.item(0).text() == "2+2 等于几？"
+
+
 def test_rename_session_switches_engine_when_not_current(qtbot, tmp_path: Path) -> None:
     window, _client = make_window(qtbot, tmp_path)
     window._sessions = [
@@ -195,6 +213,21 @@ def test_sidebar_uses_readable_model_alias(qtbot, tmp_path: Path) -> None:
     assert window.sidebar.status.text() == "模型  DeepSeek V4 Vision · 实验版"
     assert window.sidebar.status.toolTip() == model_id
     assert "»" not in window.sidebar.status.text()
+
+
+def test_maximized_layout_keeps_messages_and_composer_on_reading_column(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    window.resize(1500, 900)
+    qtbot.wait(30)
+
+    flow_margins = window.flow.contentsMargins()
+    input_margins = window._input_bar.contentsMargins()
+
+    assert flow_margins.left() >= 100
+    assert flow_margins.left() == flow_margins.right()
+    assert input_margins.left() == flow_margins.left() + 16
+    assert input_margins.right() == flow_margins.right() + 16
+    assert window._bubble_max_w() <= 680
 
 
 def test_escape_in_detail_collapses_instead_of_stopping(qtbot, tmp_path: Path) -> None:

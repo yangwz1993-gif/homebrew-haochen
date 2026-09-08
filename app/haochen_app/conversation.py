@@ -42,6 +42,11 @@ _INTERNAL_RUNTIME_SENTENCE = re.compile(
     r"[^。！？\n]*(?:[。！？]|$)",
     re.IGNORECASE,
 )
+_CHAR_LIMIT = re.compile(
+    r"(?:不超过|最多|限制为?|≤|<=)\s*"
+    r"([0-9]{1,3}|[一二两三四五六七八九十零〇]{1,4})\s*(?:个)?字"
+)
+_VISIBLE_MARKDOWN = re.compile(r"(?:\*\*|__|`|^#{1,6}\s*|^[-*•]\s+)", re.M)
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +146,81 @@ def same_visible_text(left: str, right: str) -> bool:
     return bool(normalize(left)) and normalize(left) == normalize(right)
 
 
+def make_session_title(text: str, limit: int = 18) -> str:
+    """Create a short, distinguishable sidebar title from the first user message."""
+    clean = " ".join((text or "").split()).strip()
+    if not clean:
+        return "新会话"
+    return clean if len(clean) <= limit else clean[:limit].rstrip("，,; ") + "…"
+
+
+def _chinese_number(token: str) -> int | None:
+    if token.isdigit():
+        return int(token)
+    digits = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    if "十" in token:
+        left, right = token.split("十", 1)
+        tens = digits.get(left, 1) if left else 1
+        ones = digits.get(right, 0) if right else 0
+        return tens * 10 + ones
+    if len(token) == 1:
+        return digits.get(token)
+    return None
+
+
+def _plain_visible(text: str) -> str:
+    return _VISIBLE_MARKDOWN.sub("", strip_tags(text or "")).strip()
+
+
+def _truncate_visible(text: str, limit: int) -> str:
+    plain = _plain_visible(text)
+    if len(plain) <= limit:
+        return plain
+    if limit <= 1:
+        return plain[:limit]
+    return plain[: limit - 1].rstrip("，,;；：: ") + "…"
+
+
+def apply_user_output_constraints(user_text: str, result: TurnResult) -> TurnResult:
+    """Deterministically enforce simple, explicit user-visible format constraints."""
+    request = user_text or ""
+    brief = result.brief.strip()
+    strict_single = any(token in request for token in (
+        "只给答案", "只给结果", "只回答", "一句话", "一句就行",
+    ))
+    if re.search(r"只(?:回答)?是或否|只(?:回答)?是/否", request):
+        match = re.search(r"(?<![不可])[是否]", _plain_visible(brief))
+        if match:
+            brief = match.group(0)
+        strict_single = True
+    elif any(token in request for token in ("只给数字", "只给答案", "只给结果")):
+        candidate = re.sub(
+            r"^(?:答案|结果)?\s*(?:是|为|等于)?\s*[:：]?\s*",
+            "",
+            _plain_visible(brief),
+        )
+        if re.search(r"[0-9０-９]\s*[-+*/×÷]", request):
+            number = re.search(r"-?\d+(?:\.\d+)?", candidate)
+            brief = number.group(0) if number else candidate.rstrip("。.!！")
+        else:
+            brief = candidate.rstrip("。.!！")
+        strict_single = True
+    limit_match = _CHAR_LIMIT.search(request)
+    if limit_match:
+        limit = _chinese_number(limit_match.group(1))
+        if limit is not None and limit > 0:
+            brief = _truncate_visible(brief, limit)
+            strict_single = True
+    detail = brief if strict_single else result.detail
+    return TurnResult(
+        brief=brief,
+        detail=detail,
+        raw=result.raw,
+        fallback_used=result.fallback_used,
+    )
+
+
 def extractive_summary(text: str, limit: int = 160) -> str:
     """从详答抽高密度短结：优先首句结论 + 少量要点行（沿用上一版逻辑）。"""
     raw = strip_tags(text)
@@ -237,6 +317,7 @@ class ConversationController(QObject):
         self._answer_request_id: str | None = None
         self._answer_accepted = False
         self._user_message_seen = False
+        self._current_user_text = ""
         client.event.connect(self._on_event)
         client.response.connect(self._on_response)
         client.crashed.connect(self._on_crashed)
@@ -251,6 +332,7 @@ class ConversationController(QObject):
             return None
         self._phase = "answer"
         self._answer_buf = ""
+        self._current_user_text = text
         self.busy_changed.emit(True)
         try:
             request_id = self.client.prompt(text)
@@ -340,7 +422,9 @@ class ConversationController(QObject):
 
     def _end_answer_round(self, msgs: list) -> None:
         raw = self._final_text(msgs) or self._answer_buf
-        result = parse_turn_result(raw)
+        result = apply_user_output_constraints(
+            self._current_user_text, parse_turn_result(raw)
+        )
         self._answer_text = result.detail
         self.answer_done.emit(result.detail)
         self.summarizing.emit()

@@ -11,13 +11,16 @@ v0.1.7 新增断言：用户气泡浅绿 / bot 气泡与工具卡清晰框线 / 
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parents[3]          # app/
 OUT = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
+os.environ.setdefault("HAOCHEN_HOME", tempfile.mkdtemp(prefix="haochen-chat-verification-"))
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest

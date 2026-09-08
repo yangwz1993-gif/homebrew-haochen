@@ -86,7 +86,7 @@ def shot_pair(pa: PetApp, name: str) -> None:
     painter.end()
     canvas.save(str(OUT / name))
 
-    tail_x = b.x() + b.width() - 34
+    tail_x = b.tail_tip_global_x
     pet_center_x = p.x() + p.width() // 2
     VISUAL_EVIDENCE.append({
         "file": name,
@@ -450,7 +450,7 @@ class Runner:
         self.check("S8 气泡与人物不重叠（间隙 6~10px）", 6 <= gap <= 10, f"gap={gap}")
         self.check("S8 气泡在人物正上方", b.y() + b.height() <= p.y(),
                    f"b.bottom={b.y() + b.height()} p.top={p.y()}")
-        tail_x = b.x() + b.width() - 34  # 尾巴尖全局 x（paintEvent: tail_x=w-44, 尖 +10）
+        tail_x = b.tail_tip_global_x
         self.check("S8 尾巴尖对准人物中心", abs(tail_x - (p.x() + p.width() // 2)) <= 2,
                    f"tail={tail_x} center={p.x() + p.width() // 2}")
         # 内容增长（气泡变高）后重新锚定，仍不重叠
@@ -477,7 +477,7 @@ class Runner:
         b, p = pa.bubble, pa.pet
         gap = self._s8_gap()
         self.check("S8 拖人物后气泡跟随不重叠", 6 <= gap <= 10, f"gap={gap}")
-        tail_x = b.x() + b.width() - 34
+        tail_x = b.tail_tip_global_x
         self.check("S8 拖人物后尾巴仍对准中心", abs(tail_x - (p.x() + p.width() // 2)) <= 2,
                    f"tail={tail_x} center={p.x() + p.width() // 2}")
         # 拖动结束位置已写入 pet-pos.json
@@ -498,7 +498,7 @@ class Runner:
     def _s8_bubble_dragged(self):
         pa = self.pa
         b, p = pa.bubble, pa.pet
-        tail_x = b.x() + b.width() - 34
+        tail_x = b.tail_tip_global_x
         self.check("S8 拖气泡后人物跟到尾巴正下方",
                    abs(tail_x - (p.x() + p.width() // 2)) <= 2
                    and visible_bubble_pet_gap(pa) == 8,
@@ -517,6 +517,27 @@ class Runner:
         p2.deleteLater()
         shot(pa.bubble, "11-bubble-after-drag.png")
         shot(pa.pet, "12-pet-after-drag.png")
+        QTimer.singleShot(300, self._s8_edges)
+
+    def _s8_edges(self):
+        pa = self.pa
+        b, p = pa.bubble, pa.pet
+        screen = QApplication.primaryScreen().availableGeometry()
+        p.move(screen.left() + 4, screen.center().y())
+        pa._place_bubble()
+        center_x = p.x() + p.width() // 2
+        self.check("S8 左缘夹回后尾巴仍锚定人物",
+                   abs(b.tail_tip_global_x - center_x) <= 2,
+                   f"tail={b.tail_tip_global_x} center={center_x}")
+        shot_pair(pa, "13-left-edge-tail.png")
+        p.move(screen.center().x() - p.width() // 2, screen.top() + 4)
+        pa._place_bubble()
+        center_x = p.x() + p.width() // 2
+        self.check("顶缘时气泡翻到人物下方且尾巴向上",
+                   b.tail_side == "top" and b.y() > p.y()
+                   and abs(b.tail_tip_global_x - center_x) <= 2,
+                   f"side={b.tail_side} tail={b.tail_tip_global_x} center={center_x}")
+        shot_pair(pa, "14-top-edge-tail.png")
         QTimer.singleShot(300, self.next)
 
     # ── 收尾 ──

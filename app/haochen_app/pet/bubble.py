@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpacerItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -362,7 +363,7 @@ class ConfirmBar(QWidget):
 # ── 气泡本体 ──────────────────────────────────────────────────
 
 class BubbleWindow(QWidget):
-    """L1 气泡：标题行 + 动态对话流 + 输入行 + 右下尾巴。"""
+    """L1 气泡：标题行 + 动态对话流 + 输入行 + 可锚定尾巴。"""
 
     submitted = pyqtSignal(str)         # 用户回车/点发送
     abort_requested = pyqtSignal()      # 停 / Esc 打断
@@ -389,6 +390,8 @@ class BubbleWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.setFixedWidth(INPUT_WIDTH)
+        self._tail_tip_x = INPUT_WIDTH - 34
+        self._tail_side = "bottom"
 
         screen = QApplication.primaryScreen().availableGeometry()
         self._max_h = int(screen.height() * _MAX_H_RATIO)
@@ -520,7 +523,10 @@ class BubbleWindow(QWidget):
         self.btn_send.setFixedHeight(34)
         ip.addWidget(self.btn_send)
         root.addWidget(self._input_panel)
-        root.addSpacing(T.TAIL_SIZE)  # 尾巴占位（paintEvent 自绘）
+        self._tail_spacer = QSpacerItem(
+            0, T.TAIL_SIZE, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
+        )
+        root.addItem(self._tail_spacer)  # 下尾巴占位（paintEvent 自绘）
 
         # 对话流（消息区）在输入区上方自适应高度
         self._anims: list[QPropertyAnimation] = []
@@ -870,34 +876,70 @@ class BubbleWindow(QWidget):
     def summoned(self) -> bool:
         return self._shown
 
-    # ── 自绘：气泡主体 + 右下尾巴（指向桌宠）──────────────────
+    @property
+    def tail_side(self) -> str:
+        return self._tail_side
+
+    @property
+    def tail_tip_global_x(self) -> int:
+        return self.x() + self._tail_tip_x
+
+    def set_tail_anchor(self, global_x: int, side: str = "bottom") -> None:
+        """Point the tail at a global x anchor, including when edge-clamped."""
+        side = "top" if side == "top" else "bottom"
+        self._tail_tip_x = max(28, min(global_x - self.x(), self.width() - 28))
+        if side != self._tail_side:
+            self._tail_side = side
+            if side == "top":
+                self._root.setContentsMargins(12, T.TAIL_SIZE + 10, 12, 0)
+                self._tail_spacer.changeSize(
+                    0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
+                )
+            else:
+                self._root.setContentsMargins(12, 10, 12, 0)
+                self._tail_spacer.changeSize(
+                    0, T.TAIL_SIZE, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
+                )
+            self._root.invalidate()
+        self.update()
+
+    # ── 自绘：气泡主体 + 可移动尾巴（指向桌宠）─────────────────
 
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         w, h = self.width(), self.height()
+        top_tail = self._tail_side == "top"
+        body_top = T.TAIL_SIZE if top_tail else 0
         body_h = h - T.TAIL_SIZE
         # 主体：米白圆角 + 2px 深描边
-        rect = QRectF(1, 1, w - 2, body_h - 2)
+        rect = QRectF(1, body_top + 1, w - 2, body_h - 2)
         path = QPainterPath()
         path.addRoundedRect(rect, T.RADIUS_BUBBLE, T.RADIUS_BUBBLE)
         p.setPen(QPen(QColor(T.COLOR_LINE), T.BORDER_MAIN))
         p.setBrush(QColor(T.COLOR_BG))
         p.drawPath(path)
-        # 右下小三角尾巴（~14×14，描边/填充与主体一致）
-        tail_x = w - 44
-        tri = QPolygonF([
-            QPointF(tail_x, body_h - 2),
-            QPointF(tail_x + 20, body_h - 2),
-            QPointF(tail_x + 10, h - 2),
-        ])
+        tail_x = self._tail_tip_x - 10
+        if top_tail:
+            tri = QPolygonF([
+                QPointF(tail_x, T.TAIL_SIZE + 2),
+                QPointF(tail_x + 20, T.TAIL_SIZE + 2),
+                QPointF(tail_x + 10, 2),
+            ])
+        else:
+            tri = QPolygonF([
+                QPointF(tail_x, body_h - 2),
+                QPointF(tail_x + 20, body_h - 2),
+                QPointF(tail_x + 10, h - 2),
+            ])
         p.setPen(QPen(QColor(T.COLOR_LINE), T.BORDER_MAIN))
         p.setBrush(QColor(T.COLOR_BG))
         p.drawPolygon(tri)
         # 盖掉三角形与主体衔接处的描边线
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(T.COLOR_BG))
-        p.drawRect(int(tail_x) + 1, int(body_h) - 3, 18, 3)
+        seam_y = T.TAIL_SIZE if top_tail else body_h - 3
+        p.drawRect(int(tail_x) + 1, int(seam_y), 18, 3)
         p.end()
 
     def keyPressEvent(self, e):

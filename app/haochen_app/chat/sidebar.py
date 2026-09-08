@@ -75,6 +75,7 @@ class SessionSidebar(QWidget):
             }}
         """)
         self.list.itemClicked.connect(self._on_click)
+        self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._on_menu)
         root.addWidget(self.list, 1)
