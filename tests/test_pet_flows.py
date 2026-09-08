@@ -43,6 +43,8 @@ def test_send_runs_single_turn_and_shows_summary(qtbot, tmp_path: Path) -> None:
     pet.send("你好")
     assert pet.ctrl.busy
     assert pet.state is PetState.ACKNOWLEDGING
+    from haochen_app.chat.widgets import QueueIndicator
+    assert not pet.bubble.findChildren(QueueIndicator)
 
     request_id = pet.ctrl._answer_request_id
     client.response.emit({"id": request_id, "success": True, "type": "response"})
@@ -126,6 +128,20 @@ def test_abort_stops_round_and_keeps_state_visible(qtbot, tmp_path: Path) -> Non
     pet.abort()
 
     assert pet._aborted is True
+    assert pet.state is PetState.CANCELLED
+
+
+def test_cancelled_result_says_it_only_contains_completed_content(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet._aborted = True
+
+    pet._on_summary_done("已经完成的半段答案")
+
+    assert pet.state is PetState.CANCELLED
+    labels = " ".join(label.text() for label in pet.bubble.findChildren(QLabel))
+    assert "已停止" in labels
+    assert "停止前已完成的内容" in labels
 
 
 def test_retry_resends_pending_review_item(qtbot, tmp_path: Path) -> None:

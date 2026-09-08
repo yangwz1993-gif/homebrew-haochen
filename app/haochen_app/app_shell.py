@@ -56,6 +56,7 @@ class AppShell:
         self.pet.detail_opener = self.chat.open_from_bubble
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
         self.pet.settings_requested.connect(self.show_settings)
+        self.settings.closed.connect(self.pet.restore_after_settings)
 
         # 配置 → 引擎生效链（M-D 预留信号，P4 接线）
         self.settings.modelChanged.connect(self._on_model_changed)
@@ -87,6 +88,7 @@ class AppShell:
         self.chat.activateWindow()
 
     def show_settings(self) -> None:
+        self.pet.suspend_for_settings()
         self.settings.show()
         self.settings.raise_()
         self.settings.activateWindow()

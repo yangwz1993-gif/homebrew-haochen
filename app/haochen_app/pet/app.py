@@ -61,6 +61,8 @@ class PetApp(QObject):
         self._queue_requests: dict[str, str] = {}
         self._queue_indicators: dict[str, object] = {}
         self._detail_open = False                       # 详情（对话窗口展开模式）打开中
+        self._settings_open = False                     # 设置打开时暂停临时层，而不是丢弃上下文
+        self._resume_bubble_after_settings = False
         # v0.1.7 首启问称呼：等待用户输入称呼中 / 本次会话已问过（避免重复问候块）
         self._awaiting_name = False
         self._name_greeted = False
@@ -287,7 +289,7 @@ class PetApp(QObject):
         # 收起时确认条还悬着 → 按「取消」答复引擎（rpc-contract §5.3 cancelled）
         if self._confirm_id:
             self._resolve_confirm(cancelled=True)
-        if self._state in (PetState.LISTENING, PetState.PRESENTING):
+        if self._state in (PetState.LISTENING, PetState.PRESENTING, PetState.CANCELLED):
             self._set_state(PetState.IDLE)
 
     def _on_escape(self) -> None:
@@ -301,6 +303,7 @@ class PetApp(QObject):
         """点气泡/桌宠之外的区域 → 收起（显式点击收起；失焦本身不收起）。"""
         if (ev.type() == QEvent.Type.MouseButtonPress and self.bubble.summoned
                 and not self._detail_open
+                and not self._settings_open
                 and obj not in (self.bubble, self.pet)):
             gp = ev.globalPosition().toPoint() if hasattr(ev, "globalPosition") else None
             if gp is not None:
@@ -380,7 +383,12 @@ class PetApp(QObject):
 
             indicator.cancel_button.clicked.connect(lambda _checked=False: cancel())
             self._queue_indicators[item.id] = indicator
-        live_ids = {item.id for item in self.coordinator.queue if item.source == "pet"}
+        # 只把“仍在等待”的项显示成排队；一旦已发给引擎就立即移除，避免和
+        # “收到，我接住了 / 正在处理”同时出现造成状态矛盾。
+        live_ids = {
+            item.id for item in self.coordinator.queue
+            if item.source == "pet" and item.request_id is None and not item.needs_review
+        }
         for item_id in list(self._queue_indicators):
             if item_id not in live_ids:
                 indicator = self._queue_indicators.pop(item_id)
@@ -412,6 +420,7 @@ class PetApp(QObject):
             if self._status_block is not None:
                 self._status_block.set_text(
                     "已停止（保留已产内容）", animated=False, cancellable=False)
+            self._set_state(PetState.CANCELLED)
 
     # ── 会话编排信号 ──────────────────────────────────────────
 
@@ -426,6 +435,12 @@ class PetApp(QObject):
         self._last_answer = answer
 
     def _on_summarizing(self) -> None:
+        if self._aborted:
+            if self._status_block is not None:
+                self._status_block.set_text(
+                    "已停止（正在整理已有内容）", animated=False, cancellable=False)
+            self._set_state(PetState.CANCELLED)
+            return
         if self._status_block is not None:
             self._status_block.set_text(STATUS_LINE[PetState.PRESENTING])
         self._set_state(PetState.PRESENTING)
@@ -440,7 +455,7 @@ class PetApp(QObject):
             self._status_block = None
         brief = summary.strip() or self._last_answer.strip() or "这次没有生成可显示的简答，请查看详情。"
         self._last_summary = brief
-        self.bubble.present_summary(brief)
+        self.bubble.present_summary(brief, cancelled=self._aborted)
         # 短结是「需要用户注意」的时刻：气泡没挂着就轻提示唤起
         if not self.bubble.summoned:
             self._place_bubble()
@@ -450,7 +465,7 @@ class PetApp(QObject):
         self.pet.show()
         self.pet.raise_()
         self._result_timer.start()
-        self._set_state(PetState.PRESENTING)
+        self._set_state(PetState.CANCELLED if self._aborted else PetState.PRESENTING)
 
     def _on_continue(self) -> None:
         """用户明确追问时才恢复输入；旧结果不继续占据 L1。"""
@@ -468,6 +483,7 @@ class PetApp(QObject):
             self._result_timer.stop()
             return
         if (self.ctrl.busy or self._confirm_id is not None or self._detail_open
+                or self._settings_open
                 or input_visible or not summoned):
             return
         self.bubble.dismiss()
@@ -574,6 +590,30 @@ class PetApp(QObject):
     def _on_settings(self) -> None:
         log.info("settings requested")
         self.settings_requested.emit()
+
+    def suspend_for_settings(self) -> None:
+        """打开设置时临时隐藏气泡，并完整保留错误卡、输入或当前结果。"""
+        if self._settings_open:
+            return
+        self._settings_open = True
+        self._resume_bubble_after_settings = self.bubble.summoned
+        self._result_timer.stop()
+        if self._resume_bubble_after_settings:
+            self.bubble.cancel_dismiss()
+            self.bubble.hide()
+
+    def restore_after_settings(self) -> None:
+        """关闭设置后恢复此前可见的气泡，避免错误与重试入口凭空消失。"""
+        should_resume = self._resume_bubble_after_settings
+        self._settings_open = False
+        self._resume_bubble_after_settings = False
+        if not should_resume or not self.bubble.summoned:
+            return
+        self._place_bubble()
+        self.bubble.show()
+        self.bubble.raise_()
+        self.pet.show()
+        self.pet.raise_()
 
     def _on_expand_detail(self) -> None:
         """「查看详情」：打开完整对话窗口的「从气泡展开」模式。

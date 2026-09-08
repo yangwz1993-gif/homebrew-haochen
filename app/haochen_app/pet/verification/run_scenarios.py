@@ -34,8 +34,11 @@ OUT = Path(__file__).resolve().parent
 
 # v0.1.6 位置记忆写 haochen_home()/pet-pos.json：验证隔离到临时目录，不碰真实数据目录
 os.environ.setdefault("HAOCHEN_HOME", tempfile.mkdtemp(prefix="haochen-pet-verify-"))
+# 留出足够时间让 ACK 卡完成淡入；只影响本视觉证据进程，mock 默认仍为零延迟。
+os.environ.setdefault("MOCK_ACCEPT_DELAY_MS", "240")
 
 from PyQt6.QtCore import QPoint, Qt, QTimer
+from PyQt6.QtGui import QColor, QPainter, QPixmap
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QPushButton
 
@@ -45,6 +48,7 @@ from haochen_app.pet.pet_window import PetWindow
 from haochen_app.pet.profile import should_ask_name
 
 LOG: list[str] = []
+VISUAL_EVIDENCE: list[dict] = []
 
 
 def note(msg: str) -> None:
@@ -58,6 +62,32 @@ def shot(widget, name: str) -> None:
     note(f"screenshot -> {name}")
 
 
+def shot_pair(pa: PetApp, name: str) -> None:
+    """Capture pet and bubble as one neutral-canvas artifact plus exact geometry."""
+    b, p = pa.bubble, pa.pet
+    bounds = b.geometry().united(p.geometry())
+    canvas = QPixmap(bounds.size())
+    canvas.fill(QColor("#f1f0ec"))
+    painter = QPainter(canvas)
+    painter.drawPixmap(b.pos() - bounds.topLeft(), b.grab())
+    painter.drawPixmap(p.pos() - bounds.topLeft(), p.grab())
+    painter.end()
+    canvas.save(str(OUT / name))
+
+    tail_x = b.x() + b.width() - 34
+    pet_center_x = p.x() + p.width() // 2
+    VISUAL_EVIDENCE.append({
+        "file": name,
+        "state": pa.state.value,
+        "bubble": {"x": b.x(), "y": b.y(), "width": b.width(), "height": b.height()},
+        "pet": {"x": p.x(), "y": p.y(), "width": p.width(), "height": p.height()},
+        "bubble_pet_gap": p.y() - (b.y() + b.height()),
+        "tail_center_delta_x": tail_x - pet_center_x,
+        "layout": b.layout_metrics(),
+    })
+    note(f"evidence -> {name} {VISUAL_EVIDENCE[-1]}")
+
+
 class Runner:
     """按信号串联场景：每幕完成才进下一幕，避免定时不稳。"""
 
@@ -68,6 +98,7 @@ class Runner:
                       self.s7_expand_cmd_w, self.s8_geometry_drag_persist, self.finish]
         self.results: list[str] = []
         self.app_quit = False
+        self._captured_transitions: set[str] = set()
         QApplication.instance().aboutToQuit.connect(self._mark_quit)
         # v0.1.4 hotfix：详情改走 ChatWindow「从气泡展开」模式。
         # 这里在测试内复刻壳层接线（app_shell 应由集成方加同样两行）。
@@ -77,7 +108,21 @@ class Runner:
         self.chat.setStyleSheet(app_stylesheet())  # 与壳层一致，截图目检呈真机样式
         pa.detail_opener = self.chat.open_from_bubble
         self.chat.detail_collapsed.connect(pa.restore_bubble)
-        pa.state_changed.connect(lambda s: note(f"state -> {s}"))
+        pa.state_changed.connect(self._on_state_changed)
+
+    def _on_state_changed(self, state: str) -> None:
+        note(f"state -> {state}")
+        if (state in {"ACKNOWLEDGING", "ACTING"}
+                and state not in self._captured_transitions
+                and self.pa.bubble.summoned):
+            self._captured_transitions.add(state)
+            delay = 190 if state == "ACKNOWLEDGING" else 0
+            QTimer.singleShot(
+                delay,
+                lambda captured=state: shot_pair(
+                    self.pa, f"evidence-{captured.lower()}.png"
+                ),
+            )
 
     def _mark_quit(self) -> None:
         self.app_quit = True
@@ -88,6 +133,14 @@ class Runner:
 
     def next(self, delay: int = 400) -> None:
         QTimer.singleShot(delay, self._run_step)
+
+    def submit_user_text(self, text: str) -> None:
+        """走和真实用户完全相同的输入/发送路径，避免验收证据保留了隐藏输入框。"""
+        pa = self.pa
+        if not pa.bubble._input_visible():
+            pa._on_continue()
+        pa.bubble.input.setPlainText(text)
+        pa.bubble._on_send()
 
     def _run_step(self) -> None:
         if self.steps:
@@ -116,7 +169,7 @@ class Runner:
         self.check("S0 气泡唤起不再自动问称呼（已移向导）", not pa._awaiting_name)
         shot(pa.bubble, "00-first-run-ask-name.png")
         pa._awaiting_name = True  # 主动验证称呼回合链路（档案保存、不进引擎）
-        pa.send("阿晨")
+        self.submit_user_text("阿晨")
         QTimer.singleShot(300, self._s0_saved)
 
     def _s0_saved(self):
@@ -140,12 +193,16 @@ class Runner:
         shot(pa.pet, "01-pet-idle.png")
         pa._toggle_bubble()  # 模拟双击唤起
         self.check("唤起后 LISTENING", pa.state is PetState.LISTENING)
-        QTimer.singleShot(300, lambda: shot(pa.bubble, "02-bubble-summoned.png"))
-        QTimer.singleShot(500, lambda: pa.send("你好，haochen，介绍一下你自己"))
+        QTimer.singleShot(300, lambda: (
+            shot(pa.bubble, "02-bubble-summoned.png"),
+            shot_pair(pa, "evidence-listening.png"),
+        ))
+        QTimer.singleShot(500, lambda: self.submit_user_text("你好，haochen，介绍一下你自己"))
         # v0.3.0：请求接单后由真实引擎事件进入 COMPOSING。
         QTimer.singleShot(1500, lambda: (
             shot(pa.pet, "03a-pet-thinking.png"),
             shot(pa.bubble, "03b-bubble-thinking.png"),
+            shot_pair(pa, "evidence-composing.png"),
             self.check("生成中姿态 thinking", pa.pet.pose == "thinking", pa.pet.pose),
             self.check("生成中状态 COMPOSING", pa.state is PetState.COMPOSING, pa.state.value)))
         pa.ctrl.summary_done.connect(self._s1_done)
@@ -158,6 +215,7 @@ class Runner:
     def _s1_result_ready(self, summary: str):
         pa = self.pa
         shot(pa.bubble, "04-summary-l1.png")
+        shot_pair(pa, "evidence-presenting.png")
         self.check("S1 短结非空", bool(summary.strip()), summary[:30])
         blocks = pa.bubble.findChildren(SummaryBlock)
         self.check("S1 结果卡已稳定渲染", bool(blocks))
@@ -178,7 +236,7 @@ class Runner:
         pa = self.pa
         self._s2_answer = ""
         pa.ctrl.answer_done.connect(self._s2_answer_got)
-        pa.send("帮我读屏看看屏幕上有什么")
+        self.submit_user_text("帮我读屏看看屏幕上有什么")
         # v0.2.0：消息经队列异步泄流，确认条出现时间稍晚（mock tick × 多轮）
         self._s2_confirm_polls = 0
         QTimer.singleShot(2000, self._s2_wait_confirm)
@@ -203,6 +261,7 @@ class Runner:
                    pa.state in (PetState.PERCEIVING, PetState.ACTING),
                    pa.state.value)
         shot(pa.bubble, "05-read-screen-confirm.png")
+        shot_pair(pa, "evidence-perceiving.png")
         # v0.1.7：感知提示单行不折行
         hint = pa.bubble.findChild(HintBlock)
         if hint:
@@ -248,7 +307,7 @@ class Runner:
     def s3_error(self):
         note("── S3 错误路径（alert 姿态 + 错误块）──")
         pa = self.pa
-        pa.send("这里触发一个错误")
+        self.submit_user_text("这里触发一个错误")
         pa.ctrl.failed.connect(self._s3_failed)
 
     def _s3_failed(self, err: str):
@@ -258,6 +317,7 @@ class Runner:
         QTimer.singleShot(600, lambda: (
             shot(pa.pet, "07a-pet-alert.png"),
             shot(pa.bubble, "07b-error-block.png"),
+            shot_pair(pa, "evidence-error.png"),
             self.check("S3 alert(angry) 姿态", pa.pet.pose == "angry", pa.pet.pose)))
         QTimer.singleShot(1200, self.next)
 
@@ -265,7 +325,7 @@ class Runner:
     def s4_abort(self):
         note("── S4 Esc 打断（abort，保留已产内容）──")
         pa = self.pa
-        pa.send("再介绍一下你自己，这次我会打断你")
+        self.submit_user_text("再介绍一下你自己，这次我会打断你")
         QTimer.singleShot(900, self._s4_do_abort)
         pa.ctrl.summary_done.connect(self._s4_done)
         pa.ctrl.failed.connect(self._s4_done)
@@ -274,7 +334,10 @@ class Runner:
         pa = self.pa
         pa._on_escape()  # 生成中 Esc = 打断
         self.check("S4 打断标记", pa._aborted)
-        QTimer.singleShot(300, lambda: shot(pa.bubble, "08-abort-stopped.png"))
+        QTimer.singleShot(300, lambda: (
+            shot(pa.bubble, "08-abort-stopped.png"),
+            shot_pair(pa, "evidence-cancelled.png"),
+        ))
 
     def _s4_done(self, *_):
         pa = self.pa
@@ -450,6 +513,10 @@ class Runner:
     # ── 收尾 ──
     def finish(self):
         (OUT / "state-transitions.log").write_text("\n".join(LOG) + "\n", encoding="utf-8")
+        (OUT / "visual-metrics.json").write_text(
+            json.dumps(VISUAL_EVIDENCE, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         report = "\n".join(self.results) + "\n"
         (OUT / "results.log").write_text(report, encoding="utf-8")
         print("\n===== RESULTS =====\n" + report, flush=True)

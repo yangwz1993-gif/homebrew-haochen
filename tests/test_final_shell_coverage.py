@@ -129,6 +129,42 @@ def test_show_chat_and_settings_raise_windows(qtbot, tmp_path: Path) -> None:
     # offscreen raise() 不可用但不应崩溃
 
 
+def test_settings_round_trip_restores_error_and_retry_context(qtbot, tmp_path: Path) -> None:
+    from haochen_app.pet.bubble import ErrorBlock
+
+    shell = AppShell(mock=True, home=tmp_path)
+    qtbot.addWidget(shell.chat)
+    qtbot.addWidget(shell.settings)
+    qtbot.addWidget(shell.pet.bubble)
+    qtbot.addWidget(shell.pet.pet)
+    shell.pet.bubble.summon(show_input=False)
+    shell.pet._on_failed("invalid API key")
+    assert shell.pet.bubble.findChildren(ErrorBlock)
+
+    shell.show_settings()
+    assert shell.pet.bubble.summoned
+    assert not shell.pet.bubble.isVisible()
+
+    shell.settings.close()
+    qtbot.wait(20)
+    assert shell.pet.bubble.isVisible()
+    assert shell.pet.bubble.findChildren(ErrorBlock)
+
+
+def test_closing_settings_does_not_summon_previously_hidden_bubble(qtbot, tmp_path: Path) -> None:
+    shell = AppShell(mock=True, home=tmp_path)
+    qtbot.addWidget(shell.settings)
+    qtbot.addWidget(shell.pet.bubble)
+    assert not shell.pet.bubble.summoned
+
+    shell.show_settings()
+    shell.settings.close()
+    qtbot.wait(20)
+
+    assert not shell.pet.bubble.summoned
+    assert not shell.pet.bubble.isVisible()
+
+
 def test_hotkey_degraded_when_tap_unavailable(monkeypatch) -> None:
     import Quartz
 

@@ -23,6 +23,7 @@ class PetState(Enum):
     ACTING = "ACTING"                      # 真实工具执行中
     COMPOSING = "COMPOSING"                # 已收到模型输出事件，组织回答
     PRESENTING = "PRESENTING"              # 简答正在展示，等待退场或展开
+    CANCELLED = "CANCELLED"                # 用户已停止，展示停止前已完成的内容
 
     # 兼容 0.2.x 内部调用；新代码与遥测统一使用上面的产品语义。
     AWAKE = LISTENING
@@ -41,6 +42,7 @@ POSE_FOR_STATE = {
     PetState.ACTING: "thinking",
     PetState.COMPOSING: "thinking",
     PetState.PRESENTING: "idle",
+    PetState.CANCELLED: "idle",
 }
 
 POSE_ALERT = "angry"  # 出错姿态（visual-spec §4 angry/alert）

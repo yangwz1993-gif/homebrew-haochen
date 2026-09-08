@@ -25,6 +25,7 @@ import uuid
 from pathlib import Path
 
 TICK = max(0, int(os.environ.get("MOCK_TICK_MS", "30"))) / 1000.0
+ACCEPT_DELAY = max(0, int(os.environ.get("MOCK_ACCEPT_DELAY_MS", "0"))) / 1000.0
 MOCK_MODEL = "mock/mock-v1"
 ZERO_USAGE = {
     "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0,
@@ -232,6 +233,8 @@ class MockEngine:
 
     # ---------- 回合编排 ----------
     def run_prompt(self, rid, message: str) -> None:
+        if ACCEPT_DELAY:
+            time.sleep(ACCEPT_DELAY)
         self.respond(rid, "prompt")
         self.aborted = False
         self.send({"type": "agent_start"})

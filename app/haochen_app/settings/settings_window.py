@@ -72,6 +72,7 @@ class SettingsWindow(QWidget):
     thinkingLevelChanged = pyqtSignal(str)   # 默认思考档变化
     restartRequired = pyqtSignal(str)        # 改动需重启引擎生效（原因描述）
     keyValidationFinished = pyqtSignal(str, str, bool, str)
+    closed = pyqtSignal()                    # 壳层用于恢复打开设置前的临时气泡上下文
 
     def __init__(
         self,
@@ -106,6 +107,11 @@ class SettingsWindow(QWidget):
 
         self.store.ensure_initialized()
         self._build()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt virtual method
+        """通知壳层设置已关闭；窗口本身仍沿用 Qt 默认的隐藏语义。"""
+        super().closeEvent(event)
+        self.closed.emit()
 
     # ── 构建 / 重建（损坏恢复后整体重绘）───────────────────────
 

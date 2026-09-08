@@ -1,0 +1,210 @@
+[
+  {
+    "file": "evidence-listening.png",
+    "state": "LISTENING",
+    "bubble": {
+      "x": 345,
+      "y": 484,
+      "width": 400,
+      "height": 153
+    },
+    "pet": {
+      "x": 663,
+      "y": 645,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 8,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 400,
+      "height": 153,
+      "flow_content_height": 0,
+      "scroll_visible": false,
+      "input_visible": true,
+      "input_top_gap": 1
+    }
+  },
+  {
+    "file": "evidence-acknowledging.png",
+    "state": "ACKNOWLEDGING",
+    "bubble": {
+      "x": 345,
+      "y": 490,
+      "width": 400,
+      "height": 147
+    },
+    "pet": {
+      "x": 663,
+      "y": 645,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 8,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 400,
+      "height": 147,
+      "flow_content_height": 91,
+      "scroll_visible": true,
+      "input_visible": false,
+      "input_top_gap": 0
+    }
+  },
+  {
+    "file": "evidence-composing.png",
+    "state": "COMPOSING",
+    "bubble": {
+      "x": 345,
+      "y": 490,
+      "width": 400,
+      "height": 147
+    },
+    "pet": {
+      "x": 663,
+      "y": 645,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 8,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 400,
+      "height": 147,
+      "flow_content_height": 91,
+      "scroll_visible": true,
+      "input_visible": false,
+      "input_top_gap": 0
+    }
+  },
+  {
+    "file": "evidence-presenting.png",
+    "state": "PRESENTING",
+    "bubble": {
+      "x": 345,
+      "y": 460,
+      "width": 400,
+      "height": 177
+    },
+    "pet": {
+      "x": 663,
+      "y": 645,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 8,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 400,
+      "height": 177,
+      "flow_content_height": 121,
+      "scroll_visible": true,
+      "input_visible": false,
+      "input_top_gap": 0
+    }
+  },
+  {
+    "file": "evidence-acting.png",
+    "state": "PERCEIVING",
+    "bubble": {
+      "x": 345,
+      "y": 363,
+      "width": 400,
+      "height": 274
+    },
+    "pet": {
+      "x": 663,
+      "y": 645,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 8,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 400,
+      "height": 274,
+      "flow_content_height": 218,
+      "scroll_visible": true,
+      "input_visible": false,
+      "input_top_gap": 0
+    }
+  },
+  {
+    "file": "evidence-perceiving.png",
+    "state": "PERCEIVING",
+    "bubble": {
+      "x": 345,
+      "y": 363,
+      "width": 400,
+      "height": 274
+    },
+    "pet": {
+      "x": 663,
+      "y": 645,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 8,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 400,
+      "height": 274,
+      "flow_content_height": 218,
+      "scroll_visible": true,
+      "input_visible": false,
+      "input_top_gap": 0
+    }
+  },
+  {
+    "file": "evidence-error.png",
+    "state": "LISTENING",
+    "bubble": {
+      "x": 345,
+      "y": 473,
+      "width": 400,
+      "height": 164
+    },
+    "pet": {
+      "x": 663,
+      "y": 645,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 8,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 400,
+      "height": 164,
+      "flow_content_height": 108,
+      "scroll_visible": true,
+      "input_visible": false,
+      "input_top_gap": 0
+    }
+  },
+  {
+    "file": "evidence-cancelled.png",
+    "state": "CANCELLED",
+    "bubble": {
+      "x": 345,
+      "y": 416,
+      "width": 400,
+      "height": 221
+    },
+    "pet": {
+      "x": 663,
+      "y": 645,
+      "width": 96,
+      "height": 96
+    },
+    "bubble_pet_gap": 8,
+    "tail_center_delta_x": 0,
+    "layout": {
+      "width": 400,
+      "height": 221,
+      "flow_content_height": 165,
+      "scroll_visible": true,
+      "input_visible": false,
+      "input_top_gap": 0
+    }
+  }
+]

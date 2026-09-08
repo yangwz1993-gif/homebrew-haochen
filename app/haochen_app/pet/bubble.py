@@ -200,7 +200,7 @@ class SummaryBlock(QWidget):
     expand_clicked = pyqtSignal()
     continue_clicked = pyqtSignal()
 
-    def __init__(self, text: str, parent=None):
+    def __init__(self, text: str, *, cancelled: bool = False, parent=None):
         super().__init__(parent)
         self.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(self)
@@ -211,6 +211,14 @@ class SummaryBlock(QWidget):
             f" border-radius: {T.RADIUS_BUBBLE}px; }}")
         cl = QVBoxLayout(card)
         cl.setContentsMargins(12, 10, 12, 10)
+        if cancelled:
+            stopped = _text_label(
+                "已停止 · 以下是停止前已完成的内容",
+                f"color: {T.COLOR_WARN};",
+                T.FONT_BODY_SM,
+            )
+            stopped.setAccessibleName("当前回答已停止")
+            cl.addWidget(stopped)
         lb = _text_label(text, f"color: {T.COLOR_INK};")
         cl.addWidget(lb)
         row = QHBoxLayout()
@@ -621,18 +629,18 @@ class BubbleWindow(QWidget):
         block.stop_requested.connect(self.abort_requested.emit)
         return self._append(block)
 
-    def add_summary(self, text: str) -> None:
-        block = SummaryBlock(text)
+    def add_summary(self, text: str, *, cancelled: bool = False) -> None:
+        block = SummaryBlock(text, cancelled=cancelled)
         block.expand_clicked.connect(self.expand_detail.emit)
         block.continue_clicked.connect(self.continue_requested.emit)
         self._append(block)
 
-    def present_summary(self, text: str) -> None:
+    def present_summary(self, text: str, *, cancelled: bool = False) -> None:
         """结果阶段只显示当前简答，不保留历史流、输入框或滚动条。"""
         self.clear_flow()
         self.set_input_visible(False)
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.add_summary(text)
+        self.add_summary(text, cancelled=cancelled)
 
     def start_input(self) -> None:
         """进入 LISTENING：清掉旧临时层，只显示输入区。"""
