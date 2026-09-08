@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .. import a11y
 from ..chat.widgets import QueueIndicator
 from . import theme as T
 
@@ -133,21 +134,64 @@ class HintBlock(QWidget):
 
 
 class StatusBlock(QWidget):
-    """思考/收敛状态条：ink-soft 弱化文案，可原地更新。"""
+    """漫画式处理状态：只呈现阶段和动态节奏，不暴露隐藏思维。"""
 
-    def __init__(self, text: str, parent=None):
+    stop_requested = pyqtSignal()
+
+    def __init__(self, text: str, *, cancellable: bool = False, parent=None):
         super().__init__(parent)
         self.setStyleSheet("background: transparent;")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 2, 48, 2)
-        self._lb = _text_label(text, "", T.FONT_BODY_SM)
+        self._base_text = text.rstrip(".。… ·")
+        self._frame = 0
+        self._lb = _text_label(self._base_text, "", T.FONT_BODY_SM)
         self._lb.setStyleSheet(f"QLabel {{ color: {T.COLOR_INK_SOFT};"
                                f" font-size: {T.FONT_BODY_SM}px; padding: 2px 4px; }}")
         lay.addWidget(self._lb)
         lay.addStretch(1)
+        self.stop_button = QPushButton("停止")
+        self.stop_button.setAccessibleName("停止当前处理")
+        self.stop_button.setToolTip("停止当前处理（Esc）")
+        self.stop_button.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {T.COLOR_INK_SOFT};"
+            f" border: none; border-radius: {T.RADIUS_BUTTON}px;"
+            f" font-size: {T.FONT_BODY_SM}px; padding: 2px 7px; }}"
+            f"QPushButton:hover {{ background: {T.COLOR_BG}; color: {T.COLOR_DANGER}; }}")
+        self.stop_button.clicked.connect(self.stop_requested.emit)
+        self.stop_button.setVisible(cancellable)
+        lay.addWidget(self.stop_button)
+        self._pulse = QTimer(self)
+        self._pulse.setInterval(420)
+        self._pulse.timeout.connect(self._advance)
+        if not a11y.reduce_motion_enabled():
+            self._pulse.start()
 
-    def set_text(self, text: str) -> None:
-        self._lb.setText(text)
+    def _advance(self) -> None:
+        self._frame = (self._frame + 1) % 4
+        self._lb.setText(self._base_text + " ·" * self._frame)
+
+    def set_text(
+        self,
+        text: str,
+        *,
+        animated: bool = True,
+        cancellable: bool | None = None,
+    ) -> None:
+        self._base_text = text.rstrip(".。… ·")
+        self._frame = 0
+        self._lb.setText(self._base_text)
+        if animated and not a11y.reduce_motion_enabled():
+            self._pulse.start()
+        else:
+            self._pulse.stop()
+        if cancellable is not None:
+            self.stop_button.setVisible(cancellable)
+
+    @property
+    def text(self) -> str:
+        """稳定阶段文案，供无障碍与自动化测试读取。"""
+        return self._base_text
 
 
 class SummaryBlock(QWidget):
@@ -477,6 +521,10 @@ class BubbleWindow(QWidget):
         """逐条弹出：插入流尾 + 淡入 180ms + 滚到底。"""
         self.flow.insertWidget(self.flow.count() - 1, w)
         w.show()
+        if a11y.reduce_motion_enabled():
+            QTimer.singleShot(0, self._scroll_bottom)
+            self._refresh_height()
+            return w
         eff = QGraphicsOpacityEffect(w)
         w.setGraphicsEffect(eff)
         a = QPropertyAnimation(eff, b"opacity", self)
@@ -512,8 +560,10 @@ class BubbleWindow(QWidget):
     def add_perception_hint(self, text: str) -> None:
         self._append(HintBlock(text))
 
-    def add_status(self, text: str) -> StatusBlock:
-        return self._append(StatusBlock(text))
+    def add_status(self, text: str, *, cancellable: bool = False) -> StatusBlock:
+        block = StatusBlock(text, cancellable=cancellable)
+        block.stop_requested.connect(self.abort_requested.emit)
+        return self._append(block)
 
     def add_summary(self, text: str) -> None:
         block = SummaryBlock(text)
@@ -618,6 +668,16 @@ class BubbleWindow(QWidget):
         self.set_input_visible(show_input)
         self._refresh_height()
         target = self.pos()
+        if a11y.reduce_motion_enabled():
+            self.move(target)
+            self.setWindowOpacity(1.0)
+            super().show()
+            self.resized.emit()
+            if show_input:
+                self.focus_input()
+            else:
+                self.raise_()
+            return
         self.move(target + QPoint(0, _SLIDE_PX))
         self.setWindowOpacity(0.0)
         super().show()
@@ -646,6 +706,11 @@ class BubbleWindow(QWidget):
         if not self._shown:
             return
         self._shown = False
+        if a11y.reduce_motion_enabled():
+            QWidget.hide(self)
+            self.setWindowOpacity(1.0)
+            self.dismissed.emit()
+            return
         anim = QPropertyAnimation(self, b"windowOpacity", self)
         anim.setDuration(T.ANIM_DISMISS_MS)
         anim.setStartValue(self.windowOpacity())

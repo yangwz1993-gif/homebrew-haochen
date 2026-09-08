@@ -40,7 +40,7 @@ def test_send_runs_single_turn_and_shows_summary(qtbot, tmp_path: Path) -> None:
 
     pet.send("你好")
     assert pet.ctrl.busy
-    assert pet.state.value == "THINK"
+    assert pet.state is PetState.ACKNOWLEDGING
 
     request_id = pet.ctrl._answer_request_id
     client.response.emit({"id": request_id, "success": True, "type": "response"})
@@ -51,7 +51,7 @@ def test_send_runs_single_turn_and_shows_summary(qtbot, tmp_path: Path) -> None:
     ]})
 
     assert not pet.ctrl.busy
-    assert pet.state.value == "AWAKE"
+    assert pet.state is PetState.PRESENTING
     from haochen_app.pet.bubble import SummaryBlock  # noqa: E402
     blocks = pet.bubble.findChildren(SummaryBlock)
     assert blocks
@@ -160,16 +160,72 @@ def test_crash_without_supervisor_shows_error_and_summons(qtbot, tmp_path: Path)
 def test_state_transitions_and_pose(qtbot, tmp_path: Path) -> None:
     pet, _client = make_pet(qtbot, tmp_path)
     assert pet.state is PetState.IDLE
-    pet._set_state(PetState.AWAKE)
-    assert pet.state is PetState.AWAKE
-    pet._set_state(PetState.THINK)
-    assert pet.state is PetState.THINK
-    pet._set_state(PetState.PERCEIVE)
-    assert pet.state is PetState.PERCEIVE
-    pet._set_state(PetState.ACT)
-    assert pet.state is PetState.ACT
-    pet._set_state(PetState.CONVERGE)
-    assert pet.state is PetState.CONVERGE
+    pet._set_state(PetState.LISTENING)
+    assert pet.state is PetState.LISTENING
+    pet._set_state(PetState.ACKNOWLEDGING)
+    assert pet.state is PetState.ACKNOWLEDGING
+    pet._set_state(PetState.PERCEIVING)
+    assert pet.state is PetState.PERCEIVING
+    pet._set_state(PetState.ACTING)
+    assert pet.state is PetState.ACTING
+    pet._set_state(PetState.COMPOSING)
+    assert pet.state is PetState.COMPOSING
+    pet._set_state(PetState.PRESENTING)
+    assert pet.state is PetState.PRESENTING
+
+
+def test_engine_events_drive_visible_work_phases(qtbot, tmp_path: Path) -> None:
+    pet, client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet.send("帮我处理一下")
+    assert pet.state is PetState.ACKNOWLEDGING
+    assert pet._status_block.stop_button.isVisible()
+
+    request_id = pet.ctrl._answer_request_id
+    client.response.emit({"id": request_id, "success": True, "type": "response"})
+    assert pet.state is PetState.COMPOSING
+    assert pet._status_block.text == "正在组织回答"
+
+    client.event.emit({"type": "tool_execution_start", "toolName": "bash"})
+    assert pet.state is PetState.ACTING
+    assert pet._status_block.text == "正在执行命令"
+
+    client.event.emit({"type": "tool_execution_end", "toolName": "bash"})
+    assert pet.state is PetState.COMPOSING
+
+
+def test_transient_status_stop_is_available_after_input_hides(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    pet, client = make_pet(qtbot, tmp_path)
+    aborts: list[bool] = []
+    monkeypatch.setattr(client, "abort", lambda: aborts.append(True) or "abort-test")
+    pet.bubble.summon()
+    pet.bubble.input.setPlainText("一个比较慢的问题")
+    pet.bubble._on_send()
+
+    assert not pet.bubble._input_visible()
+    assert pet._status_block.stop_button.isVisible()
+    pet._status_block.stop_button.click()
+
+    assert pet._aborted is True
+    assert aborts == [True]
+    assert not pet._status_block.stop_button.isVisible()
+
+
+def test_status_block_has_comic_pulse_without_exposing_reasoning(qtbot) -> None:
+    from haochen_app.pet.bubble import StatusBlock  # noqa: E402
+
+    block = StatusBlock("正在组织回答")
+    qtbot.addWidget(block)
+    block._pulse.setInterval(10)
+    before = block._lb.text()
+    qtbot.waitUntil(lambda: block._lb.text() != before, timeout=250)
+
+    assert block.text == "正在组织回答"
+    assert " ·" in block._lb.text()
+    block.set_text("想好了 ✓", animated=False)
+    assert not block._pulse.isActive()
 
 
 def test_bubble_toggle_and_escape(qtbot, tmp_path: Path) -> None:

@@ -139,15 +139,15 @@ class Runner:
         self.check("初始状态 IDLE", pa.state is PetState.IDLE)
         shot(pa.pet, "01-pet-idle.png")
         pa._toggle_bubble()  # 模拟双击唤起
-        self.check("唤起后 AWAKE", pa.state is PetState.AWAKE)
+        self.check("唤起后 LISTENING", pa.state is PetState.LISTENING)
         QTimer.singleShot(300, lambda: shot(pa.bubble, "02-bubble-summoned.png"))
         QTimer.singleShot(500, lambda: pa.send("你好，haochen，介绍一下你自己"))
-        # v0.2.0：消息经 coordinator 队列异步泄流，THINK 状态稍后出现
+        # v0.3.0：请求接单后由真实引擎事件进入 COMPOSING。
         QTimer.singleShot(1500, lambda: (
             shot(pa.pet, "03a-pet-thinking.png"),
             shot(pa.bubble, "03b-bubble-thinking.png"),
             self.check("生成中姿态 thinking", pa.pet.pose == "thinking", pa.pet.pose),
-            self.check("生成中状态 THINK", pa.state is PetState.THINK, pa.state.value)))
+            self.check("生成中状态 COMPOSING", pa.state is PetState.COMPOSING, pa.state.value)))
         pa.ctrl.summary_done.connect(self._s1_done)
 
     def _s1_done(self, summary: str):
@@ -167,7 +167,7 @@ class Runner:
                    and blocks[-1].expand_button.text() == "查看详情")
         forbidden = ("haochen-summary-phase", "【answer】", "【summary】")
         self.check("S1 用户结果不泄露协议词", not any(x in summary for x in forbidden))
-        self.check("S1 收敛后回 AWAKE", pa.state is PetState.AWAKE, pa.state.value)
+        self.check("S1 结果进入 PRESENTING", pa.state is PetState.PRESENTING, pa.state.value)
         QTimer.singleShot(250, lambda: (shot(pa.pet, "04b-pet-back-idle.png"),
                                         self.check("姿态回 idle", pa.pet.pose == "idle")))
         QTimer.singleShot(600, self.next)
@@ -199,7 +199,8 @@ class Runner:
         pa = self.pa
         ok = pa.bubble.confirm_pending
         self.check("S2 确认条已弹出", ok)
-        self.check("S2 状态 PERCEIVE/ACT", pa.state in (PetState.PERCEIVE, PetState.ACT),
+        self.check("S2 状态 PERCEIVING/ACTING",
+                   pa.state in (PetState.PERCEIVING, PetState.ACTING),
                    pa.state.value)
         shot(pa.bubble, "05-read-screen-confirm.png")
         # v0.1.7：感知提示单行不折行

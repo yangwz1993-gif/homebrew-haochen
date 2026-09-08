@@ -18,7 +18,7 @@ from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer, py
 from PyQt6.QtGui import QAction, QPixmap
 from PyQt6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLabel, QMenu, QVBoxLayout, QWidget
 
-from .. import paths
+from .. import a11y, paths
 from ..engine_client import haochen_home
 from ..secure_storage import atomic_write_private, ensure_private_file
 from .theme import ANIM_POSE_MS
@@ -76,7 +76,8 @@ class PetWindow(QWidget):
         self._floating_enabled = True
         self._float_timer = QTimer(self)
         self._float_timer.timeout.connect(self._float)
-        self._float_timer.start(_FLOAT_MS)
+        if not a11y.reduce_motion_enabled():
+            self._float_timer.start(_FLOAT_MS)
 
     # ── 姿态 ──────────────────────────────────────────────────
 
@@ -111,7 +112,7 @@ class PetWindow(QWidget):
             return  # C++ 对象已销毁（延迟回调触发）：静默
         self._pose = pose
         pm = self._pixmap(pose)
-        if animate and pm is not None and self.isVisible():
+        if animate and not a11y.reduce_motion_enabled() and pm is not None and self.isVisible():
             eff = QGraphicsOpacityEffect(self.label)
             self.label.setGraphicsEffect(eff)
             out = QPropertyAnimation(eff, b"opacity", self)

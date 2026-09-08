@@ -123,6 +123,7 @@ class PetApp(QObject):
         self.ctrl.summary_done.connect(self._on_summary_done)
         self.ctrl.answer_done.connect(self._on_answer_done)
         self.ctrl.failed.connect(self._on_failed)
+        self.ctrl.request_accepted.connect(self._on_request_accepted)
         self.ctrl.request_committed.connect(self._on_request_committed)
         self.ctrl.request_failed.connect(self._on_request_failed)
         self.coordinator.queue_changed.connect(lambda _queue: self._sync_queue_indicators())
@@ -201,7 +202,7 @@ class PetApp(QObject):
             self._place_bubble()
             self.bubble.summon(show_input=show_input)
             if self._state is PetState.IDLE:
-                self._set_state(PetState.AWAKE)
+                self._set_state(PetState.LISTENING)
 
     # ── 首启问称呼（v0.1.7）───────────────────────────────────
 
@@ -283,7 +284,7 @@ class PetApp(QObject):
         # 收起时确认条还悬着 → 按「取消」答复引擎（rpc-contract §5.3 cancelled）
         if self._confirm_id:
             self._resolve_confirm(cancelled=True)
-        if self._state is PetState.AWAKE:
+        if self._state in (PetState.LISTENING, PetState.PRESENTING):
             self._set_state(PetState.IDLE)
 
     def _on_escape(self) -> None:
@@ -338,8 +339,9 @@ class PetApp(QObject):
         self._aborted = False
         self._last_user_text = item.text
         write_last_user_text(self.client.home, item.text)
-        self._status_block = self.bubble.add_status(STATUS_LINE[PetState.THINK])
-        self._set_state(PetState.THINK)
+        self._status_block = self.bubble.add_status(
+            STATUS_LINE[PetState.ACKNOWLEDGING], cancellable=True)
+        self._set_state(PetState.ACKNOWLEDGING)
         self.bubble.set_busy(True)
         request_id = self.ctrl.send(item.text)
         if request_id is None:
@@ -387,6 +389,12 @@ class PetApp(QObject):
             self._queue_requests.pop(request_id, None)
             self.coordinator.acknowledge(request_id)
 
+    def _on_request_accepted(self, _request_id: str) -> None:
+        """只有引擎确认接单后才进入组织阶段，避免用计时器伪造进度。"""
+        if self._status_block is not None:
+            self._status_block.set_text(STATUS_LINE[PetState.COMPOSING])
+        self._set_state(PetState.COMPOSING)
+
     def _on_request_failed(self, request_id: str, _error: str) -> None:
         if request_id in self._queue_requests:
             self._queue_requests.pop(request_id, None)
@@ -399,7 +407,8 @@ class PetApp(QObject):
             self._aborted = True
             self.ctrl.abort()
             if self._status_block is not None:
-                self._status_block.set_text("已停止（保留已产内容）")
+                self._status_block.set_text(
+                    "已停止（保留已产内容）", animated=False, cancellable=False)
 
     # ── 会话编排信号 ──────────────────────────────────────────
 
@@ -407,20 +416,24 @@ class PetApp(QObject):
         self.bubble.set_busy(busy)
         if not busy:
             QTimer.singleShot(0, self._drain_queue)
-            if self._state not in (PetState.IDLE,) and self._state is not PetState.AWAKE:
-                self._set_state(PetState.AWAKE if self.bubble.summoned else PetState.IDLE)
+            # 正常完成会紧接着进入 PRESENTING，错误路径也有自己的终态处理。
+            # 此处不抢先切回 LISTENING，避免人物在“整理→呈现”之间闪一下 idle。
 
     def _on_answer_done(self, answer: str) -> None:
         self._last_answer = answer
 
     def _on_summarizing(self) -> None:
         if self._status_block is not None:
-            self._status_block.set_text(STATUS_LINE[PetState.CONVERGE])
-        self._set_state(PetState.CONVERGE)
+            self._status_block.set_text(STATUS_LINE[PetState.PRESENTING])
+        self._set_state(PetState.PRESENTING)
 
     def _on_summary_done(self, summary: str) -> None:
         if self._status_block is not None:
-            self._status_block.set_text("想好了 ✓" if not self._aborted else "已停止（基于已产内容）")
+            self._status_block.set_text(
+                "想好了 ✓" if not self._aborted else "已停止（基于已产内容）",
+                animated=False,
+                cancellable=False,
+            )
             self._status_block = None
         brief = summary.strip() or self._last_answer.strip() or "这次没有生成可显示的简答，请查看详情。"
         self._last_summary = brief
@@ -432,14 +445,14 @@ class PetApp(QObject):
         else:
             self._place_bubble()
         self._result_timer.start()
-        self._set_state(PetState.AWAKE)
+        self._set_state(PetState.PRESENTING)
 
     def _on_continue(self) -> None:
         """用户明确追问时才恢复输入；旧结果不继续占据 L1。"""
         self._result_timer.stop()
         self.bubble.start_input()
         self._place_bubble()
-        self._set_state(PetState.AWAKE)
+        self._set_state(PetState.LISTENING)
 
     def _dismiss_result_if_idle(self) -> None:
         """结果卡无交互 8 秒后退场；工作、确认和详情阶段绝不误收起。"""
@@ -465,7 +478,7 @@ class PetApp(QObject):
         if not self.bubble.summoned:
             self._place_bubble()
             self.bubble.summon()
-        self._set_state(PetState.AWAKE)
+        self._set_state(PetState.LISTENING)
 
     def _on_retry(self) -> None:
         if self.ctrl.busy:
@@ -496,7 +509,7 @@ class PetApp(QObject):
                 text = "；".join(x for x in (str(ev.get("title", "")).strip(),
                                              str(ev.get("message", "")).strip()) if x)
                 self.bubble.show_confirm(text or "允许这次操作吗？")
-                self._set_state(PetState.PERCEIVE)
+                self._set_state(PetState.PERCEIVING)
                 if not self.bubble.summoned:  # 确认需要用户注意 → 唤起
                     self._place_bubble()
                     self.bubble.summon()
@@ -504,12 +517,30 @@ class PetApp(QObject):
                 # 未实现的 method 一律取消（rpc-contract §5.3）
                 self.client.respond_ui(ev.get("id"), cancelled=True)
         elif t == "tool_execution_start" and ev.get("toolName") == "read_screen":
-            self.bubble.add_perception_hint(STATUS_LINE[PetState.PERCEIVE])
+            self.bubble.add_perception_hint("我正看一下你允许的屏幕内容")
             if self._status_block is not None:
-                self._status_block.set_text(STATUS_LINE[PetState.ACT])
-            self._set_state(PetState.ACT)
-        elif t == "tool_execution_end" and self._state is PetState.ACT:
-            self._set_state(PetState.THINK)  # 工具完毕，回第二 turn 生成
+                self._status_block.set_text("正在读取屏幕")
+            self._set_state(PetState.ACTING)
+        elif t == "tool_execution_start":
+            tool_name = str(ev.get("toolName") or "")
+            label = {
+                "bash": "正在执行命令",
+                "browser": "正在查看网页",
+                "write_file": "正在整理文件",
+            }.get(tool_name, "正在使用工具")
+            if self._status_block is not None:
+                self._status_block.set_text(label)
+            self._set_state(PetState.ACTING)
+        elif t == "tool_execution_end" and self._state is PetState.ACTING:
+            if self._status_block is not None:
+                self._status_block.set_text(STATUS_LINE[PetState.COMPOSING])
+            self._set_state(PetState.COMPOSING)
+        elif t == "message_update" and self.ctrl.busy:
+            update = ev.get("assistantMessageEvent") or {}
+            if update.get("type") == "text_delta":
+                if self._status_block is not None:
+                    self._status_block.set_text(STATUS_LINE[PetState.COMPOSING])
+                self._set_state(PetState.COMPOSING)
 
     def _on_confirm_resolved(self, ok: bool) -> None:
         self._resolve_confirm(confirmed=ok)
@@ -532,7 +563,7 @@ class PetApp(QObject):
         self._last_summary = ""
         self._last_user_text = ""
         self.client.new_session()
-        self._set_state(PetState.AWAKE if self.bubble.summoned else PetState.IDLE)
+        self._set_state(PetState.LISTENING if self.bubble.summoned else PetState.IDLE)
 
     def _on_settings(self) -> None:
         log.info("settings requested")

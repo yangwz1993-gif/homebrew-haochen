@@ -87,6 +87,23 @@ def test_reduce_motion_skips_decorative_fade(qtbot, monkeypatch) -> None:
     assert getattr(target2, "_fade_anim", None) is not None
 
 
+def test_pet_reduce_motion_uses_static_status_and_pose(qtbot, monkeypatch) -> None:
+    from haochen_app.pet import bubble as bubble_module
+    from haochen_app.pet import pet_window as pet_window_module
+
+    monkeypatch.setattr(a11y, "reduce_motion_enabled", lambda: True)
+    status = bubble_module.StatusBlock("正在组织回答")
+    qtbot.addWidget(status)
+    assert not status._pulse.isActive()
+
+    pet = pet_window_module.PetWindow()
+    qtbot.addWidget(pet)
+    assert not pet._float_timer.isActive()
+    pet.show()
+    pet.set_pose("thinking")
+    assert pet.label.graphicsEffect() is None
+
+
 def test_screen_of_falls_back_to_primary(qtbot) -> None:
     assert a11y.screen_of(None) is QApplication.primaryScreen()
     hidden = ChatWindow(FakeClient())
