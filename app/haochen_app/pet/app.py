@@ -39,8 +39,9 @@ log = logging.getLogger("haochen.pet")
 
 # v0.1.7 首启问称呼：这些回复视为「跳过」（落盘空名，不再问）
 _NAME_SKIP_WORDS = ("算了", "跳过", "不用了", "不用", "skip")
-RESULT_AUTO_DISMISS_MS = 8_000
+RESULT_AUTO_DISMISS_MS = 12_000
 ACK_MIN_VISIBLE_MS = 520
+DISCOVERY_HINT_MS = 8_500
 
 
 class PetApp(QObject):
@@ -49,6 +50,7 @@ class PetApp(QObject):
     state_changed = pyqtSignal(str)         # PetState.value
     expand_detail_answer = pyqtSignal(str)  # 旧 P4 接口（详情改走 detail_opener 注入，不再 emit）
     settings_requested = pyqtSignal()       # 右键「设置…」
+    credential_validation = pyqtSignal(bool, str)  # 最近一次真实请求是否证明当前凭据可用
 
     def __init__(self, mock: bool | None = None, client: EngineClient | None = None,
                  supervisor=None, parent=None):
@@ -273,7 +275,7 @@ class PetApp(QObject):
         self.bubble.summon(show_input=False)
         self.pet.raise_()
         self._discovery_hint_active = True
-        self._discovery_timer.start(4200)
+        self._discovery_timer.start(DISCOVERY_HINT_MS)
 
     def _hide_discovery_hint(self) -> None:
         if not self._discovery_hint_active:
@@ -421,6 +423,8 @@ class PetApp(QObject):
         if self.ctrl.busy or (self.supervisor is not None and self.supervisor.busy_except(self.ctrl)):
             return
         self._aborted = False
+        # 详情收起或旧结果退场可能仍有淡出回调在飞；新请求一开始就取得气泡所有权。
+        self.bubble.cancel_dismiss()
         self._perception_hint = None
         self._last_user_text = item.text
         write_last_user_text(self.client.home, item.text)
@@ -543,7 +547,10 @@ class PetApp(QObject):
             brief = "我停下来了。停止前生成的内容已经保留。"
         else:
             brief = summary.strip() or self._last_answer.strip() or "这次没有生成可显示的简答，请查看详情。"
+            self.credential_validation.emit(True, "模型连接正常")
         self._last_summary = brief
+        # 成功结果必须压过任何较早启动的收起动画，避免“详情里有答案、桌面结果消失”。
+        self.bubble.cancel_dismiss()
         self.bubble.present_summary(brief, cancelled=self._aborted)
         # 短结是「需要用户注意」的时刻：气泡没挂着就轻提示唤起
         if not self.bubble.summoned:
@@ -580,6 +587,7 @@ class PetApp(QObject):
     def _on_failed(self, err: str) -> None:
         from ..conversation import humanize_error
 
+        message = humanize_error(err)
         self._result_timer.stop()
         self._ack_timer.stop()
         self._deferred_work_state = None
@@ -587,7 +595,10 @@ class PetApp(QObject):
         self._perception_hint = None
         self.bubble.clear_flow()
         self.bubble.set_input_visible(False)
-        self.bubble.add_error(humanize_error(err))
+        self.bubble.cancel_dismiss()
+        self.bubble.add_error(message)
+        if message.startswith("API Key 无效"):
+            self.credential_validation.emit(False, message.split("。", 1)[0])
         self._set_state(PetState.ERROR)
         self._alert_pose_then_idle()
         if not self.bubble.summoned:
@@ -737,7 +748,9 @@ class PetApp(QObject):
     def restore_bubble(self) -> None:
         """详情收起后回到纯桌宠，不让旧结果重新常驻。"""
         self._detail_open = False
-        if self.bubble.summoned:
+        # 只收起打开详情时被隐藏的旧气泡。若用户已重新唤起可见气泡，晚到的
+        # collapse 回调不能把新的输入、工作态或结果一起关掉。
+        if self.bubble.summoned and not self.bubble.isVisible():
             self.bubble.dismiss()
 
     # ── 引擎崩溃 ──────────────────────────────────────────────

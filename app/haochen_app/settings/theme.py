@@ -58,6 +58,11 @@ QLabel#badgeOff {{
     font-size: {FONT_BODY_SM}pt;
     font-weight: 600;
 }}
+QLabel#badgeErr {{
+    color: {COLOR_DANGER};
+    font-size: {FONT_BODY_SM}pt;
+    font-weight: 600;
+}}
 QLabel#statusOk  {{ color: {COLOR_ACCENT}; font-size: {FONT_BODY_SM}pt; }}
 QLabel#statusWarn {{ color: {COLOR_WARN}; font-size: {FONT_BODY_SM}pt; }}
 QLabel#statusErr {{ color: {COLOR_DANGER}; font-size: {FONT_BODY_SM}pt; }}

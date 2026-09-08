@@ -83,6 +83,7 @@ class SettingsWindow(QWidget):
         super().__init__(parent)
         self.store = store or ConfigStore(home)
         self._pending_key_validations: dict[str, tuple[str, QLineEdit, QLabel, QPushButton]] = {}
+        self._runtime_key_validation: dict[str, tuple[bool, str]] = {}
         self.keyValidationFinished.connect(self._on_key_validation_finished)
         self.setWindowTitle("haochen 设置")
         self.setMinimumWidth(520)
@@ -234,10 +235,23 @@ class SettingsWindow(QWidget):
         for p in providers:
             configured, status = self.store.key_status(p.id)
             key = self.store.get_key(p.id)
+            runtime = self._runtime_key_validation.get(p.id)
+            if runtime is not None and not runtime[0]:
+                badge_text, badge_name = "当前凭据验证失败", "badgeErr"
+                placeholder = "重新输入有效 API Key"
+            elif runtime is not None and runtime[0]:
+                badge_text, badge_name = "已验证 · 安全存储", "badgeOk"
+                placeholder = "已验证，输入新 Key 可替换"
+            elif configured:
+                badge_text, badge_name = "已存储 · 尚未验证", "badgeOff"
+                placeholder = "已存储，输入新 Key 可验证或替换"
+            else:
+                badge_text, badge_name = status, "badgeOff"
+                placeholder = "输入 API Key"
 
             head = QHBoxLayout()
             head.addWidget(QLabel(p.name))
-            badge = QLabel(status, objectName="badgeOk" if configured else "badgeOff")
+            badge = QLabel(badge_text, objectName=badge_name)
             head.addWidget(badge)
             head.addStretch(1)
             lay.addLayout(head)
@@ -245,7 +259,7 @@ class SettingsWindow(QWidget):
             row = QHBoxLayout()
             edit = QLineEdit()
             edit.setEchoMode(QLineEdit.EchoMode.Password)
-            edit.setPlaceholderText("已安全存储，输入新 Key 可替换" if configured else "输入 API Key")
+            edit.setPlaceholderText(placeholder)
             managed_reference = bool(key and key.startswith("$HAOCHEN_") and key.endswith("_API_KEY"))
             if key and is_indirect_reference(key) and not managed_reference:
                 edit.setReadOnly(True)
@@ -265,10 +279,20 @@ class SettingsWindow(QWidget):
             lay.addLayout(row)
         return card
 
+    def set_runtime_key_validation(self, provider: str, valid: bool, message: str) -> None:
+        """记录本次运行的连接事实；Keychain 中“有值”不再冒充“验证成功”。"""
+        self._runtime_key_validation[provider] = (valid, message)
+        self._build()
+        if valid:
+            self._set_status(f"{provider}：连接已验证，凭据安全存储", ok=True)
+        else:
+            self._set_status(f"{provider}：{message}，请重新输入并验证", ok=False)
+
     def _save_key(self, provider: str, edit: QLineEdit, badge: QLabel, save: QPushButton) -> None:
         candidate = edit.text().strip()
         if not candidate:
             self.store.set_key(provider, "")
+            self._runtime_key_validation.pop(provider, None)
             configured, status = self.store.key_status(provider)
             self._update_key_badge(badge, configured, status)
             edit.setPlaceholderText("输入 API Key")
@@ -307,10 +331,11 @@ class SettingsWindow(QWidget):
         except Exception as exc:  # noqa: BLE001
             self._set_status(f"Keychain 保存失败：{exc}", ok=False)
             return
+        self._runtime_key_validation[provider] = (True, message)
         edit.clear()
-        edit.setPlaceholderText("已安全存储，输入新 Key 可替换")
+        edit.setPlaceholderText("已验证，输入新 Key 可替换")
         configured, status = self.store.key_status(provider)
-        self._update_key_badge(badge, configured, status)
+        self._update_key_badge(badge, configured, "已验证 · 安全存储")
         self._announce(f"{provider} 的 API Key", effect)
         self.restartRequired.emit(f"{provider} 的 API Key 已更新")
 

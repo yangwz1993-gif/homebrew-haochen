@@ -52,6 +52,8 @@ class PetWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
+        self.setAccessibleName("haochen 桌宠，点击开始对话")
+        self.setAccessibleDescription("单击人物打开输入气泡；右键打开菜单")
 
         self._size = PET_SIZE
         self._pose = ""
@@ -59,6 +61,7 @@ class PetWindow(QWidget):
         self._pose_anim = None
 
         self.label = QLabel()
+        self.label.setAccessibleName("haochen，点击开始对话")
         self.label.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

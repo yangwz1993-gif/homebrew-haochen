@@ -93,6 +93,54 @@ def test_continue_cancels_an_inflight_auto_dismiss(qtbot, tmp_path: Path) -> Non
     assert pet.bubble._input_visible()
 
 
+def test_success_result_cancels_any_stale_dismiss_animation(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet.bubble.dismiss()
+
+    pet._on_summary_done("答案已经生成。")
+    qtbot.wait(250)
+
+    assert pet.bubble.summoned
+    assert pet.bubble.isVisible()
+    assert pet.state is PetState.PRESENTING
+
+
+def test_late_detail_collapse_does_not_hide_reopened_bubble(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet._detail_open = True
+    pet.bubble.hide()  # 打开详情时保留 summoned 标记的隐藏状态
+    pet.bubble.start_input()  # 用户已重新开始一次可见交互
+
+    pet.restore_bubble()  # 较晚到达的详情收起回调
+    qtbot.wait(250)
+
+    assert pet.bubble.summoned
+    assert pet.bubble.isVisible()
+    assert pet.bubble._input_visible()
+
+
+def test_short_results_survive_repeated_detail_close_races(qtbot, tmp_path: Path) -> None:
+    """回归 B1：20 次详情收起竞态 + 50 次短结果均必须留在桌面层。"""
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+
+    for index in range(50):
+        if index < 20:
+            pet._detail_open = True
+            pet.bubble.hide()
+            pet.bubble.start_input()
+            pet.restore_bubble()
+        elif index % 2:
+            pet.bubble.dismiss()
+        pet._on_summary_done(f"短答 {index}")
+        assert pet.bubble.summoned
+        assert pet.bubble.isVisible()
+        assert pet.state is PetState.PRESENTING
+        pet._on_continue()
+
+
 def test_result_auto_dismisses_without_interaction(qtbot, tmp_path: Path) -> None:
     pet, _client = make_pet(qtbot, tmp_path)
     pet._result_timer.setInterval(20)
@@ -102,6 +150,10 @@ def test_result_auto_dismisses_without_interaction(qtbot, tmp_path: Path) -> Non
     qtbot.waitUntil(lambda: pet.state is PetState.IDLE, timeout=1000)
     assert not pet.bubble.summoned
     assert pet.state is PetState.IDLE
+
+
+def test_default_result_dwell_is_long_enough_to_read() -> None:
+    assert pet_module.RESULT_AUTO_DISMISS_MS >= 10_000
 
 
 def test_destroying_bubble_stops_result_timer(qtbot, tmp_path: Path) -> None:
@@ -142,6 +194,16 @@ def test_cancelled_result_says_it_only_contains_completed_content(qtbot, tmp_pat
     labels = " ".join(label.text() for label in pet.bubble.findChildren(QLabel))
     assert "已停止" in labels
     assert "停止前生成的内容已经保留" in labels
+
+
+def test_invalid_key_failure_reports_runtime_validation(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+    reported: list[tuple[bool, str]] = []
+    pet.credential_validation.connect(lambda ok, message: reported.append((ok, message)))
+
+    pet._on_failed("Header 'Authorization' has invalid value")
+
+    assert reported == [(False, "API Key 无效或格式不正确")]
 
 
 def test_retry_resends_pending_review_item(qtbot, tmp_path: Path) -> None:
@@ -218,6 +280,8 @@ def test_first_use_hint_turns_first_click_into_input(qtbot, tmp_path: Path) -> N
 
     assert not pet._discovery_hint_active
     assert pet.bubble.summoned
+    assert pet_module.DISCOVERY_HINT_MS >= 6_000
+    assert "点击开始对话" in pet.pet.accessibleName()
     assert pet.bubble._input_visible()
     assert pet.state is PetState.LISTENING
 

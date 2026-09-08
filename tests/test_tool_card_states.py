@@ -39,6 +39,25 @@ def test_tool_card_shows_elapsed_time(qtbot) -> None:
     assert "1.5s" in card.status.text()
 
 
+def test_denied_read_screen_never_uses_success_checkmark(qtbot) -> None:
+    card = ToolCard("call-screen", "read_screen")
+    card.mark_not_run("已拒绝")
+    card.mark_done(
+        "用户拒绝了读屏请求（或超时未确认）。请基于已有信息回答。",
+        is_error=False,
+    )
+
+    assert card.status.text() == "未执行 · 已拒绝"
+    assert "✓" not in card.status.text()
+
+
+def test_historical_denied_read_screen_is_detected_from_result(qtbot) -> None:
+    card = ToolCard("call-screen", "read_screen")
+    card.mark_done("用户拒绝了读屏请求（或超时未确认）。", is_error=False)
+
+    assert card.status.text() == "未执行 · 已拒绝/超时"
+
+
 def test_tool_card_exposes_artifact_path(qtbot) -> None:
     card = ToolCard("call-1", "write", {"file_path": "/tmp/report.md", "content": "x"})
     assert card.artifact_path() == Path("/tmp/report.md")

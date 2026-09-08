@@ -300,6 +300,7 @@ class ToolCard(QFrame):
         self.args = args or {}
         self.output = ""
         self.is_error = False
+        self._not_run_reason = ""
         self._expanded = False
         self._started_at: float | None = None
 
@@ -406,7 +407,15 @@ class ToolCard(QFrame):
         self.is_error = is_error
         self.output = result_text or ""
         self.cancel_button.hide()
-        if is_error:
+        denied_read = self.tool_name == "read_screen" and any(
+            token in self.output for token in ("用户拒绝了读屏", "超时未确认")
+        )
+        if self._not_run_reason or denied_read:
+            reason = self._not_run_reason or "已拒绝/超时"
+            self.status.setText(f"未执行 · {reason}")
+            self._set_status_color(C["ink_soft"])
+            self.retry_button.hide()
+        elif is_error:
             self.status.setText("✗ 失败")
             self._set_status_color(C["danger"])
             self.retry_button.show()
@@ -414,6 +423,14 @@ class ToolCard(QFrame):
             elapsed = self._format_elapsed(elapsed_ms)
             self.status.setText(f"✓ 完成{elapsed}")
             self._set_status_color(C["accent"])
+        self._refresh_detail()
+
+    def mark_not_run(self, reason: str) -> None:
+        """用户拒绝或取消敏感工具时使用中性终态，不展示成功对勾。"""
+        self._not_run_reason = reason
+        self.cancel_button.hide()
+        self.status.setText(f"未执行 · {reason}")
+        self._set_status_color(C["ink_soft"])
         self._refresh_detail()
 
     def mark_cancelled(self) -> None:

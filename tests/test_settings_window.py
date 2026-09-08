@@ -46,6 +46,34 @@ def test_provider_key_badge_and_readonly_reference(qtbot, tmp_path: Path) -> Non
     assert readonly and readonly[0].toolTip()
 
 
+def test_stored_key_is_not_presented_as_runtime_validated(qtbot, tmp_path: Path) -> None:
+    window, store, credentials = make_window(qtbot, tmp_path)
+    credentials.set("deepseek", "stored-secret")
+    store.set_key("deepseek", "stored-secret")
+    window._build()
+
+    labels = window.findChildren(settings_module.QLabel)
+    badge = next(label for label in labels if "已存储" in label.text())
+
+    assert badge.text() == "已存储 · 尚未验证"
+    assert badge.objectName() == "badgeOff"
+
+
+def test_runtime_key_failure_overrides_storage_badge(qtbot, tmp_path: Path) -> None:
+    window, store, credentials = make_window(qtbot, tmp_path)
+    credentials.set("deepseek", "invalid-secret")
+    store.set_key("deepseek", "invalid-secret")
+
+    window.set_runtime_key_validation("deepseek", False, "API Key 无效或格式不正确")
+
+    badges = [
+        label for label in window.findChildren(settings_module.QLabel)
+        if label.objectName() == "badgeErr"
+    ]
+    assert badges and badges[0].text() == "当前凭据验证失败"
+    assert "重新输入并验证" in window._status.text()
+
+
 def test_key_save_flow_validate_fail_keeps_old(qtbot, tmp_path: Path, monkeypatch) -> None:
     window, store, credentials = make_window(qtbot, tmp_path)
     credentials.set("deepseek", "old-secret")

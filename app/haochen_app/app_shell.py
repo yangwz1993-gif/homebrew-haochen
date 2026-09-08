@@ -56,6 +56,7 @@ class AppShell:
         self.pet.detail_opener = self.chat.open_from_bubble
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
         self.pet.settings_requested.connect(self.show_settings)
+        self.pet.credential_validation.connect(self._on_credential_validation)
         self.settings.closed.connect(self.pet.restore_after_settings)
 
         # 配置 → 引擎生效链（M-D 预留信号，P4 接线）
@@ -92,6 +93,12 @@ class AppShell:
         self.settings.show()
         self.settings.raise_()
         self.settings.activateWindow()
+
+    def _on_credential_validation(self, valid: bool, message: str) -> None:
+        """把真实请求结果带回设置页，区分“凭据存在”和“凭据可用”。"""
+        provider, _model = self.store.default_model()
+        if provider:
+            self.settings.set_runtime_key_validation(provider, valid, message)
 
     # ── 配置生效链 ─────────────────────────────────────────────
 

@@ -823,10 +823,17 @@ class ChatWindow(QWidget):
         if confirmed is None:
             self.client.respond_ui(rid, cancelled=True)
             note, kind = "已取消读屏", "notice"
+            terminal_reason = "已取消"
         else:
             self.client.respond_ui(rid, confirmed=confirmed)
             note = "已授权读屏" if confirmed else "已拒绝读屏"
             kind = "perceive" if confirmed else "notice"
+            terminal_reason = "" if confirmed else "已拒绝"
+        if terminal_reason:
+            for card in reversed(list(self._tool_cards.values())):
+                if card.tool_name == "read_screen":
+                    card.mark_not_run(terminal_reason)
+                    break
         self._drop_row(row)
         self._add_row(StatusBubble(note, kind), "left")
 
