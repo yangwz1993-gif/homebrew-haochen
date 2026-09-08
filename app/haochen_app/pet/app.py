@@ -7,12 +7,12 @@ P4 集成接口（给对话窗口/集成负责人）：
 - 共享会话：对话窗口用**同一个 EngineClient 实例**（或同一引擎进程）构造自己的
   ConversationController 并订阅 client.event；气泡 ↔ 窗口天然共享引擎侧同一会话。
   切换/恢复会话用 client.get_messages() 拉同一份历史（rpc-contract §2.5/§7）。
-- 「展开详细」（v0.1.4 hotfix）：改回打开完整对话窗口 ChatWindow 的「从气泡展开」
+- 「查看详情」：打开完整对话窗口 ChatWindow 的「从气泡展开」
   模式（open_from_bubble）。PetApp 不直接持有 chat 引用，由壳层注入
   `pet.detail_opener = chat.open_from_bubble` 并接
   `chat.detail_collapsed.connect(pet.restore_bubble)`；未注入时按钮点击为空操作。
   expand_detail_answer 信号保留但不再 emit。
-- 「设置」占位：PetApp.settings_requested = pyqtSignal()，P4 接配置面板。
+- 「设置」：PetApp.settings_requested = pyqtSignal()，由壳层打开配置面板。
 - 状态机：PetApp.state（PetState 枚举），state_changed = pyqtSignal(str)。
 """
 
@@ -38,6 +38,7 @@ log = logging.getLogger("haochen.pet")
 
 # v0.1.7 首启问称呼：这些回复视为「跳过」（落盘空名，不再问）
 _NAME_SKIP_WORDS = ("算了", "跳过", "不用了", "不用", "skip")
+RESULT_AUTO_DISMISS_MS = 8_000
 
 
 class PetApp(QObject):
@@ -45,7 +46,7 @@ class PetApp(QObject):
 
     state_changed = pyqtSignal(str)         # PetState.value
     expand_detail_answer = pyqtSignal(str)  # 旧 P4 接口（详情改走 detail_opener 注入，不再 emit）
-    settings_requested = pyqtSignal()       # 右键「设置（占位）」
+    settings_requested = pyqtSignal()       # 右键「设置…」
 
     def __init__(self, mock: bool | None = None, client: EngineClient | None = None,
                  supervisor=None, parent=None):
@@ -88,6 +89,10 @@ class PetApp(QObject):
 
         self.pet = PetWindow(hotkey_hint=HOTKEY_LABEL if ok else "双击")
         self.bubble = BubbleWindow()
+        self._result_timer = QTimer(self)
+        self._result_timer.setSingleShot(True)
+        self._result_timer.setInterval(RESULT_AUTO_DISMISS_MS)
+        self._result_timer.timeout.connect(self._dismiss_result_if_idle)
 
         # ── L0 桌宠 ──
         self.pet.summon_requested.connect(self._toggle_bubble)
@@ -101,6 +106,7 @@ class PetApp(QObject):
         self.bubble.escape_requested.connect(self._on_escape)
         self.bubble.dismissed.connect(self._on_dismissed)
         self.bubble.expand_detail.connect(self._on_expand_detail)
+        self.bubble.continue_requested.connect(self._on_continue)
         self.bubble.retry_requested.connect(self._on_retry)
         self.bubble.confirm_resolved.connect(self._on_confirm_resolved)
 
@@ -179,8 +185,12 @@ class PetApp(QObject):
         if self.bubble.summoned:
             self.bubble.dismiss()
         else:
+            self._result_timer.stop()
+            show_input = not self.ctrl.busy and self._confirm_id is None
+            if show_input:
+                self.bubble.start_input()
             self._place_bubble()
-            self.bubble.summon()
+            self.bubble.summon(show_input=show_input)
             if self._state is PetState.IDLE:
                 self._set_state(PetState.AWAKE)
 
@@ -260,6 +270,7 @@ class PetApp(QObject):
             self._place_bubble()
 
     def _on_dismissed(self) -> None:
+        self._result_timer.stop()
         # 收起时确认条还悬着 → 按「取消」答复引擎（rpc-contract §5.3 cancelled）
         if self._confirm_id:
             self._resolve_confirm(cancelled=True)
@@ -287,6 +298,7 @@ class PetApp(QObject):
     # ── 发送 / 打断 ───────────────────────────────────────────
 
     def send(self, text: str) -> None:
+        self._result_timer.stop()
         # v0.1.7 首启问称呼：等待称呼时，像称呼的输入拦截落盘，不进引擎；
         # 不像称呼（长句/带标点）则当正常提问放行，本次会话不再拦。
         if self._awaiting_name:
@@ -294,6 +306,9 @@ class PetApp(QObject):
                 self._handle_name_reply(text)
                 return
             self._awaiting_name = False
+        # 每次新请求只占用当前临时层；历史仍由完整会话窗口保存。
+        if not self.ctrl.busy and self._confirm_id is None and not self.bubble._input_visible():
+            self.bubble.clear_flow()
         item = self.coordinator.enqueue(text, "pet")
         self.bubble.add_user_message(text)
         if self.ctrl.busy or (self.supervisor is not None and self.supervisor.busy_except(self.ctrl)):
@@ -398,20 +413,36 @@ class PetApp(QObject):
         if self._status_block is not None:
             self._status_block.set_text("想好了 ✓" if not self._aborted else "已停止（基于已产内容）")
             self._status_block = None
-        if summary:
-            self._last_summary = summary
-            self.bubble.add_summary(summary)
-        # §5 动态对话流：回合结束、可追问时再弹出输入区
-        self.bubble.set_input_visible(True)
+        brief = summary.strip() or self._last_answer.strip() or "这次没有生成可显示的简答，请查看详情。"
+        self._last_summary = brief
+        self.bubble.present_summary(brief)
         # 短结是「需要用户注意」的时刻：气泡没挂着就轻提示唤起
         if not self.bubble.summoned:
             self._place_bubble()
-            self.bubble.summon()
+            self.bubble.summon(show_input=False)
+        else:
+            self._place_bubble()
+        self._result_timer.start()
         self._set_state(PetState.AWAKE)
+
+    def _on_continue(self) -> None:
+        """用户明确追问时才恢复输入；旧结果不继续占据 L1。"""
+        self._result_timer.stop()
+        self.bubble.start_input()
+        self._place_bubble()
+        self._set_state(PetState.AWAKE)
+
+    def _dismiss_result_if_idle(self) -> None:
+        """结果卡无交互 8 秒后退场；工作、确认和详情阶段绝不误收起。"""
+        if (self.ctrl.busy or self._confirm_id is not None or self._detail_open
+                or self.bubble._input_visible() or not self.bubble.summoned):
+            return
+        self.bubble.dismiss()
 
     def _on_failed(self, err: str) -> None:
         from ..conversation import humanize_error
 
+        self._result_timer.stop()
         self._status_block = None
         self.bubble.add_error(humanize_error(err))
         self.bubble.set_input_visible(True)  # 出错可重试/重新提问
@@ -489,11 +520,11 @@ class PetApp(QObject):
         self._set_state(PetState.AWAKE if self.bubble.summoned else PetState.IDLE)
 
     def _on_settings(self) -> None:
-        log.info("settings placeholder clicked (P4 接配置面板)")
+        log.info("settings requested")
         self.settings_requested.emit()
 
     def _on_expand_detail(self) -> None:
-        """「展开详细」（v0.1.4 hotfix）：改回打开完整对话窗口的「从气泡展开」模式。
+        """「查看详情」：打开完整对话窗口的「从气泡展开」模式。
 
         PetApp 不持有 chat 引用：壳层注入 detail_opener（= ChatWindow.open_from_bubble），
         并接 ChatWindow.detail_collapsed → restore_bubble。未注入时为空操作。
@@ -503,6 +534,7 @@ class PetApp(QObject):
         if self.detail_opener is None:
             log.warning("detail_opener 未注入（应由壳层接线 chat.open_from_bubble）")
             return
+        self._result_timer.stop()
         # 打开时气泡隐藏（不播收起动画、不动 _shown 标记），对话窗口从气泡 rect 长出
         rect = self.bubble.geometry()
         self._detail_open = True
@@ -510,11 +542,10 @@ class PetApp(QObject):
         self.detail_opener(rect)
 
     def restore_bubble(self) -> None:
-        """详情收起（ChatWindow.detail_collapsed）→ 气泡原样恢复显示。"""
+        """详情收起后回到纯桌宠，不让旧结果重新常驻。"""
         self._detail_open = False
         if self.bubble.summoned:
-            self.bubble.show()
-            self.bubble.raise_()
+            self.bubble.dismiss()
 
     # ── 引擎崩溃 ──────────────────────────────────────────────
 

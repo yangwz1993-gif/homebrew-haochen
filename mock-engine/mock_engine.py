@@ -289,10 +289,9 @@ class MockEngine:
     def _summary_turn(self) -> None:
         self.send({"type": "message_start",
                    "message": self.assistant_message([])})
-        summary = ("【summary】\n结论：mock 引擎按契约完成两步输出。"
-                   "要点：answer 回合携带【answer】标记；本回合由壳发 "
-                   "haochen-summary-phase 踢令触发，只产【summary】标记；"
-                   "事件序列与真引擎一致。\n【/summary】")
+        summary = ("【summary】\nmock 引擎工作正常。\n"
+                   "- 请求已完成，结果可以直接查看。\n"
+                   "- 需要更多依据时，请打开详情。\n【/summary】")
         if self.aborted or not self.stream_text(summary, 0):
             self._finish_assistant([{"type": "text", "text": ""}], "aborted")
             return

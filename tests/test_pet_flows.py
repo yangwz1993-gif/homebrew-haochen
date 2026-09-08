@@ -68,7 +68,37 @@ def test_send_runs_two_step_round_and_shows_summary(qtbot, tmp_path: Path) -> No
     assert not pet.ctrl.busy
     assert pet.state.value == "AWAKE"
     from haochen_app.pet.bubble import SummaryBlock  # noqa: E402
-    assert pet.bubble.findChildren(SummaryBlock)
+    blocks = pet.bubble.findChildren(SummaryBlock)
+    assert blocks
+    assert blocks[-1].continue_button.text() == "继续问"
+    assert blocks[-1].expand_button.text() == "查看详情"
+    assert not pet.bubble._input_visible()
+    assert pet._result_timer.isActive()
+
+
+def test_result_continue_restores_only_input(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet._on_summary_done("问题在依赖版本。")
+
+    from haochen_app.pet.bubble import SummaryBlock  # noqa: E402
+    block = pet.bubble.findChildren(SummaryBlock)[-1]
+    block.continue_button.click()
+
+    assert pet.bubble._input_visible()
+    assert not pet.bubble.findChildren(SummaryBlock)
+    assert not pet._result_timer.isActive()
+
+
+def test_result_auto_dismisses_without_interaction(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet._result_timer.setInterval(20)
+    pet.bubble.summon()
+    pet._on_summary_done("已经处理好了。")
+
+    qtbot.waitUntil(lambda: pet.state is PetState.IDLE, timeout=1000)
+    assert not pet.bubble.summoned
+    assert pet.state is PetState.IDLE
 
 
 def test_abort_stops_round_and_keeps_state_visible(qtbot, tmp_path: Path) -> None:

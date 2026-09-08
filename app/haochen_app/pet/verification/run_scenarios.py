@@ -6,12 +6,12 @@
 
 场景（对应验收清单）：
   S0 首启问称呼  → 首次唤起即锚定人物正上方（间隙 8px）+ 问候块 → 输入称呼落盘不再问（v0.1.7）
-  S1 普通问答    → 用户消息/思考状态/短结逐条弹出，姿态 idle→thinking→idle
+  S1 普通问答    → 输入退场/思考状态/单轮结果卡，姿态 idle→thinking→idle
   S2 读屏确认    → 感知提示（单行不折行）+「读吧/不读」确认条 → 回车=「读吧」→ 短结（v0.1.7）
   S3 错误路径    → 错误块 + alert(angry) 姿态
   S4 Esc 打断    → abort，已产内容保留，状态条标「已停止」
   S5 Esc 收起    → 气泡淡出，状态回 IDLE（失焦不收起由 changeEvent 保证，人工可验）
-  S6 展开详细    → ChatWindow 从气泡 rect 展开；Esc 收起 → app 不退出、窗口隐藏、气泡恢复
+  S6 查看详情    → ChatWindow 从气泡 rect 展开；Esc 收起 → app 不退出、窗口与旧结果都退场
   S7 展开后 ⌘W   → 同上（⌘W 快捷键槽 + closeEvent 两条路径同样只收出不退出）
   S8 几何/联动   → 气泡在人物正上方不重叠；拖人物→气泡跟随、拖气泡→人物跟随；位置记忆恢复（v0.1.6）
 
@@ -40,7 +40,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QPushButton
 
 from haochen_app.pet import PetApp, PetState
-from haochen_app.pet.bubble import GreetBlock, HintBlock
+from haochen_app.pet.bubble import GreetBlock, HintBlock, SummaryBlock
 from haochen_app.pet.pet_window import PetWindow
 from haochen_app.pet.profile import should_ask_name
 
@@ -153,8 +153,20 @@ class Runner:
     def _s1_done(self, summary: str):
         pa = self.pa
         pa.ctrl.summary_done.disconnect(self._s1_done)
+        QTimer.singleShot(250, lambda: self._s1_result_ready(summary))
+
+    def _s1_result_ready(self, summary: str):
+        pa = self.pa
         shot(pa.bubble, "04-summary-l1.png")
         self.check("S1 短结非空", bool(summary.strip()), summary[:30])
+        blocks = pa.bubble.findChildren(SummaryBlock)
+        self.check("S1 结果卡已稳定渲染", bool(blocks))
+        self.check("S1 结果阶段不常驻输入框", not pa.bubble._input_visible())
+        self.check("S1 结果卡提供继续问与查看详情", bool(blocks)
+                   and blocks[-1].continue_button.text() == "继续问"
+                   and blocks[-1].expand_button.text() == "查看详情")
+        forbidden = ("haochen-summary-phase", "【answer】", "【summary】")
+        self.check("S1 用户结果不泄露协议词", not any(x in summary for x in forbidden))
         self.check("S1 收敛后回 AWAKE", pa.state is PetState.AWAKE, pa.state.value)
         QTimer.singleShot(250, lambda: (shot(pa.pet, "04b-pet-back-idle.png"),
                                         self.check("姿态回 idle", pa.pet.pose == "idle")))
@@ -220,8 +232,13 @@ class Runner:
         pa = self.pa
         pa.ctrl.summary_done.disconnect(self._s2_done)
         pa.ctrl.answer_done.disconnect(self._s2_answer_got)
+        QTimer.singleShot(250, lambda: self._s2_result_ready(summary))
+
+    def _s2_result_ready(self, summary: str):
+        pa = self.pa
         shot(pa.bubble, "06-read-screen-done.png")
         self.check("S2 读屏后短结非空", bool(summary.strip()), summary[:30])
+        self.check("S2 读屏结果不恢复输入框", not pa.bubble._input_visible())
         # mock 的 summary 回合文案固定，读屏语义改在 answer 详答上验
         self.check("S2 详答含读屏语义", "屏" in self._s2_answer, self._s2_answer[:40])
         QTimer.singleShot(300, self.next)
@@ -297,7 +314,7 @@ class Runner:
         self.chat.close()  # closeEvent 路径（系统级关闭/Mission Control）
 
     def _expand_then(self, tag: str, closer, after):
-        """展开详情 → 断言展开态 → closer() 收起 → 断言「不退出 + 隐藏 + 气泡恢复」。"""
+        """展开详情 → 断言展开态 → closer() 收起 → 断言窗口和旧结果都退场。"""
         pa = self.pa
         if not pa.bubble.summoned:
             pa._toggle_bubble()
@@ -318,8 +335,9 @@ class Runner:
         self.check(f"{tag} 后 app 未退出（无 aboutToQuit）", not self.app_quit)
         self.check(f"{tag} 后对话窗口已隐藏", not chat.isVisible())
         self.check(f"{tag} 后退出详情模式", not chat._detail_mode)
-        self.check(f"{tag} 后气泡已恢复显示", pa.bubble.isVisible() and pa.bubble.summoned)
-        shot(pa.bubble, f"10-bubble-restored-{tag}.png")
+        self.check(f"{tag} 后旧结果未恢复常驻", not pa.bubble.isVisible()
+                   and not pa.bubble.summoned)
+        self.check(f"{tag} 后桌宠回 IDLE", pa.state is PetState.IDLE, pa.state.value)
         QTimer.singleShot(300, after)
 
     # ── S7 展开详细 → ⌘W / closeEvent 收起 ──
@@ -448,7 +466,8 @@ def main() -> int:
     QTimer.singleShot(120000, app.quit)  # 全局兜底
     code = app.exec()
     pa.client.stop()
-    return code
+    failed = any(line.startswith("FAIL") for line in runner.results)
+    return 1 if failed else code
 
 
 if __name__ == "__main__":

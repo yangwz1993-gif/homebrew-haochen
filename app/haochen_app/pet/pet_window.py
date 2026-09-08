@@ -229,7 +229,7 @@ class PetWindow(QWidget):
         act_new = QAction("新会话", self)
         act_new.triggered.connect(self.new_session_requested.emit)
         menu.addAction(act_new)
-        act_settings = QAction("设置（占位）", self)
+        act_settings = QAction("设置…", self)
         act_settings.triggered.connect(self.settings_requested.emit)
         menu.addAction(act_settings)
         menu.addSeparator()

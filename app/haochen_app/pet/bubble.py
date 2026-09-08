@@ -151,9 +151,10 @@ class StatusBlock(QWidget):
 
 
 class SummaryBlock(QWidget):
-    """L1 短结卡：米白卡面、无描边 + 「展开详细」按钮（打开完整对话窗口）。"""
+    """L1 结果卡：简答 +「继续问 / 查看详情」两个明确动作。"""
 
     expand_clicked = pyqtSignal()
+    continue_clicked = pyqtSignal()
 
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
@@ -169,15 +170,30 @@ class SummaryBlock(QWidget):
         lb = _text_label(text, f"color: {T.COLOR_INK};")
         cl.addWidget(lb)
         row = QHBoxLayout()
+        row.setSpacing(8)
         row.addStretch(1)
-        btn = QPushButton("展开详细 ›")
-        btn.setToolTip("打开完整对话窗口看详答与结论（Esc / ⌘W 收起）")
-        btn.setStyleSheet(
-            f"QPushButton {{ border: none; color: {T.COLOR_ACCENT}; font-weight: bold;"
-            f" font-size: {T.FONT_BODY_SM}px; padding: 2px 4px; }}"
-            f"QPushButton:hover {{ text-decoration: underline; }}")
-        btn.clicked.connect(self.expand_clicked.emit)
-        row.addWidget(btn)
+        continue_btn = QPushButton("继续问")
+        continue_btn.setAccessibleName("继续提问")
+        continue_btn.setToolTip("收起当前结果并继续提问")
+        continue_btn.setStyleSheet(
+            f"QPushButton {{ background: {T.COLOR_SURFACE}; color: {T.COLOR_INK_SOFT};"
+            f" border: 1px solid {T.COLOR_LINE_SOFT}; border-radius: {T.RADIUS_BUTTON}px;"
+            f" font-size: {T.FONT_BODY_SM}px; padding: 5px 10px; }}"
+            f"QPushButton:hover {{ background: {T.COLOR_BG}; color: {T.COLOR_INK}; }}")
+        continue_btn.clicked.connect(self.continue_clicked.emit)
+        self.continue_button = continue_btn
+        row.addWidget(continue_btn)
+        detail_btn = QPushButton("查看详情")
+        detail_btn.setAccessibleName("查看当前会话详情")
+        detail_btn.setToolTip("打开完整对话窗口（Esc / ⌘W 收起）")
+        detail_btn.setStyleSheet(
+            f"QPushButton {{ background: {T.COLOR_ACCENT}; color: #fff; border: none;"
+            f" border-radius: {T.RADIUS_BUTTON}px; font-weight: bold;"
+            f" font-size: {T.FONT_BODY_SM}px; padding: 5px 12px; }}"
+            f"QPushButton:hover {{ background: {T.COLOR_ACCENT_DEEP}; }}")
+        detail_btn.clicked.connect(self.expand_clicked.emit)
+        self.expand_button = detail_btn
+        row.addWidget(detail_btn)
         cl.addLayout(row)
         lay.addWidget(card)
 
@@ -277,7 +293,8 @@ class BubbleWindow(QWidget):
     abort_requested = pyqtSignal()      # 停 / Esc 打断
     escape_requested = pyqtSignal()     # Esc（外层决定打断还是收起）
     dismissed = pyqtSignal()            # 气泡收起（✕ / 点外 / Esc）
-    expand_detail = pyqtSignal()        # 「展开详细」→ 对话窗口从气泡展开（v0.1.4 hotfix）
+    expand_detail = pyqtSignal()        # 「查看详情」→ 对话窗口从气泡展开
+    continue_requested = pyqtSignal()   # 结果卡「继续问」→ 回到轻量输入
     retry_requested = pyqtSignal()      # 错误块重试
     confirm_resolved = pyqtSignal(bool) # 读屏确认条结果
     moved = pyqtSignal(int, int)        # v0.1.6：气泡拖动中（外层联动桌宠跟随）
@@ -501,7 +518,21 @@ class BubbleWindow(QWidget):
     def add_summary(self, text: str) -> None:
         block = SummaryBlock(text)
         block.expand_clicked.connect(self.expand_detail.emit)
+        block.continue_clicked.connect(self.continue_requested.emit)
         self._append(block)
+
+    def present_summary(self, text: str) -> None:
+        """结果阶段只显示当前简答，不保留历史流、输入框或滚动条。"""
+        self.clear_flow()
+        self.set_input_visible(False)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.add_summary(text)
+
+    def start_input(self) -> None:
+        """进入 LISTENING：清掉旧临时层，只显示输入区。"""
+        self.clear_flow()
+        self.set_input_visible(True)
+        self.focus_input()
 
     def add_greeting(self, text: str) -> None:
         """系统发言卡（v0.1.7：首启问称呼 / 称呼确认回复）。"""
@@ -518,7 +549,10 @@ class BubbleWindow(QWidget):
             item = self.flow.takeAt(0)
             w = item.widget()
             if w:
+                w.setParent(None)
                 w.deleteLater()
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._refresh_height()
 
     # ── 读屏确认条 ────────────────────────────────────────────
 
@@ -574,14 +608,14 @@ class BubbleWindow(QWidget):
 
     # ── 唤起 / 收起 ───────────────────────────────────────────
 
-    def summon(self) -> None:
+    def summon(self, *, show_input: bool = True) -> None:
         """唤起：从桌宠方向淡入 + 上滑 ~10px（200ms，ease-out）。"""
         if self._shown:
             return
         self._shown = True
         # v0.1.7：先定输入区/内容高度再取锚点——否则 pos 动画终点按过期高度算出，
         # 之后内容撑高时动画仍把窗口拉回旧位置，气泡就和人物脱节了
-        self.set_input_visible(True)
+        self.set_input_visible(show_input)
         self._refresh_height()
         target = self.pos()
         self.move(target + QPoint(0, _SLIDE_PX))
@@ -602,7 +636,10 @@ class BubbleWindow(QWidget):
         anim_pos.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
         anim_op.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
         self._anims += [anim_pos, anim_op]
-        self.focus_input()
+        if show_input:
+            self.focus_input()
+        else:
+            self.raise_()
 
     def dismiss(self) -> None:
         """收起：淡出 150ms。失焦不走这里（interaction-spec §0.5/§2）。"""
