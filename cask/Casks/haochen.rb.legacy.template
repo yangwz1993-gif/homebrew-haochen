@@ -16,7 +16,7 @@ cask "haochen" do
 
   postflight_steps do
     run "/usr/bin/xattr",
-        args: ["-dr", "com.apple.quarantine", "#{staged_path}/haochen.app"]
+        args: ["-dr", "com.apple.quarantine", "{{staged_path}}/haochen.app"]
   end
 
   zap trash: "~/Library/Application Support/haochen"
