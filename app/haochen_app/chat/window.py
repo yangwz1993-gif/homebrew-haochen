@@ -104,6 +104,7 @@ class ChatWindow(QWidget):
     SCROLL_FOLLOW_THRESHOLD = 24     # 距底小于该像素视为“用户在底部”
 
     detail_collapsed = pyqtSignal()   # 详情模式收起动画播完、窗口已隐藏
+    read_permission_requested = pyqtSignal()  # 用户明确同意后才请求系统读屏权限
 
     def __init__(self, client: EngineClient | None = None, supervisor=None, parent=None):
         super().__init__(parent)
@@ -794,7 +795,12 @@ class ChatWindow(QWidget):
                 result = ev.get("result") or {}
                 text = "".join(c.get("text", "") for c in result.get("content", [])
                                if c.get("type") == "text")
-                card.mark_done(text, bool(ev.get("isError")), card.elapsed_ms())
+                card.mark_done(
+                    text,
+                    bool(ev.get("isError") or result.get("isError")),
+                    card.elapsed_ms(),
+                    result.get("details") or {},
+                )
         elif t == "extension_ui_request":
             self._on_ui_request(ev)
         elif t == "extension_error":
@@ -829,6 +835,8 @@ class ChatWindow(QWidget):
             note = "已授权读屏" if confirmed else "已拒绝读屏"
             kind = "perceive" if confirmed else "notice"
             terminal_reason = "" if confirmed else "已拒绝"
+            if confirmed:
+                self.read_permission_requested.emit()
         if terminal_reason:
             for card in reversed(list(self._tool_cards.values())):
                 if card.tool_name == "read_screen":
@@ -983,7 +991,11 @@ class ChatWindow(QWidget):
                 card = ToolCard(msg.get("toolCallId", ""), msg.get("toolName", "tool"))
                 text = "".join(c.get("text", "") for c in msg.get("content", [])
                                if c.get("type") == "text")
-                card.mark_done(text, bool(msg.get("isError")))
+                card.mark_done(
+                    text,
+                    bool(msg.get("isError")),
+                    details=msg.get("details") or {},
+                )
                 self._add_row(card, "left")
         QTimer.singleShot(0, self._scroll_bottom)
         self._follow_stream = True

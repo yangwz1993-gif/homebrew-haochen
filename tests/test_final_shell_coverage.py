@@ -16,7 +16,7 @@ hotkey_module = importlib.import_module("haochen_app.pet.hotkey")
 bubble_module = importlib.import_module("haochen_app.pet.bubble")
 
 
-def test_engine_event_read_screen_without_accessibility_guides(qtbot, tmp_path: Path, monkeypatch) -> None:
+def test_read_screen_permission_guidance_waits_for_explicit_consent(qtbot, tmp_path: Path, monkeypatch) -> None:
     shell = AppShell(mock=True, home=tmp_path)
     qtbot.addWidget(shell.chat)
     guided: list = []
@@ -32,6 +32,10 @@ def test_engine_event_read_screen_without_accessibility_guides(qtbot, tmp_path: 
     })
 
     qtbot.wait(50)
+    assert guided == []
+
+    shell.pet.read_permission_requested.emit()
+    qtbot.wait(50)
     assert guided == ["ax"]
 
 
@@ -42,7 +46,7 @@ def test_engine_event_need_screen_recording_shows_hint(qtbot, tmp_path: Path) ->
     shell._on_engine_event({
         "type": "tool_execution_end",
         "toolName": "read_screen",
-        "result": {"needScreenRecording": True},
+        "result": {"details": {"needScreenRecording": True}},
     })
 
     from haochen_app.pet.bubble import HintBlock  # noqa: E402

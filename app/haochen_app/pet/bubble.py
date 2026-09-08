@@ -350,6 +350,8 @@ class ConfirmBar(QWidget):
             f" font-size: {T.FONT_BODY_SM}px; }}"
             f"QPushButton:hover {{ background: {T.COLOR_BG}; }}")
         no.clicked.connect(lambda: self.resolved.emit(False))
+        no.setAccessibleName("拒绝读取屏幕")
+        self.btn_no = no
         lay.addWidget(no)
 
     def resolve(self, ok: bool) -> None:
@@ -377,6 +379,8 @@ class BubbleWindow(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAccessibleName("haochen 对话气泡")
+        self.setAccessibleDescription("显示输入、处理状态、权限确认和当前回答")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint

@@ -58,6 +58,44 @@ def test_historical_denied_read_screen_is_detected_from_result(qtbot) -> None:
     assert card.status.text() == "未执行 · 已拒绝/超时"
 
 
+def test_read_screen_permission_failure_never_uses_success_checkmark(qtbot) -> None:
+    card = ToolCard("call-screen", "read_screen")
+    card.mark_done(
+        "屏幕读取权限未授权：请在系统设置授予辅助功能权限。",
+        is_error=False,
+        details={"permissionDenied": True},
+    )
+
+    assert card.status.text() == "✗ 权限不足"
+    assert "✓" not in card.status.text()
+
+
+def test_live_tool_event_reads_nested_result_error(qtbot) -> None:
+    client = FakeClient()
+    window = window_module.ChatWindow(client)
+    qtbot.addWidget(window)
+    window.ctrl._phase = "answer"
+    window._on_engine_event({
+        "type": "tool_execution_start",
+        "toolCallId": "tc-screen",
+        "toolName": "read_screen",
+    })
+    card = window._tool_cards["tc-screen"]
+
+    window._on_engine_event({
+        "type": "tool_execution_end",
+        "toolCallId": "tc-screen",
+        "result": {
+            "isError": True,
+            "details": {"permissionDenied": True},
+            "content": [{"type": "text", "text": "屏幕读取权限未授权"}],
+        },
+    })
+
+    assert card.status.text() == "✗ 权限不足"
+    window.ctrl._phase = ""
+
+
 def test_tool_card_exposes_artifact_path(qtbot) -> None:
     card = ToolCard("call-1", "write", {"file_path": "/tmp/report.md", "content": "x"})
     assert card.artifact_path() == Path("/tmp/report.md")

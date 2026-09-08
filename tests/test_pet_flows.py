@@ -6,6 +6,7 @@ import importlib
 import sys
 from pathlib import Path
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -258,11 +259,15 @@ def test_rejecting_screen_read_immediately_removes_reading_semantics(qtbot, tmp_
         "message": "确认？",
     })
 
-    pet._on_confirm_resolved(False)
+    permission_requests: list[bool] = []
+    pet.read_permission_requested.connect(lambda: permission_requests.append(True))
+    qtbot.mouseClick(pet.bubble._confirm_bar.btn_no, Qt.MouseButton.LeftButton)
 
     assert pet.state is PetState.COMPOSING
-    assert pet._status_block.text == "好，不读屏，我用已有信息回答"
+    assert pet._status_block.text == "已拒绝，未读取屏幕。正在基于已有信息回答"
     assert not pet.bubble.findChildren(HintBlock)
+    assert pet.bubble.isVisible()
+    assert permission_requests == []
 
 
 def test_rejecting_screen_read_keeps_confirmation_visible_before_fast_result(
@@ -279,12 +284,35 @@ def test_rejecting_screen_read_keeps_confirmation_visible_before_fast_result(
     assert pet.bubble.summoned
     assert pet.bubble.isVisible()
     labels = " ".join(label.text() for label in pet.bubble.findChildren(QLabel))
-    assert "不读屏" in labels
+    assert "未读取屏幕" in labels
     assert not pet.bubble.findChildren(SummaryBlock)
 
     qtbot.waitUntil(lambda: bool(pet.bubble.findChildren(SummaryBlock)), timeout=1_000)
     assert pet.bubble.summoned
     assert pet.bubble.isVisible()
+
+
+def test_accepting_screen_read_requests_system_permission_after_confirmation(
+    qtbot, tmp_path: Path
+) -> None:
+    pet, client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet.ctrl._phase = "answer"
+    client.event.emit({
+        "type": "extension_ui_request",
+        "id": "ui-allow",
+        "method": "confirm",
+        "title": "读屏",
+        "message": "确认？",
+    })
+    permission_requests: list[bool] = []
+    pet.read_permission_requested.connect(lambda: permission_requests.append(True))
+
+    qtbot.mouseClick(pet.bubble._confirm_bar.btn_yes, Qt.MouseButton.LeftButton)
+
+    assert permission_requests == [True]
+    assert pet._confirm_id is None
+    pet.ctrl._phase = ""
 
 
 def test_first_use_hint_turns_first_click_into_input(qtbot, tmp_path: Path) -> None:

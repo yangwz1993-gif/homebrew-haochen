@@ -403,20 +403,38 @@ class ToolCard(QFrame):
         import time
         return int((time.monotonic() - self._started_at) * 1000)
 
-    def mark_done(self, result_text: str, is_error: bool, elapsed_ms: int | None = None) -> None:
+    def mark_done(
+        self,
+        result_text: str,
+        is_error: bool,
+        elapsed_ms: int | None = None,
+        details: dict | None = None,
+    ) -> None:
         self.is_error = is_error
         self.output = result_text or ""
         self.cancel_button.hide()
+        result_details = details or {}
         denied_read = self.tool_name == "read_screen" and any(
             token in self.output for token in ("用户拒绝了读屏", "超时未确认")
+        )
+        permission_failure = self.tool_name == "read_screen" and (
+            bool(result_details.get("permissionDenied") or result_details.get("needScreenRecording"))
+            or any(
+                token in self.output
+                for token in (
+                    "屏幕读取权限未授权",
+                    "需要「屏幕录制」权限",
+                    "读屏失败",
+                )
+            )
         )
         if self._not_run_reason or denied_read:
             reason = self._not_run_reason or "已拒绝/超时"
             self.status.setText(f"未执行 · {reason}")
             self._set_status_color(C["ink_soft"])
             self.retry_button.hide()
-        elif is_error:
-            self.status.setText("✗ 失败")
+        elif is_error or permission_failure:
+            self.status.setText("✗ 权限不足" if permission_failure else "✗ 失败")
             self._set_status_color(C["danger"])
             self.retry_button.show()
         else:

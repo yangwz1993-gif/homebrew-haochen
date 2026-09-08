@@ -64,4 +64,45 @@ describe("lax message content handling", () => {
 			expect(msg.content).toEqual([]);
 		}
 	});
+
+	it("drops the user request that belongs to an aborted turn", () => {
+		const usage = {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		const messages = [
+			{ role: "user", content: [{ type: "text", text: "keep this context" }], timestamp: 1 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "completed" }],
+				api: "openai-completions",
+				provider: "openai",
+				model: "test-model",
+				usage,
+				stopReason: "stop",
+				timestamp: 2,
+			},
+			{ role: "user", content: [{ type: "text", text: "cancelled task" }], timestamp: 3 },
+			{
+				role: "assistant",
+				content: [],
+				api: "openai-completions",
+				provider: "openai",
+				model: "test-model",
+				usage,
+				stopReason: "aborted",
+				timestamp: 4,
+			},
+			{ role: "user", content: [{ type: "text", text: "current task" }], timestamp: 5 },
+		] as Message[];
+
+		const result = transformMessages(messages, makeTextOnlyModel());
+
+		expect(result.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+		expect(result[2]?.content).toEqual([{ type: "text", text: "current task" }]);
+	});
 });

@@ -57,6 +57,8 @@ class AppShell:
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
         self.pet.settings_requested.connect(self.show_settings)
         self.pet.credential_validation.connect(self._on_credential_validation)
+        self.pet.read_permission_requested.connect(self._request_read_permission)
+        self.chat.read_permission_requested.connect(self._request_read_permission)
         sup.restart_failed.connect(
             lambda: self._on_credential_validation(
                 False, "当前模型连接失败，请检查凭据或模型设置"
@@ -75,16 +77,20 @@ class AppShell:
 
     def _on_engine_event(self, ev: dict) -> None:
         t = ev.get("type")
-        if t == "tool_execution_start" and ev.get("toolName") == "read_screen":
-            from PyQt6.QtCore import QTimer as _QTimer
-
-            from .permissions import accessibility_granted, ensure_permissions
-            if not accessibility_granted():
-                _QTimer.singleShot(0, lambda: ensure_permissions(self.settings))
-        elif (t == "tool_execution_end" and ev.get("toolName") == "read_screen"
-              and (ev.get("result") or {}).get("needScreenRecording")):
+        result = ev.get("result") or {}
+        details = result.get("details") or {}
+        if (t == "tool_execution_end" and ev.get("toolName") == "read_screen"
+              and (result.get("needScreenRecording") or details.get("needScreenRecording"))):
             # P7：未授权屏幕录制 → 友好提示（图片缺失，文本正常）
             self.pet.bubble.add_perception_hint("如需看图识人，请在设置开启「屏幕录制」")
+
+    def _request_read_permission(self) -> None:
+        """敏感权限只在用户明确同意本次读屏后引导，拒绝前绝不抢焦点。"""
+        from PyQt6.QtCore import QTimer as _QTimer
+
+        from .permissions import accessibility_granted, ensure_permissions
+        if not accessibility_granted():
+            _QTimer.singleShot(0, lambda: ensure_permissions(self.settings))
 
     # ── 双入口动作 ─────────────────────────────────────────────
 

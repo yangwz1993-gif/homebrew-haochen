@@ -52,6 +52,7 @@ class PetApp(QObject):
     expand_detail_answer = pyqtSignal(str)  # 旧 P4 接口（详情改走 detail_opener 注入，不再 emit）
     settings_requested = pyqtSignal()       # 右键「设置…」
     credential_validation = pyqtSignal(bool, str)  # 最近一次真实请求是否证明当前凭据可用
+    read_permission_requested = pyqtSignal()  # 仅用户明确点「读吧」后请求系统权限
 
     def __init__(self, mock: bool | None = None, client: EngineClient | None = None,
                  supervisor=None, parent=None):
@@ -684,8 +685,13 @@ class PetApp(QObject):
             self.bubble.cancel_dismiss()
             self._perception_hint = None
             self._status_block = self.bubble.present_status(
-                "好，不读屏，我用已有信息回答", cancellable=True
+                "已拒绝，未读取屏幕。正在基于已有信息回答", cancellable=True
             )
+            self._place_bubble()
+            self.bubble.show()
+            self.bubble.raise_()
+            self.pet.show()
+            self.pet.raise_()
             self._set_state(PetState.COMPOSING)
             self._pending_privacy_summary = None
             self._privacy_timer.start()
@@ -699,6 +705,7 @@ class PetApp(QObject):
             self._perception_hint = None
         self._set_state(PetState.ACTING)
         self._resolve_confirm(confirmed=True)
+        self.read_permission_requested.emit()
 
     def _finish_privacy_dwell(self) -> None:
         """拒绝读屏至少保持一个可确认的首帧，再呈现已经到达的模型回答。"""
