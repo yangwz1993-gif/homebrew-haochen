@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-09
+
 ### Added
 - 新增单轮临时结果卡：只显示当前简答，并提供“继续问”和“查看详情”两个明确动作。
 - 新增结果 8 秒自动退场以及继续提问、详情关闭不恢复旧结果的回归测试。
@@ -19,6 +21,7 @@
 
 ### Fixed
 - 统一最终交互概念图四个人物的肤色，并锁定现有 haochen 成年工程师形象规范。
+- 修复从桌宠结果卡打开详情时被强制定位到会话底部的问题；现在每次从会话顶部开始阅读。
 - 桌宠右键菜单去除“设置（占位）”文案，直接打开现有设置入口。
 - 自动退场计时器在气泡窗口销毁时立即停止并解除全局事件过滤器，避免慢速 CI 中访问已删除 Qt 子控件。
 - 新协议解析兼容 `brief` 错误闭合为其他结果标记；真实模型即使发生标记漂移，也优先保住原始短结而不是从详答重新截取。
@@ -54,6 +57,6 @@
 - API Key 保存至 macOS Keychain；`auth.json` 仅保留 `$HAOCHEN_*_API_KEY` 引用，写入前先通过固定安全端点验证，失败不覆盖旧 Key。
 - 首次启动改为单一可续办向导（欢迎→Key 验证→按需权限→试问），不再读取全局 `~/.pi` 凭据、不再同时弹出多个系统授权页面。
 - 应用数据目录统一修复为 0700，认证、会话回收、日志与运行 sidecar 统一为 0600；引擎子进程使用 0077 umask。
-- 默认 release 构建要求 Developer ID、hardened runtime、timestamp、公证和 staple；保留 0.2.0 的发布者自签 legacy 构建作为已知过渡例外。
-- 0.2.0 Homebrew Cask 继续以 `postflight_steps` 移除该 App 的 quarantine；下一正式版本须改为 Apple 公证产物并删除这一例外。
+- 默认 release 构建仍要求 Developer ID、hardened runtime、timestamp、公证和 staple；0.3.0 经所有者明确授权，显式使用发布者自签 legacy 构建。
+- 0.3.0 Homebrew Cask 以 `postflight_steps` 移除该 App 的 quarantine；README 与 Release Notes 必须说明它未经 Apple 公证，直接下载 DMG 可能被 Gatekeeper 拦截。
 - 清理旧工程遗留的明文模型凭据与 Keychain 口令文档，并加强 secret scan 规则。

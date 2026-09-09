@@ -3,17 +3,18 @@
 haochen 是一款面向 macOS 的独立桌面 AI 伙伴：常驻桌面、按需读取当前窗口、调用本机工具，并用轻量气泡或完整工作台返回结果。
 
 [![CI](https://github.com/yangwz1993-gif/homebrew-haochen/actions/workflows/ci.yml/badge.svg)](https://github.com/yangwz1993-gif/homebrew-haochen/actions/workflows/ci.yml)
-[![version](https://img.shields.io/badge/version-0.2.0-3a7d5c)](https://github.com/yangwz1993-gif/homebrew-haochen/releases/tag/v0.2.0)
+[![version](https://img.shields.io/badge/version-0.3.0-3a7d5c)](https://github.com/yangwz1993-gif/homebrew-haochen/releases/tag/v0.3.0)
 [![platform](https://img.shields.io/badge/platform-macOS-2b2b22)](#系统要求)
 
 ## 当前状态
 
-- 稳定版本：`0.2.0`
-- 自动化测试：248 项，整体覆盖率 81%
+- 稳定版本：`0.3.0`
+- 自动化测试：336 项，整体覆盖率 85%
 - 分发：GitHub Release + Homebrew Cask
-- 下一版本：`0.3.0`，重点重做桌宠的漫画式即时交互与回答表达
 
-0.2.0 使用发布者自签名，Cask 会移除该 App 的 quarantine 属性；它不是 Apple Developer ID 公证版本。未来正式发行将改为 Developer ID 签名与 Apple Notarization。
+0.3.0 经所有者明确选择继续使用发布者自签名；Homebrew Cask 会移除该 App 的
+quarantine 属性。它没有经过 Apple Developer ID 签名或 Apple 公证，直接下载 DMG
+可能被 Gatekeeper 拦截，建议只使用下面的 Homebrew 安装方式。
 
 ## 安装
 
@@ -57,7 +58,7 @@ HAOCHEN_MOCK=1 HAOCHEN_SKIP_ONBOARDING=1 \
 - `make check`：版本一致性、凭据扫描、lint、类型检查、ShellCheck、测试与覆盖率
 - `make regressions`：协议、配置、视觉、对话、桌宠及壳层回归
 - `make engine`：构建独立引擎
-- `make package`：正式打包；默认要求 Developer ID 与公证配置
+- `make package`：Developer ID 正式打包；legacy 分发需显式设置 `HAOCHEN_BUILD_MODE=legacy`
 
 ## 仓库与版本
 

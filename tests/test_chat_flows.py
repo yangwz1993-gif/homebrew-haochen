@@ -366,6 +366,39 @@ def test_detail_mode_expand_and_collapse(qtbot, tmp_path: Path) -> None:
     assert window.height() >= 560
 
 
+def test_detail_mode_opens_at_conversation_top_after_history_layout(
+    qtbot, tmp_path: Path,
+) -> None:
+    from PyQt6.QtCore import QRect
+
+    window, _client = make_window(qtbot, tmp_path)
+    messages: list[dict] = []
+    for index in range(12):
+        messages.extend([
+            {"role": "user", "content": [{"type": "text", "text": f"问题 {index}"}]},
+            {
+                "role": "assistant",
+                "content": [{
+                    "type": "text",
+                    "text": (
+                        f"【brief】结论 {index}【/brief】\n"
+                        f"【detail】这是第 {index} 轮的完整依据。" + "详细说明。" * 20
+                        + "【/detail】"
+                    ),
+                }],
+            },
+        ])
+
+    window.open_from_bubble(QRect(100, 100, 320, 240))
+    window._render_history({"success": True, "data": {"messages": messages}})
+    qtbot.wait(350)
+
+    bar = window.scroll.verticalScrollBar()
+    assert bar.maximum() > 0
+    assert bar.value() == bar.minimum() == 0
+    assert window._follow_stream is False
+
+
 def test_unclosed_duplicate_short_answer_renders_once(qtbot, tmp_path: Path) -> None:
     window, _client = make_window(qtbot, tmp_path)
     window._clear_flow()

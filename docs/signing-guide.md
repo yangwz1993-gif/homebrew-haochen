@@ -1,6 +1,7 @@
 # Developer ID 签名与 Apple 公证
 
-v0.2.0 起禁止自签分发、App 内生成签名身份、明文保存钥匙串口令以及移除 quarantine。正式发布只接受 Apple Developer ID Application 签名和 Apple 公证。
+长期推荐的正式发布通道只接受 Apple Developer ID Application 签名和 Apple 公证。
+所有者于 2026-09-09 明确授权 v0.3.0 延续上一版 legacy Homebrew 通道；它是已披露风险的例外，不得描述为 Apple 公证版本。
 
 ## 准备（发布者执行）
 
@@ -37,6 +38,17 @@ HAOCHEN_BUILD_MODE=development bash packaging/build.sh
 
 开发产物使用 ad-hoc 签名，不得上传 Release、生成正式 Cask 或对外分发。
 
+## v0.3.0 legacy 例外
+
+```bash
+HAOCHEN_BUILD_MODE=legacy bash packaging/build.sh
+uv run python scripts/version.py render-cask --legacy packaging/dist/haochen-0.3.0.dmg
+```
+
+legacy 构建只允许使用本机稳定的 `haochen Local Signing` 身份；Cask 必须明确保留
+quarantine 移除说明，README 与 Release Notes 必须告知用户“未经 Apple 公证，直接下载
+DMG 可能被拦截”。禁止把 legacy 产物写成 Developer ID、Notarized 或 Gatekeeper 已认证。
+
 ## 发布验收
 
 ```bash
@@ -46,7 +58,8 @@ xcrun stapler validate packaging/dist/haochen.app
 xcrun stapler validate packaging/dist/haochen-*.dmg
 ```
 
-Cask 由 `scripts/version.py render-cask <dmg>` 根据根 `VERSION` 和真实 SHA-256 生成，禁止 `postflight` 清除 quarantine。
+Cask 由 `scripts/version.py render-cask <dmg>` 根据根 `VERSION` 和真实 SHA-256 生成；
+Developer ID 通道禁止清除 quarantine，v0.3.0 legacy 例外必须显式传入 `--legacy`。
 
 ## 已泄露凭据处置
 

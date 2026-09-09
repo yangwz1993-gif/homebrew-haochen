@@ -455,6 +455,15 @@ class ChatWindow(QWidget):
         sb = self.scroll.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    def _scroll_top(self) -> None:
+        """Start an opened detail at the conversation's beginning, never its tail."""
+        sb = self.scroll.verticalScrollBar()
+        sb.setValue(sb.minimum())
+        # valueChanged sees min==max as "at bottom" for a not-yet-laid-out flow.
+        # Pin this after the write so later range changes cannot pull detail down.
+        self._follow_stream = False
+        self.jump_to_latest_button.hide()
+
     def _on_scroll_moved(self) -> None:
         """用户主动滚动后重估“是否在底部”；离开底部即停止强制跟随。"""
         sb = self.scroll.verticalScrollBar()
@@ -574,10 +583,11 @@ class ChatWindow(QWidget):
 
     def open_from_bubble(self, source_rect: QRect | None = None) -> None:
         """「展开详细」：从短会话气泡 rect 平滑扩展（OutCubic ~220ms）到正常尺寸，
-        并滚动定位到当前轮（对话流尾部）。"""
+        并从会话顶部开始阅读完整上下文。"""
         self._remember_normal_geometry()
         self._detail_mode = True
         self._detail_collapsing = False
+        self._follow_stream = False
         self._detail_source_rect = source_rect or QRect()
         self.sidebar.hide()
         self.detail_header.show()
@@ -594,9 +604,10 @@ class ChatWindow(QWidget):
             self.show()
         self.raise_()
         self.activateWindow()
-        # 定位到当前轮：历史镜像渲染（showEvent）与动画落地后各滚一次底
-        QTimer.singleShot(0, self._scroll_bottom)
-        QTimer.singleShot(300, self._scroll_bottom)
+        # showEvent 可能异步重绘历史；动画前后都钉在顶部，最终 _render_history
+        # 还会再按 detail mode 定位一次，覆盖布局/rangeChanged 竞态。
+        QTimer.singleShot(0, self._scroll_top)
+        QTimer.singleShot(300, self._scroll_top)
 
     def _restore_min_size(self) -> None:
         if self._detail_mode and not self._detail_collapsing:
@@ -653,6 +664,7 @@ class ChatWindow(QWidget):
         """Open the full workspace with a sane geometry after any detail animation."""
         self._detail_mode = False
         self._detail_collapsing = False
+        self._follow_stream = True
         self.sidebar.show()
         self.detail_header.hide()
         self.input.setPlaceholderText("和 haochen 说点什么…（⏎ 发送，⌘⏎ 换行）")
@@ -1189,8 +1201,12 @@ class ChatWindow(QWidget):
                     details=msg.get("details") or {},
                 )
                 self._add_row(card, "left")
-        QTimer.singleShot(0, self._scroll_bottom)
-        self._follow_stream = True
+        if self._detail_mode:
+            self._follow_stream = False
+            QTimer.singleShot(0, self._scroll_top)
+        else:
+            self._follow_stream = True
+            QTimer.singleShot(0, self._scroll_bottom)
         self.jump_to_latest_button.hide()
 
     @staticmethod
