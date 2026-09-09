@@ -403,14 +403,14 @@ def test_detail_header_uses_current_topic_and_send_action_is_legible(qtbot, tmp_
     assert window.btn_send.width() >= 80
 
 
-def test_short_history_is_anchored_near_composer(qtbot, tmp_path: Path) -> None:
+def test_short_history_starts_at_top_without_a_blank_scan_area(qtbot, tmp_path: Path) -> None:
     window, _client = make_window(qtbot, tmp_path)
     window._render_history({"success": True, "data": {"messages": [
         {"role": "assistant", "content": [{"type": "text", "text": "简短回答"}]},
     ]}})
 
-    assert window.flow.itemAt(0).spacerItem() is not None
-    assert isinstance(window.flow.itemAt(1).widget(), BubbleRow)
+    assert isinstance(window.flow.itemAt(0).widget(), BubbleRow)
+    assert window.flow.itemAt(window.flow.count() - 1).spacerItem() is not None
 
 
 def test_sidebar_uses_readable_model_alias(qtbot, tmp_path: Path) -> None:

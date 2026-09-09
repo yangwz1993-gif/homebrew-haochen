@@ -445,6 +445,40 @@ def test_first_use_hint_turns_first_click_into_input(qtbot, tmp_path: Path) -> N
     assert pet.state is PetState.LISTENING
 
 
+def test_first_click_before_timer_still_shows_operation_hint(qtbot, tmp_path: Path) -> None:
+    pet, _client = make_pet(qtbot, tmp_path)
+
+    pet._toggle_bubble()
+
+    assert (tmp_path / "interaction-hint-v1").exists()
+    assert pet.bubble.summoned
+    assert pet.bubble._input_visible()
+    labels = pet.bubble.findChildren(QLabel)
+    assert any("右键人物" in label.text() for label in labels)
+
+
+def test_untitled_native_menu_does_not_block_first_use_hint(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    from PyQt6.QtWidgets import QApplication, QWidget
+
+    pet, _client = make_pet(qtbot, tmp_path)
+    native_menu_proxy = QWidget()
+    qtbot.addWidget(native_menu_proxy)
+    native_menu_proxy.show()
+    monkeypatch.setattr(
+        QApplication,
+        "topLevelWidgets",
+        staticmethod(lambda: [pet.pet, native_menu_proxy]),
+    )
+
+    pet._maybe_show_discovery_hint()
+
+    assert pet._discovery_hint_active
+    assert pet.bubble.summoned
+    assert not pet.bubble._input_visible()
+
+
 def test_restarting_feedback_replaces_previous_attempt_instead_of_accumulating(
     qtbot, tmp_path: Path
 ) -> None:

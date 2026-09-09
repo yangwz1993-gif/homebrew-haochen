@@ -85,6 +85,7 @@ class PetWindow(QWidget):
         self._click_timer.setSingleShot(True)
         self._click_timer.setInterval(_SINGLE_CLICK_MS)
         self._click_timer.timeout.connect(self.summon_requested.emit)
+        self._context_menu: QMenu | None = None
 
         # idle 轻微浮动（视觉生命感；拖拽/非 idle 时暂停）
         self._float_dir = 1
@@ -283,6 +284,9 @@ class PetWindow(QWidget):
             super().mouseDoubleClickEvent(e)
 
     def _show_context_menu(self, global_pos: QPoint) -> None:
+        if self._context_menu is not None and self._context_menu.isVisible():
+            self._context_menu.raise_()
+            return
         menu = QMenu(self)
         act_key = QAction(f"唤起气泡 {self._hotkey_hint}", self)
         act_key.setEnabled(False)
@@ -304,7 +308,19 @@ class PetWindow(QWidget):
         act_quit = QAction("退出", self)
         act_quit.triggered.connect(self.quit_requested.emit)
         menu.addAction(act_quit)
-        menu.exec(global_pos)
+        # `exec()` keeps the pointer event handler in a nested event loop. Some
+        # macOS accessibility/CGEvent right-click paths then wait for the
+        # handler to return and immediately swallow the menu. `popup()` is
+        # non-blocking, so the menu remains visible after the real click ends.
+        self._context_menu = menu
+
+        def _release_menu() -> None:
+            if self._context_menu is menu:
+                self._context_menu = None
+            menu.deleteLater()
+
+        menu.aboutToHide.connect(_release_menu)
+        menu.popup(global_pos)
 
     def contextMenuEvent(self, e):
         self._show_context_menu(e.globalPos())

@@ -249,19 +249,18 @@ def test_pet_window_context_menu_emits_actions(qtbot, tmp_path: Path) -> None:
 
     triggered: list = []
 
-    def fake_exec(menu_self, *args, **kwargs):
+    def fake_popup(menu_self, *args, **kwargs):
         triggered.extend(menu_self.actions())
-        return menu_self.actions()[0] if menu_self.actions() else None
 
-    original_exec = QMenu.exec
-    QMenu.exec = fake_exec
+    original_popup = QMenu.popup
+    QMenu.popup = fake_popup
     try:
         from PyQt6.QtGui import QContextMenuEvent
 
         event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(5, 5))
         window.contextMenuEvent(event)
     finally:
-        QMenu.exec = original_exec
+        QMenu.popup = original_popup
 
     labels = [action.text() for action in triggered]
     assert "打开完整对话" in labels
@@ -273,12 +272,12 @@ def test_pet_image_opens_context_menu_directly(qtbot, tmp_path: Path) -> None:
     shown_at: list[QPoint] = []
     assert window.label.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
-    original_exec = QMenu.exec
+    original_popup = QMenu.popup
 
-    def fake_exec(menu_self, global_pos, *args, **kwargs):
+    def fake_popup(menu_self, global_pos, *args, **kwargs):
         shown_at.append(global_pos)
 
-    QMenu.exec = fake_exec
+    QMenu.popup = fake_popup
     try:
         local_pos = QPoint(12, 18)
         expected = window.label.mapToGlobal(local_pos)
@@ -292,7 +291,7 @@ def test_pet_image_opens_context_menu_directly(qtbot, tmp_path: Path) -> None:
         )
         window.mouseReleaseEvent(release)
     finally:
-        QMenu.exec = original_exec
+        QMenu.popup = original_popup
 
     assert shown_at == [expected]
 
@@ -301,12 +300,12 @@ def test_pet_image_control_click_opens_context_menu(qtbot, tmp_path: Path) -> No
     window = make_pet_window(qtbot, tmp_path)
     shown_at: list[QPoint] = []
 
-    original_exec = QMenu.exec
+    original_popup = QMenu.popup
 
-    def fake_exec(menu_self, global_pos, *args, **kwargs):
+    def fake_popup(menu_self, global_pos, *args, **kwargs):
         shown_at.append(global_pos)
 
-    QMenu.exec = fake_exec
+    QMenu.popup = fake_popup
     try:
         local_pos = QPoint(20, 24)
         expected = window.label.mapToGlobal(local_pos)
@@ -320,6 +319,6 @@ def test_pet_image_control_click_opens_context_menu(qtbot, tmp_path: Path) -> No
         )
         window.mouseReleaseEvent(release)
     finally:
-        QMenu.exec = original_exec
+        QMenu.popup = original_popup
 
     assert shown_at == [expected]

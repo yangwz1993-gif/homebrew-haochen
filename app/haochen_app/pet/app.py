@@ -248,11 +248,13 @@ class PetApp(QObject):
     # ── 唤起 / 收起 ───────────────────────────────────────────
 
     def _toggle_bubble(self) -> None:
+        first_interaction = not (self.client.home / "interaction-hint-v1").exists()
         self._mark_discovery_complete()
         if self._discovery_hint_active:
             self._discovery_hint_active = False
             self._discovery_timer.stop()
             self.bubble.start_input()
+            self._add_first_interaction_hint()
             self._place_bubble()
             self._set_state(PetState.LISTENING)
             return
@@ -263,6 +265,8 @@ class PetApp(QObject):
             show_input = not self.ctrl.busy and self._confirm_id is None
             if show_input:
                 self.bubble.start_input()
+                if first_interaction:
+                    self._add_first_interaction_hint()
             self._place_bubble()
             self.bubble.summon(show_input=show_input)
             self.pet.show()
@@ -277,7 +281,14 @@ class PetApp(QObject):
             return
         other_windows = [
             window for window in QApplication.topLevelWidgets()
-            if window.isVisible() and window not in (self.pet, self.bubble)
+            if (
+                window.isVisible()
+                and window not in (self.pet, self.bubble)
+                # macOS exposes the native application menu as a visible,
+                # untitled top-level QWidget. It is not a blocking product
+                # surface and must not postpone first-use help for 30 seconds.
+                and bool(window.windowTitle().strip())
+            )
         ]
         if other_windows and self._discovery_hint_retries < 30:
             self._discovery_hint_retries += 1
@@ -285,7 +296,7 @@ class PetApp(QObject):
             return
         self.bubble.clear_flow()
         self.bubble.set_input_visible(False)
-        self.bubble.add_greeting("点一下我，随时开聊")
+        self.bubble.add_greeting("点一下直接问我 · 右键打开完整对话和设置")
         self._place_bubble()
         self.bubble.summon(show_input=False)
         self.pet.raise_()
@@ -298,6 +309,12 @@ class PetApp(QObject):
             atomic_write_private(self.client.home / "interaction-hint-v1", "seen\n")
         except OSError:
             pass
+
+    def _add_first_interaction_hint(self) -> None:
+        """第一次真实点击也必须看得到操作说明，不能被启动定时器竞态跳过。"""
+        self.bubble.add_greeting("直接在下方问我；右键人物可打开完整对话和设置。")
+        self.bubble.set_input_visible(True)
+        self.bubble.focus_input()
 
     def _hide_discovery_hint(self) -> None:
         if not self._discovery_hint_active:

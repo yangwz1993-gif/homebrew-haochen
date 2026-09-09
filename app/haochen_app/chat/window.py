@@ -264,9 +264,9 @@ class ChatWindow(QWidget):
         self.flow = QVBoxLayout(self.flow_host)
         self.flow.setContentsMargins(0, 12, 0, 12)
         self.flow.setSpacing(6)
-        # Short conversations sit next to the composer instead of floating at
-        # the top above a conspicuous empty field. The spacer collapses once
-        # history becomes taller than the viewport.
+        # Standard reading order: short conversations begin at the top. Keep
+        # any unused space *after* the messages so people do not have to scan
+        # an empty screen before finding the current answer at the bottom.
         self.flow.addStretch(1)
         self.scroll.setWidget(self.flow_host)
         rlay.addWidget(self.scroll, 1)
@@ -445,7 +445,7 @@ class ChatWindow(QWidget):
         row = BubbleRow(content, align)
         row.set_max_content_width(self._bubble_max_w())
         if before is None:
-            self.flow.addWidget(row)
+            self.flow.insertWidget(self.flow.count() - 1, row)
         else:
             self.flow.insertWidget(self.flow.indexOf(before), row)
         QTimer.singleShot(0, self._scroll_bottom)
@@ -1286,7 +1286,7 @@ class ChatWindow(QWidget):
         self._queue_banners.clear()
         self._queue_indicators.clear()
         while self.flow.count() > 1:
-            item = self.flow.takeAt(1)
+            item = self.flow.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
