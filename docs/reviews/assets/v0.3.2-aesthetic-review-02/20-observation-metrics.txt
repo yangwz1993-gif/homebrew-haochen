@@ -1,0 +1,20 @@
+v0.3.2 aesthetic review round 02 — observation metrics
+
+- Wizard capture size: 620 x 448 px.
+- Full-chat capture size: 980 x 708 px.
+- Short input bubble: 344 x 106 px (one line).
+- Three-line input bubble: 344 x 146 px; no clipping or outer scrollbar.
+- Four-line input bubble: 344 x 146 px; internal scrollbar visible.
+- Idle pet capture: 112 x 112 px; complete seated body visible.
+- Custom-model API URL, model ID, and display-name controls collapse to
+  approximately 10 px-high bordered strips in the 620 x 448 wizard capture;
+  text baselines are visibly clipped.
+- Incomplete onboarding state immediately before relaunch was page=4,
+  completed=false. Relaunch showed the unverified DeepSeek model page instead
+  of the trial page. After completing onboarding, persisted state was page=4,
+  completed=true.
+- The local OpenAI-compatible fixture received one GET /v1/models validation
+  call and four POST completion attempts for a single question. The candidate
+  displayed "Stream ended without finish_reason"; no successful result bubble
+  was available for the 20-second/hover timer measurement.
+

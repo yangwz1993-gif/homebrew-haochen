@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 
 from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication
@@ -88,6 +89,8 @@ class PetApp(QObject):
         self.detail_opener = None
         # 壳层注入：统一由 ChatWindow 创建新会话，保证侧栏能跟踪全部会话。
         self.new_session_opener = None
+        # 壳层注入：首启向导显示期间阻止热键/双击绕过必经步骤。
+        self.interaction_guard: Callable[[], bool] | None = None
 
         # 引擎 + 单回合分层结果（共享模块）；P4：注入共享 client/supervisor
         self.supervisor = supervisor
@@ -254,6 +257,8 @@ class PetApp(QObject):
     # ── 唤起 / 收起 ───────────────────────────────────────────
 
     def _toggle_bubble(self) -> None:
+        if self.interaction_guard is not None and not self.interaction_guard():
+            return
         first_interaction = not (self.client.home / "interaction-hint-v1").exists()
         self._mark_discovery_complete()
         if self._discovery_hint_active:

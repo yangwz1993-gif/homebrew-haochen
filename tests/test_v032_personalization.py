@@ -141,6 +141,26 @@ def test_fresh_install_keeps_onboarding_in_front_after_pet_starts(qtbot, tmp_pat
     shell.stop()
 
 
+def test_visible_onboarding_blocks_pet_and_shell_shortcuts(qtbot, tmp_path: Path) -> None:
+    shell = app_shell_module.AppShell(mock=True, home=tmp_path)
+    qtbot.addWidget(shell.chat)
+    shell.first_run_setup()
+    shell.start()
+    qtbot.waitUntil(lambda: not shell.pet.pet.isVisible(), timeout=1000)
+
+    shell.show_chat()
+    shell.show_settings()
+    shell.new_session()
+    shell.pet._toggle_bubble()
+
+    assert shell.onboarding.isVisible()
+    assert not shell.chat.isVisible()
+    assert not shell.settings.isVisible()
+    assert not shell.pet.bubble.summoned
+    shell.onboarding.reject()
+    shell.stop()
+
+
 def test_custom_mode_never_reuses_deepseek_verification(qtbot, tmp_path: Path) -> None:
     store, _credentials = make_store(tmp_path)
     store.set_key("deepseek", "deepseek-secret")

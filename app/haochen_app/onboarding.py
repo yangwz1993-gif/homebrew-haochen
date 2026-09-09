@@ -117,6 +117,7 @@ class KeyPage(QWizardPage):
         self.custom_verifier = custom_verifier
         self.provider = "deepseek"
         self._verified = store.key_status(self.provider)[0]
+        self._configured_custom_signature: tuple[str, str, str] | None = None
         self._pending_custom: dict | None = None
         self.setTitle("连接模型")
         layout = QVBoxLayout(self)
@@ -124,18 +125,22 @@ class KeyPage(QWizardPage):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("DeepSeek（预设）", "deepseek")
         self.mode_combo.addItem("自定义 OpenAI 兼容模型", "custom")
+        self.mode_combo.setMinimumHeight(36)
         layout.addWidget(self.mode_combo)
         self.custom_panel = QWidget()
         custom_layout = QVBoxLayout(self.custom_panel)
         custom_layout.setContentsMargins(0, 0, 0, 0)
         self.url_edit = QLineEdit()
         self.url_edit.setMaxLength(2048)
+        self.url_edit.setMinimumHeight(36)
         self.url_edit.setPlaceholderText("API URL，例如 https://example.com/v1")
         self.model_id_edit = QLineEdit()
         self.model_id_edit.setMaxLength(128)
+        self.model_id_edit.setMinimumHeight(36)
         self.model_id_edit.setPlaceholderText("模型 ID")
         self.model_name_edit = QLineEdit()
         self.model_name_edit.setMaxLength(64)
+        self.model_name_edit.setMinimumHeight(36)
         self.model_name_edit.setPlaceholderText("显示名称（可选）")
         custom_layout.addWidget(self.url_edit)
         custom_layout.addWidget(self.model_id_edit)
@@ -143,9 +148,11 @@ class KeyPage(QWizardPage):
         layout.addWidget(self.custom_panel)
         self.key_edit = QLineEdit()
         self.key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.key_edit.setMinimumHeight(36)
         self.key_edit.setPlaceholderText("输入 DeepSeek API Key")
         layout.addWidget(self.key_edit)
         self.verify_button = QPushButton("保存并验证")
+        self.verify_button.setMinimumHeight(38)
         self.verify_button.setObjectName("primaryBtn")
         self.verify_button.clicked.connect(self._verify)
         layout.addWidget(self.verify_button)
@@ -153,8 +160,51 @@ class KeyPage(QWizardPage):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.validation_finished.connect(self._finish_validation)
+        self._load_configured_custom_model()
         self.mode_combo.currentIndexChanged.connect(self._mode_changed)
+        self.url_edit.textEdited.connect(self._custom_value_edited)
+        self.model_id_edit.textEdited.connect(self._custom_value_edited)
+        self.model_name_edit.textEdited.connect(self._custom_value_edited)
+        self.key_edit.textEdited.connect(self._custom_value_edited)
         self._mode_changed()
+
+    def _load_configured_custom_model(self) -> None:
+        provider_id, model_id = self.store.default_model()
+        provider = next(
+            (item for item in self.store.providers() if item.id == provider_id and not item.builtin),
+            None,
+        )
+        if provider is None or not self.store.key_status(provider_id)[0]:
+            return
+        model = next(
+            (item for item in provider.models if item.get("id") == model_id),
+            None,
+        )
+        if model is None:
+            return
+        model_name = str(model.get("name") or model_id)
+        self.url_edit.setText(provider.base_url)
+        self.model_id_edit.setText(model_id)
+        self.model_name_edit.setText(model_name)
+        self._configured_custom_signature = (provider.base_url, model_id, model_name)
+        self.mode_combo.setCurrentIndex(self.mode_combo.findData("custom"))
+
+    def _custom_signature(self) -> tuple[str, str, str]:
+        return (
+            self.url_edit.text().strip(),
+            self.model_id_edit.text().strip(),
+            self.model_name_edit.text().strip(),
+        )
+
+    def _custom_value_edited(self, _value: str) -> None:
+        if self.mode_combo.currentData() != "custom":
+            return
+        self._verified = bool(
+            not self.key_edit.text()
+            and self._configured_custom_signature == self._custom_signature()
+        )
+        self.status.setText("已配置，可继续" if self._verified else "修改后请重新验证")
+        self.completeChanged.emit()
 
     def isComplete(self) -> bool:
         return self._verified
@@ -208,6 +258,7 @@ class KeyPage(QWizardPage):
                     model_name=self._pending_custom["model_name"],
                     key=candidate or None,
                 )
+                self._configured_custom_signature = self._custom_signature()
             else:
                 self.store.set_key(self.provider, candidate)
         except Exception as exc:  # noqa: BLE001
@@ -226,7 +277,14 @@ class KeyPage(QWizardPage):
         self.key_edit.setPlaceholderText("输入 API Key" if custom else "输入 DeepSeek API Key")
         self._pending_custom = None
         # A configured DeepSeek key must not silently authorize an untested custom URL.
-        self._verified = False if custom else self.store.key_status(self.provider)[0]
+        self._verified = (
+            bool(
+                not self.key_edit.text()
+                and self._configured_custom_signature == self._custom_signature()
+            )
+            if custom
+            else self.store.key_status(self.provider)[0]
+        )
         self.status.setText("尚未验证" if not self._verified else "已配置，可继续")
         self.completeChanged.emit()
 
@@ -274,7 +332,7 @@ class OnboardingWizard(QWizard):
         self.store = store
         self.state = OnboardingState(store.home)
         self.setWindowTitle("欢迎使用 haochen")
-        self.setMinimumSize(620, 420)
+        self.setMinimumSize(680, 580)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setStyleSheet(APP_QSS)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage, True)

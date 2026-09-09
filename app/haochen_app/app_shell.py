@@ -56,6 +56,7 @@ class AppShell:
         # 双入口联动：气泡「展开详细」→ 对话窗口从气泡 rect 动画展开（v0.1.4 hotfix）
         self.pet.detail_opener = self.chat.open_from_bubble
         self.pet.new_session_opener = self.chat._new_session
+        self.pet.interaction_guard = self._interaction_allowed
         self.pet.chat_requested.connect(self.show_chat)
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
         self.chat.normal_closed.connect(self._restore_pet_after_chat)
@@ -99,6 +100,8 @@ class AppShell:
     # ── 双入口动作 ─────────────────────────────────────────────
 
     def show_chat(self) -> None:
+        if not self._interaction_allowed():
+            return
         self.pet._result_timer.stop()
         # The compact composer is an alternate view of the same conversation.
         # Preserve an unsent draft when the user taps its expand icon.
@@ -112,6 +115,8 @@ class AppShell:
 
     def new_session(self) -> None:
         """Create through the pet state reset and the chat session tracker exactly once."""
+        if not self._interaction_allowed():
+            return
         self.pet.new_session()
 
     def _restore_pet_after_chat(self) -> None:
@@ -119,6 +124,8 @@ class AppShell:
         self.pet.pet.raise_()
 
     def show_settings(self) -> None:
+        if not self._interaction_allowed():
+            return
         self.pet.suspend_for_settings()
         self.settings.show()
         self.settings.raise_()
@@ -198,6 +205,13 @@ class AppShell:
         self.onboarding.show()
         self.onboarding.raise_()
         self.onboarding.activateWindow()
+
+    def _interaction_allowed(self) -> bool:
+        """Do not let global shortcuts or the pet route around a visible wizard."""
+        if hasattr(self, "onboarding") and self.onboarding.isVisible():
+            self._present_onboarding()
+            return False
+        return True
 
     def _on_onboarding_finished(self, _result: int) -> None:
         self.pet.pet.show()
