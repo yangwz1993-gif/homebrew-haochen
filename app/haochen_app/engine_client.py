@@ -43,7 +43,7 @@ from .secure_storage import ensure_private_directory, ensure_private_file
 PROJECT_ROOT = paths.PROJECT_ROOT
 DEFAULT_ENGINE = paths.engine_binary()
 DEFAULT_MOCK = paths.mock_engine()
-DEFAULT_EXT = paths.ext_entry()  # haochen 专属扩展（两步协议/read_screen）
+DEFAULT_EXT = paths.ext_entry()  # haochen 专属扩展（分层结果协议/read_screen）
 
 
 def haochen_home() -> Path:
@@ -61,7 +61,7 @@ def spawn_argv(
     """契约 §1.1 冻结的启动约定：返回 (argv, env, cwd)。"""
     env = dict(os.environ)
     env["PI_CODING_AGENT_DIR"] = str(home / "agent")
-    env["HAOCHEN_PET"] = "1"          # 扩展两步协议强制开关（app/ext/index.ts）
+    env["HAOCHEN_PET"] = "1"          # 扩展分层结果协议开关（app/ext/index.ts）
     env["HAOCHEN_HOME"] = str(home)   # 扩展读屏签名等落点与壳一致
     env["HAOCHEN_APP_PID"] = str(os.getpid())  # 读屏窗口选择：读者据此识别「前台=haochen」
     reader = paths.reader_binary()
@@ -393,7 +393,7 @@ class EngineClient(QObject):
 # ── 壳侧会话列表/删除（契约 §2.8，引擎 RPC 不支持）────────────
 
 def list_sessions(home: Path | None = None) -> list[dict]:
-    """扫描 session-dir 下 *.jsonl，返回 [{path, id, timestamp, preview}]，按时间倒序。"""
+    """扫描 session-dir，返回持久会话的标题/预览，按时间倒序。"""
     home = home or haochen_home()
     out = []
     for p in (home / "pi-sessions").glob("*.jsonl"):
@@ -401,16 +401,21 @@ def list_sessions(home: Path | None = None) -> list[dict]:
             with p.open() as f:
                 first = json.loads(f.readline())
                 preview = ""
+                title = ""
                 for line in f:
                     msg = json.loads(line)
+                    if msg.get("type") == "session_info":
+                        name = msg.get("name")
+                        if isinstance(name, str) and name.strip():
+                            title = name.strip()
                     if msg.get("type") == "message" and msg.get("message", {}).get("role") == "user":
                         for c in msg["message"].get("content", []):
                             if c.get("type") == "text":
                                 preview = c["text"][:60]
                                 break
-                        break
             out.append({"path": str(p), "id": first.get("id", ""),
-                        "timestamp": first.get("timestamp", ""), "preview": preview})
+                        "timestamp": first.get("timestamp", ""), "preview": preview,
+                        "title": title})
         except Exception:
             continue
     out.sort(key=lambda s: s["timestamp"], reverse=True)

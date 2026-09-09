@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""mock 引擎全流程驱动 + L1 协议断言（docs/rpc-contract.md v1.0）。
+"""mock 引擎全流程驱动 + L1 协议断言（docs/rpc-contract.md v2.0）。
 
 用法：
     python3 driver.py                          # 打 mock（默认 ../mock_engine.py）
@@ -8,11 +8,11 @@
     python3 driver.py --dump out.jsonl         # 顺手录全部原始事件
 
 对 mock 的断言覆盖契约全流程：
-    发 prompt → 收流式 → 收工具确认请求 → 授权 → 收 answer → 壳踢 summary → 收 summary
+    发 prompt → 收流式 → 收工具确认请求 → 授权 → 同回合收 brief + detail
     外加：错误路径、abort 不测（留给 UI）、多会话（new/get_messages/set_name/switch）。
 
 对真引擎（--real）：只断言协议级不变量（response/agent_start/流式/agent_end 序列与字段），
-不断言【answer】【summary】标记 —— 真引擎未加载 haochen 扩展时不会产出标记。
+不断言【brief】【detail】标记 —— 真引擎未加载 haochen 扩展时不会产出标记。
 
 退出码 0 = 全过。
 """
@@ -29,9 +29,8 @@ import time
 import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SUMMARY_MARK = "haochen-summary-phase"
-ANSWER_RE = re.compile(r"【answer】([\s\S]*?)【/answer】")
-SUMMARY_RE = re.compile(r"【summary】([\s\S]*?)【/summary】")
+BRIEF_RE = re.compile(r"【brief】([\s\S]*?)【/brief】")
+DETAIL_RE = re.compile(r"【detail】([\s\S]*?)【/detail】")
 
 PASS, FAIL = "PASS", "FAIL"
 
@@ -160,7 +159,8 @@ def assert_round_skeleton(ck: Checker, drv: Driver, start: int, prompt_id: str,
     ck.check(f"{label}: 有流式 message_update", "message_update" in types)
     text = collect_assistant_text(evs)
     if expect_markers:
-        ck.check(f"{label}: answer 含【answer】标记", bool(ANSWER_RE.search(text)))
+        ck.check(f"{label}: 含配对【brief】标记", bool(BRIEF_RE.search(text)))
+        ck.check(f"{label}: 含配对【detail】标记", bool(DETAIL_RE.search(text)))
     ck.check(f"{label}: agent_end.willRetry=false",
              end.get("willRetry") is False)
     return end_i + 1, text
@@ -177,32 +177,17 @@ def collect_assistant_text(evs: list[dict]) -> str:
     return "".join(out)
 
 
-def kick_summary(drv: Driver, answer_text: str) -> str:
-    """契约 §4.3：壳踢 summary 回合。返回 prompt id。"""
-    body = answer_text[:8000]
-    pid = rid()
-    drv.send({"id": pid, "type": "prompt",
-              "message": (SUMMARY_MARK + "\n"
-                          "下面是详答。请只输出短结：严格【summary】…【/summary】；"
-                          "篇幅 80～160 字；结构=1 句结论 + 最多 2～3 要点；"
-                          "禁止元评论/括号旁白/大段引用；不要工具、不要再写 answer。\n\n"
-                          f"【answer】\n{body}\n【/answer】")})
-    return pid
-
-
 def run_mock_flow(drv: Driver, ck: Checker) -> bool:
     start = 0
 
-    # ── 场景 1：普通对话 + 两步 ──
+    # ── 场景 1：普通对话，单回合双层结果 ──
     p1 = rid()
     drv.send({"id": p1, "type": "prompt", "message": "你好，请用一句话介绍你自己"})
     start, text = assert_round_skeleton(ck, drv, start, p1, "普通对话", True)
-    m = ANSWER_RE.search(text)
-    answer = m.group(1).strip() if m else ""
-    sp1 = kick_summary(drv, answer)
-    start, stext = assert_round_skeleton(ck, drv, start, sp1, "summary 回合", False)
-    ck.check("summary 回合: 含【summary】标记", bool(SUMMARY_RE.search(stext)),
-             stext[:60])
+    brief = BRIEF_RE.search(text)
+    detail = DETAIL_RE.search(text)
+    ck.check("普通对话: brief 可独立显示", bool(brief and brief.group(1).strip()))
+    ck.check("普通对话: detail 可展开查看", bool(detail and detail.group(1).strip()))
 
     # ── 场景 2：读屏确认全流程（门禁主流程）──
     p2 = rid()
@@ -235,12 +220,10 @@ def run_mock_flow(drv: Driver, ck: Checker) -> bool:
              "屏幕" in json.dumps(tool_end.get("result", {}), ensure_ascii=False))
 
     start, text2 = assert_round_skeleton_tail(ck, drv, start, p2, "读屏")
-    m2 = ANSWER_RE.search(text2)
-    ck.check("读屏: answer 含【answer】标记", bool(m2))
-    sp2 = kick_summary(drv, m2.group(1).strip() if m2 else "")
-    start, stext2 = assert_round_skeleton(ck, drv, start, sp2,
-                                          "读屏后 summary 回合", False)
-    ck.check("读屏后 summary: 含【summary】标记", bool(SUMMARY_RE.search(stext2)))
+    brief2 = BRIEF_RE.search(text2)
+    detail2 = DETAIL_RE.search(text2)
+    ck.check("读屏: 含配对【brief】标记", bool(brief2))
+    ck.check("读屏: 含配对【detail】标记", bool(detail2))
 
     # ── 场景 3：错误路径 ──
     p3 = rid()

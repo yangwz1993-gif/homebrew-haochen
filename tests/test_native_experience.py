@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from PyQt6.QtCore import QRect
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QApplication, QMenuBar
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +41,7 @@ def test_menu_bar_provides_required_native_entries(qtbot) -> None:
     shell = SimpleNamespace(
         show_chat=lambda: calls.append("chat"),
         show_settings=lambda: calls.append("settings"),
+        new_session=lambda: calls.append("new"),
         chat=SimpleNamespace(_new_session=lambda: calls.append("new")),
     )
     bar = menu_module.install_menu_bar(QApplication.instance(), shell)
@@ -60,9 +61,20 @@ def test_menu_bar_provides_required_native_entries(qtbot) -> None:
     for label in ("打开对话", "设置…", "新会话", "关于 haochen", "退出 haochen"):
         find(label)
 
-    assert find("打开对话").shortcut().toString() == "Meta+1"
-    assert find("设置…").shortcut().toString() == "Meta+,"
-    assert find("退出 haochen").shortcut().toString() == "Meta+Q"
+    assert find("打开对话").shortcut().toString() == "Ctrl+1"
+    assert find("打开对话").shortcutContext() == Qt.ShortcutContext.ApplicationShortcut
+    assert find("设置…").menuRole() == QAction.MenuRole.PreferencesRole
+    assert find("设置…").shortcut() == menu_module._standard_shortcut(
+        QKeySequence.StandardKey.Preferences, "Ctrl+,"
+    )
+    assert find("新会话").shortcut() == menu_module._standard_shortcut(
+        QKeySequence.StandardKey.New, "Ctrl+N"
+    )
+    assert find("退出 haochen").shortcut() == menu_module._standard_shortcut(
+        QKeySequence.StandardKey.Quit, "Ctrl+Q"
+    )
+    for label in ("设置…", "新会话", "退出 haochen"):
+        assert find(label).shortcutContext() == Qt.ShortcutContext.ApplicationShortcut
 
     find("打开对话").trigger()
     find("设置…").trigger()
@@ -85,6 +97,23 @@ def test_reduce_motion_skips_decorative_fade(qtbot, monkeypatch) -> None:
     widgets_module.fade_in(target2)
     assert target2.graphicsEffect() is not None
     assert getattr(target2, "_fade_anim", None) is not None
+
+
+def test_pet_reduce_motion_uses_static_status_and_pose(qtbot, monkeypatch) -> None:
+    from haochen_app.pet import bubble as bubble_module
+    from haochen_app.pet import pet_window as pet_window_module
+
+    monkeypatch.setattr(a11y, "reduce_motion_enabled", lambda: True)
+    status = bubble_module.StatusBlock("正在组织回答")
+    qtbot.addWidget(status)
+    assert not status._pulse.isActive()
+
+    pet = pet_window_module.PetWindow()
+    qtbot.addWidget(pet)
+    assert not pet._float_timer.isActive()
+    pet.show()
+    pet.set_pose("thinking")
+    assert pet.label.graphicsEffect() is None
 
 
 def test_screen_of_falls_back_to_primary(qtbot) -> None:

@@ -23,11 +23,11 @@ haochen new/                        ← 独立 macOS App「haochen」项目工�
 ## 二、当前完成的（上一版本已跑通的）
 
 - **haochen 独立 agent 桌宠**（基于 petread 迁移）：
-  - 像素眼镜小哥桌宠，双击/`⌃⌥P` 唤起输入气泡；读屏前确认；页面变化检测；`answer → summary` 两步；回车发送/⌘回车换行；点空白收起。
+  - 像素眼镜小哥桌宠，双击/`⌃⌥P` 唤起输入气泡；读屏前确认；页面变化检测；单回合 `brief + detail` 分层结果；回车发送/⌘回车换行；点空白收起。
   - 技术专家人格（读屏/查证/跑命令、不装懂、结论先行）。
   - 读屏（AX）CLI、聊天对话（L1 短结 + L2 详答）。
   - 已修关键 bug：pi 0.73 误把工具 isError:true 记 false（侧车文件方案）；气泡自绘崩溃（QPolygon→QPoint 类型）；summary 重复；双击退出。
-- **引擎**：验证 pi 0.84.3（`@earendil-works/pi-coding-agent`）RPC 协议兼容；`--no-extensions -e 专属扩展` 隔离加载；两步协议改 Python 侧踢（`haochen-summary-phase`）；全局 pi 插件已清、已升至官方 0.84.3。
+- **引擎**：验证 pi 0.84.3（`@earendil-works/pi-coding-agent`）RPC 协议兼容；`--no-extensions -e 专属扩展` 隔离加载；一次模型调用同时生成简答与详情；全局 pi 插件已清、已升至官方 0.84.3。
 - **成果文档**：`previous-version/` 下有里程碑分析、交接文档、体验/美化方案、阶段总结、下阶段方案等完整过程沉淀。
 
 ---

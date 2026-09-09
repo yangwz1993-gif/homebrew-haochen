@@ -118,6 +118,21 @@ def mouse(window, kind, local: QPoint, button, buttons) -> QMouseEvent:
     )
 
 
+def test_pet_uses_retina_physical_pixels_without_changing_logical_size(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    window = make_pet_window(qtbot, tmp_path, monkeypatch)
+    monkeypatch.setattr(window, "devicePixelRatioF", lambda: 2.0)
+    window._pixmaps.clear()
+
+    pixmap = window._pixmap("idle")
+
+    assert pixmap is not None
+    assert pixmap.width() == pet_window_module.PET_SIZE * 2
+    assert pixmap.devicePixelRatio() == 2.0
+    assert round(pixmap.deviceIndependentSize().width()) == pet_window_module.PET_SIZE
+
+
 def test_pet_window_drag_persists_position(qtbot, tmp_path: Path, monkeypatch) -> None:
     window = make_pet_window(qtbot, tmp_path, monkeypatch)
     center = QPoint(window.width() // 2, window.height() // 2)
@@ -142,6 +157,24 @@ def test_pet_window_drag_persists_position(qtbot, tmp_path: Path, monkeypatch) -
     assert saved.exists()
     data = json.loads(saved.read_text(encoding="utf-8"))
     assert data["x"] == window.x() and data["y"] == window.y()
+
+
+def test_pet_drag_is_clamped_above_dock_visible_area(qtbot, tmp_path: Path, monkeypatch) -> None:
+    window = make_pet_window(qtbot, tmp_path, monkeypatch)
+    screen = QApplication.primaryScreen()
+    area = screen.availableGeometry()
+
+    clamped = window._clamped_position(
+        QPoint(area.right() + 500, area.bottom() + 500),
+        area.center(),
+    )
+
+    assert clamped.x() + window.width() - 1 <= area.right()
+    assert clamped.y() + window.height() - 1 <= area.bottom()
+    assert clamped.x() >= area.left() + pet_window_module._SCREEN_MARGIN
+    assert clamped.y() >= area.top() + pet_window_module._SCREEN_MARGIN
+    assert clamped.x() + window.width() - 1 <= area.right() - pet_window_module._SCREEN_MARGIN
+    assert clamped.y() + window.height() - 1 <= area.bottom() - pet_window_module._SCREEN_MARGIN
 
 
 def test_pet_window_position_restore_and_offscreen_fallback(qtbot, tmp_path: Path, monkeypatch) -> None:
@@ -170,29 +203,122 @@ def test_pet_window_double_click_summons(qtbot, tmp_path: Path) -> None:
     assert summoned == [True]
 
 
+def test_pet_window_single_click_summons_without_double_click_duplicate(qtbot, tmp_path: Path) -> None:
+    window = make_pet_window(qtbot, tmp_path)
+    summoned: list[bool] = []
+    window.summon_requested.connect(lambda: summoned.append(True))
+    center = QPoint(window.width() // 2, window.height() // 2)
+
+    window.mousePressEvent(mouse(
+        window, QMouseEvent.Type.MouseButtonPress, center,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+    ))
+    window.mouseReleaseEvent(mouse(
+        window, QMouseEvent.Type.MouseButtonRelease, center,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+    ))
+    qtbot.waitUntil(lambda: summoned == [True], timeout=800)
+
+    summoned.clear()
+    window.mousePressEvent(mouse(
+        window, QMouseEvent.Type.MouseButtonPress, center,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+    ))
+    window.mouseReleaseEvent(mouse(
+        window, QMouseEvent.Type.MouseButtonRelease, center,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+    ))
+    window.mouseDoubleClickEvent(mouse(
+        window, QMouseEvent.Type.MouseButtonDblClick, center,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+    ))
+    qtbot.wait(400)
+    assert summoned == [True]
+
+
 def test_pet_window_context_menu_emits_actions(qtbot, tmp_path: Path) -> None:
     window = make_pet_window(qtbot, tmp_path)
     new_sessions: list[bool] = []
+    chats: list[bool] = []
     settings: list[bool] = []
     quit_requested: list[bool] = []
     window.new_session_requested.connect(lambda: new_sessions.append(True))
+    window.open_chat_requested.connect(lambda: chats.append(True))
     window.settings_requested.connect(lambda: settings.append(True))
     window.quit_requested.connect(lambda: quit_requested.append(True))
 
     triggered: list = []
 
-    def fake_exec(menu_self, *args, **kwargs):
+    def fake_popup(menu_self, *args, **kwargs):
         triggered.extend(menu_self.actions())
-        return menu_self.actions()[0] if menu_self.actions() else None
 
-    original_exec = QMenu.exec
-    QMenu.exec = fake_exec
+    original_popup = QMenu.popup
+    QMenu.popup = fake_popup
     try:
         from PyQt6.QtGui import QContextMenuEvent
 
         event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(5, 5))
         window.contextMenuEvent(event)
     finally:
-        QMenu.exec = original_exec
+        QMenu.popup = original_popup
 
-    assert len(triggered) >= 5  # 菜单已构建（唤起/打开/新会话/设置/退出）
+    labels = [action.text() for action in triggered]
+    assert "打开完整对话" in labels
+    assert len(triggered) >= 6  # 唤起/气泡/完整对话/新会话/设置/退出
+
+
+def test_pet_image_opens_context_menu_directly(qtbot, tmp_path: Path) -> None:
+    window = make_pet_window(qtbot, tmp_path)
+    shown_at: list[QPoint] = []
+    assert window.label.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    original_popup = QMenu.popup
+
+    def fake_popup(menu_self, global_pos, *args, **kwargs):
+        shown_at.append(global_pos)
+
+    QMenu.popup = fake_popup
+    try:
+        local_pos = QPoint(12, 18)
+        expected = window.label.mapToGlobal(local_pos)
+        release = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            QPointF(local_pos),
+            QPointF(expected),
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        window.mouseReleaseEvent(release)
+    finally:
+        QMenu.popup = original_popup
+
+    assert shown_at == [expected]
+
+
+def test_pet_image_control_click_opens_context_menu(qtbot, tmp_path: Path) -> None:
+    window = make_pet_window(qtbot, tmp_path)
+    shown_at: list[QPoint] = []
+
+    original_popup = QMenu.popup
+
+    def fake_popup(menu_self, global_pos, *args, **kwargs):
+        shown_at.append(global_pos)
+
+    QMenu.popup = fake_popup
+    try:
+        local_pos = QPoint(20, 24)
+        expected = window.label.mapToGlobal(local_pos)
+        release = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            QPointF(local_pos),
+            QPointF(expected),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.MetaModifier,
+        )
+        window.mouseReleaseEvent(release)
+    finally:
+        QMenu.popup = original_popup
+
+    assert shown_at == [expected]

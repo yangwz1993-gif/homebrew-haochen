@@ -29,7 +29,7 @@ haochen 使用 Semantic Versioning：
 - `make check` 全绿，覆盖率不低于既有门槛。
 - 桌宠、完整窗口、首启、权限、崩溃恢复和多屏场景通过。
 - UI 改动完成真机截图或录屏验收，不能只验证信号或控件存在。
-- Secret scan、签名、Notarization、Staple 与 Gatekeeper 评估通过。
+- Secret scan 与所选发布通道的签名门禁通过；Developer ID 通道还必须通过 Notarization、Staple 与 Gatekeeper 评估。
 - DMG 文件名、App 版本、引擎版本、Cask 版本和 SHA-256 一致。
 - `CHANGELOG.md` 和 Release Notes 完整，具备回滚说明。
 
@@ -44,13 +44,11 @@ uv run python scripts/version.py sync
 make check
 make regressions
 
-# 3. Developer ID 正式构建和公证
-HAOCHEN_SIGNING_IDENTITY='Developer ID Application: …' \
-HAOCHEN_NOTARY_PROFILE='haochen-notary' \
-  make package
+# 3. v0.3.0 所有者授权的 legacy 构建（自签、无 Apple 公证）
+HAOCHEN_BUILD_MODE=legacy bash packaging/build.sh
 
-# 4. 由真实 DMG 生成根 Cask
-uv run python scripts/version.py render-cask packaging/dist/haochen-0.3.0.dmg
+# 4. 由真实 DMG 生成 legacy Cask
+uv run python scripts/version.py render-cask --legacy packaging/dist/haochen-0.3.0.dmg
 
 # 5. 再次验证、提交、创建签名标签并发布 Release
 make check
@@ -59,6 +57,9 @@ git tag -s v0.3.0 -m 'haochen v0.3.0'
 
 发布后验证 Release 资产可下载、SHA-256 匹配，并在一台没有开发环境的 Mac 上执行 Homebrew 安装、首次启动和卸载回归。
 
-## 0.2.0 例外
+## 0.3.0 legacy 决策
 
-0.2.0 是发布者自签名的过渡版本，Cask 包含移除 quarantine 的兼容逻辑。该例外不得复制到下一正式版本；0.3.0 的发布阻断条件包括 Developer ID 和 Apple Notarization。
+所有者于 2026-09-09 明确选择 v0.3.0 延续上一版 legacy DMG + Homebrew Cask 模式。
+该通道使用稳定的发布者自签身份，不经过 Apple 公证，并由 Cask 在安装后移除 quarantine。
+README、Cask 与 Release Notes 必须持续披露这一点，不得描述为 Apple 可信发行。
+默认 `release` 模式仍强制 Developer ID 与 Apple 公证，未来取得正式证书后可切换且不得静默降级。

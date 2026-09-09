@@ -5,13 +5,13 @@
     MOCK_TICK_MS=20 .venv/bin/python haochen_app/pet/verification/run_scenarios.py
 
 场景（对应验收清单）：
-  S0 首启问称呼  → 首次唤起即锚定人物正上方（间隙 8px）+ 问候块 → 输入称呼落盘不再问（v0.1.7）
-  S1 普通问答    → 用户消息/思考状态/短结逐条弹出，姿态 idle→thinking→idle
+  S0 首启问称呼  → 首次唤起即锚定人物正上方（可见间隙 8px）+ 问候块 → 输入称呼落盘不再问（v0.1.7）
+  S1 普通问答    → 输入退场/思考状态/单轮结果卡，姿态 idle→thinking→idle
   S2 读屏确认    → 感知提示（单行不折行）+「读吧/不读」确认条 → 回车=「读吧」→ 短结（v0.1.7）
   S3 错误路径    → 错误块 + alert(angry) 姿态
   S4 Esc 打断    → abort，已产内容保留，状态条标「已停止」
   S5 Esc 收起    → 气泡淡出，状态回 IDLE（失焦不收起由 changeEvent 保证，人工可验）
-  S6 展开详细    → ChatWindow 从气泡 rect 展开；Esc 收起 → app 不退出、窗口隐藏、气泡恢复
+  S6 查看详情    → ChatWindow 从气泡 rect 展开；Esc 收起 → app 不退出、窗口与旧结果都退场
   S7 展开后 ⌘W   → 同上（⌘W 快捷键槽 + closeEvent 两条路径同样只收出不退出）
   S8 几何/联动   → 气泡在人物正上方不重叠；拖人物→气泡跟随、拖气泡→人物跟随；位置记忆恢复（v0.1.6）
 
@@ -34,17 +34,33 @@ OUT = Path(__file__).resolve().parent
 
 # v0.1.6 位置记忆写 haochen_home()/pet-pos.json：验证隔离到临时目录，不碰真实数据目录
 os.environ.setdefault("HAOCHEN_HOME", tempfile.mkdtemp(prefix="haochen-pet-verify-"))
+# 留出足够时间让 ACK 卡完成淡入；只影响本视觉证据进程，mock 默认仍为零延迟。
+os.environ.setdefault("MOCK_ACCEPT_DELAY_MS", "240")
+os.environ.setdefault("MOCK_ACTION_DELAY_MS", "240")
 
 from PyQt6.QtCore import QPoint, Qt, QTimer
+from PyQt6.QtGui import QColor, QPainter, QPixmap
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QPushButton
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
 
 from haochen_app.pet import PetApp, PetState
-from haochen_app.pet.bubble import GreetBlock, HintBlock
+from haochen_app.pet import theme as T
+from haochen_app.pet.bubble import GreetBlock, HintBlock, SummaryBlock
 from haochen_app.pet.pet_window import PetWindow
 from haochen_app.pet.profile import should_ask_name
 
 LOG: list[str] = []
+VISUAL_EVIDENCE: list[dict] = []
+
+
+def visible_bubble_pet_gap(pa: PetApp) -> int:
+    """Measure painted tail-tip to the first visible row of the pet asset."""
+    b, p = pa.bubble, pa.pet
+    if b.y() + b.height() <= p.y():
+        tail_tip_y = b.y() + b.height() - T.TAIL_TIP_BOTTOM_INSET
+        pet_visible_top = p.y() + T.PET_VISIBLE_TOP_INSET
+        return pet_visible_top - tail_tip_y
+    return b.y() - (p.y() + p.height())
 
 
 def note(msg: str) -> None:
@@ -58,6 +74,32 @@ def shot(widget, name: str) -> None:
     note(f"screenshot -> {name}")
 
 
+def shot_pair(pa: PetApp, name: str) -> None:
+    """Capture pet and bubble as one neutral-canvas artifact plus exact geometry."""
+    b, p = pa.bubble, pa.pet
+    bounds = b.geometry().united(p.geometry())
+    canvas = QPixmap(bounds.size())
+    canvas.fill(QColor("#f1f0ec"))
+    painter = QPainter(canvas)
+    painter.drawPixmap(b.pos() - bounds.topLeft(), b.grab())
+    painter.drawPixmap(p.pos() - bounds.topLeft(), p.grab())
+    painter.end()
+    canvas.save(str(OUT / name))
+
+    tail_x = b.tail_tip_global_x
+    pet_center_x = p.x() + p.width() // 2
+    VISUAL_EVIDENCE.append({
+        "file": name,
+        "state": pa.state.value,
+        "bubble": {"x": b.x(), "y": b.y(), "width": b.width(), "height": b.height()},
+        "pet": {"x": p.x(), "y": p.y(), "width": p.width(), "height": p.height()},
+        "bubble_pet_gap": visible_bubble_pet_gap(pa),
+        "tail_center_delta_x": tail_x - pet_center_x,
+        "layout": b.layout_metrics(),
+    })
+    note(f"evidence -> {name} {VISUAL_EVIDENCE[-1]}")
+
+
 class Runner:
     """按信号串联场景：每幕完成才进下一幕，避免定时不稳。"""
 
@@ -68,6 +110,7 @@ class Runner:
                       self.s7_expand_cmd_w, self.s8_geometry_drag_persist, self.finish]
         self.results: list[str] = []
         self.app_quit = False
+        self._captured_transitions: set[str] = set()
         QApplication.instance().aboutToQuit.connect(self._mark_quit)
         # v0.1.4 hotfix：详情改走 ChatWindow「从气泡展开」模式。
         # 这里在测试内复刻壳层接线（app_shell 应由集成方加同样两行）。
@@ -77,7 +120,21 @@ class Runner:
         self.chat.setStyleSheet(app_stylesheet())  # 与壳层一致，截图目检呈真机样式
         pa.detail_opener = self.chat.open_from_bubble
         self.chat.detail_collapsed.connect(pa.restore_bubble)
-        pa.state_changed.connect(lambda s: note(f"state -> {s}"))
+        pa.state_changed.connect(self._on_state_changed)
+
+    def _on_state_changed(self, state: str) -> None:
+        note(f"state -> {state}")
+        if (state in {"ACKNOWLEDGING", "ACTING"}
+                and state not in self._captured_transitions
+                and self.pa.bubble.summoned):
+            self._captured_transitions.add(state)
+            delay = 190
+            QTimer.singleShot(
+                delay,
+                lambda captured=state: shot_pair(
+                    self.pa, f"evidence-{captured.lower()}.png"
+                ),
+            )
 
     def _mark_quit(self) -> None:
         self.app_quit = True
@@ -88,6 +145,14 @@ class Runner:
 
     def next(self, delay: int = 400) -> None:
         QTimer.singleShot(delay, self._run_step)
+
+    def submit_user_text(self, text: str) -> None:
+        """走和真实用户完全相同的输入/发送路径，避免验收证据保留了隐藏输入框。"""
+        pa = self.pa
+        if not pa.bubble._input_visible():
+            pa._on_continue()
+        pa.bubble.input.setPlainText(text)
+        pa.bubble._on_send()
 
     def _run_step(self) -> None:
         if self.steps:
@@ -104,11 +169,11 @@ class Runner:
     def _s0_greeting(self):
         pa = self.pa
         b, p = pa.bubble, pa.pet
-        # 默认锚定：唤起后气泡即在人物正上方（间隙 8px，尾巴对中心），不用拖
-        gap = p.y() - (b.y() + b.height())
+        # 默认锚定：唤起后气泡即在人物正上方（可见间隙 8px，尾巴对中心），不用拖
+        gap = visible_bubble_pet_gap(pa)
         self.check("S0 首次唤起气泡在人物正上方", b.y() + b.height() <= p.y(),
                    f"b.bottom={b.y() + b.height()} p.top={p.y()}")
-        self.check("S0 间隙恰为 8px", gap == 8, f"gap={gap}")
+        self.check("S0 尾尖到人物可见发顶为 8px", gap == 8, f"gap={gap}")
         tail_x = b.x() + b.width() - 34
         self.check("S0 尾巴尖对准人物中心", abs(tail_x - (p.x() + p.width() // 2)) <= 2,
                    f"tail={tail_x} center={p.x() + p.width() // 2}")
@@ -116,7 +181,7 @@ class Runner:
         self.check("S0 气泡唤起不再自动问称呼（已移向导）", not pa._awaiting_name)
         shot(pa.bubble, "00-first-run-ask-name.png")
         pa._awaiting_name = True  # 主动验证称呼回合链路（档案保存、不进引擎）
-        pa.send("阿晨")
+        self.submit_user_text("阿晨")
         QTimer.singleShot(300, self._s0_saved)
 
     def _s0_saved(self):
@@ -139,23 +204,40 @@ class Runner:
         self.check("初始状态 IDLE", pa.state is PetState.IDLE)
         shot(pa.pet, "01-pet-idle.png")
         pa._toggle_bubble()  # 模拟双击唤起
-        self.check("唤起后 AWAKE", pa.state is PetState.AWAKE)
-        QTimer.singleShot(300, lambda: shot(pa.bubble, "02-bubble-summoned.png"))
-        QTimer.singleShot(500, lambda: pa.send("你好，haochen，介绍一下你自己"))
-        # v0.2.0：消息经 coordinator 队列异步泄流，THINK 状态稍后出现
+        self.check("唤起后 LISTENING", pa.state is PetState.LISTENING)
+        QTimer.singleShot(300, lambda: (
+            shot(pa.bubble, "02-bubble-summoned.png"),
+            shot_pair(pa, "evidence-listening.png"),
+        ))
+        QTimer.singleShot(500, lambda: self.submit_user_text("你好，haochen，介绍一下你自己"))
+        # v0.3.0：请求接单后由真实引擎事件进入 COMPOSING。
         QTimer.singleShot(1500, lambda: (
             shot(pa.pet, "03a-pet-thinking.png"),
             shot(pa.bubble, "03b-bubble-thinking.png"),
+            shot_pair(pa, "evidence-composing.png"),
             self.check("生成中姿态 thinking", pa.pet.pose == "thinking", pa.pet.pose),
-            self.check("生成中状态 THINK", pa.state is PetState.THINK, pa.state.value)))
+            self.check("生成中状态 COMPOSING", pa.state is PetState.COMPOSING, pa.state.value)))
         pa.ctrl.summary_done.connect(self._s1_done)
 
     def _s1_done(self, summary: str):
         pa = self.pa
         pa.ctrl.summary_done.disconnect(self._s1_done)
+        QTimer.singleShot(250, lambda: self._s1_result_ready(summary))
+
+    def _s1_result_ready(self, summary: str):
+        pa = self.pa
         shot(pa.bubble, "04-summary-l1.png")
+        shot_pair(pa, "evidence-presenting.png")
         self.check("S1 短结非空", bool(summary.strip()), summary[:30])
-        self.check("S1 收敛后回 AWAKE", pa.state is PetState.AWAKE, pa.state.value)
+        blocks = pa.bubble.findChildren(SummaryBlock)
+        self.check("S1 结果卡已稳定渲染", bool(blocks))
+        self.check("S1 结果阶段不常驻输入框", not pa.bubble._input_visible())
+        self.check("S1 结果卡提供继续问与查看详情", bool(blocks)
+                   and blocks[-1].continue_button.text() == "继续问"
+                   and blocks[-1].expand_button.text() == "查看详情")
+        forbidden = ("haochen-summary-phase", "【answer】", "【summary】")
+        self.check("S1 用户结果不泄露协议词", not any(x in summary for x in forbidden))
+        self.check("S1 结果进入 PRESENTING", pa.state is PetState.PRESENTING, pa.state.value)
         QTimer.singleShot(250, lambda: (shot(pa.pet, "04b-pet-back-idle.png"),
                                         self.check("姿态回 idle", pa.pet.pose == "idle")))
         QTimer.singleShot(600, self.next)
@@ -166,7 +248,7 @@ class Runner:
         pa = self.pa
         self._s2_answer = ""
         pa.ctrl.answer_done.connect(self._s2_answer_got)
-        pa.send("帮我读屏看看屏幕上有什么")
+        self.submit_user_text("帮我读屏看看屏幕上有什么")
         # v0.2.0：消息经队列异步泄流，确认条出现时间稍晚（mock tick × 多轮）
         self._s2_confirm_polls = 0
         QTimer.singleShot(2000, self._s2_wait_confirm)
@@ -187,9 +269,11 @@ class Runner:
         pa = self.pa
         ok = pa.bubble.confirm_pending
         self.check("S2 确认条已弹出", ok)
-        self.check("S2 状态 PERCEIVE/ACT", pa.state in (PetState.PERCEIVE, PetState.ACT),
+        self.check("S2 状态 PERCEIVING/ACTING",
+                   pa.state in (PetState.PERCEIVING, PetState.ACTING),
                    pa.state.value)
         shot(pa.bubble, "05-read-screen-confirm.png")
+        shot_pair(pa, "evidence-perceiving.png")
         # v0.1.7：感知提示单行不折行
         hint = pa.bubble.findChild(HintBlock)
         if hint:
@@ -220,9 +304,14 @@ class Runner:
         pa = self.pa
         pa.ctrl.summary_done.disconnect(self._s2_done)
         pa.ctrl.answer_done.disconnect(self._s2_answer_got)
+        QTimer.singleShot(250, lambda: self._s2_result_ready(summary))
+
+    def _s2_result_ready(self, summary: str):
+        pa = self.pa
         shot(pa.bubble, "06-read-screen-done.png")
         self.check("S2 读屏后短结非空", bool(summary.strip()), summary[:30])
-        # mock 的 summary 回合文案固定，读屏语义改在 answer 详答上验
+        self.check("S2 读屏结果不恢复输入框", not pa.bubble._input_visible())
+        # mock 的 brief 文案固定，读屏语义改在 detail 详答上验
         self.check("S2 详答含读屏语义", "屏" in self._s2_answer, self._s2_answer[:40])
         QTimer.singleShot(300, self.next)
 
@@ -230,7 +319,7 @@ class Runner:
     def s3_error(self):
         note("── S3 错误路径（alert 姿态 + 错误块）──")
         pa = self.pa
-        pa.send("这里触发一个错误")
+        self.submit_user_text("这里触发一个错误")
         pa.ctrl.failed.connect(self._s3_failed)
 
     def _s3_failed(self, err: str):
@@ -240,6 +329,7 @@ class Runner:
         QTimer.singleShot(600, lambda: (
             shot(pa.pet, "07a-pet-alert.png"),
             shot(pa.bubble, "07b-error-block.png"),
+            shot_pair(pa, "evidence-error.png"),
             self.check("S3 alert(angry) 姿态", pa.pet.pose == "angry", pa.pet.pose)))
         QTimer.singleShot(1200, self.next)
 
@@ -247,7 +337,7 @@ class Runner:
     def s4_abort(self):
         note("── S4 Esc 打断（abort，保留已产内容）──")
         pa = self.pa
-        pa.send("再介绍一下你自己，这次我会打断你")
+        self.submit_user_text("再介绍一下你自己，这次我会打断你")
         QTimer.singleShot(900, self._s4_do_abort)
         pa.ctrl.summary_done.connect(self._s4_done)
         pa.ctrl.failed.connect(self._s4_done)
@@ -256,7 +346,10 @@ class Runner:
         pa = self.pa
         pa._on_escape()  # 生成中 Esc = 打断
         self.check("S4 打断标记", pa._aborted)
-        QTimer.singleShot(300, lambda: shot(pa.bubble, "08-abort-stopped.png"))
+        QTimer.singleShot(300, lambda: (
+            shot(pa.bubble, "08-abort-stopped.png"),
+            shot_pair(pa, "evidence-cancelled.png"),
+        ))
 
     def _s4_done(self, *_):
         pa = self.pa
@@ -297,7 +390,7 @@ class Runner:
         self.chat.close()  # closeEvent 路径（系统级关闭/Mission Control）
 
     def _expand_then(self, tag: str, closer, after):
-        """展开详情 → 断言展开态 → closer() 收起 → 断言「不退出 + 隐藏 + 气泡恢复」。"""
+        """展开详情 → 断言展开态 → closer() 收起 → 断言窗口和旧结果都退场。"""
         pa = self.pa
         if not pa.bubble.summoned:
             pa._toggle_bubble()
@@ -318,8 +411,9 @@ class Runner:
         self.check(f"{tag} 后 app 未退出（无 aboutToQuit）", not self.app_quit)
         self.check(f"{tag} 后对话窗口已隐藏", not chat.isVisible())
         self.check(f"{tag} 后退出详情模式", not chat._detail_mode)
-        self.check(f"{tag} 后气泡已恢复显示", pa.bubble.isVisible() and pa.bubble.summoned)
-        shot(pa.bubble, f"10-bubble-restored-{tag}.png")
+        self.check(f"{tag} 后旧结果未恢复常驻", not pa.bubble.isVisible()
+                   and not pa.bubble.summoned)
+        self.check(f"{tag} 后桌宠回 IDLE", pa.state is PetState.IDLE, pa.state.value)
         QTimer.singleShot(300, after)
 
     # ── S7 展开详细 → ⌘W / closeEvent 收起 ──
@@ -346,11 +440,8 @@ class Runner:
         QTimer.singleShot(500, self._s8_geometry)
 
     def _s8_gap(self) -> int:
-        """气泡与人物的垂直间隙：上方 = 气泡底（含尾巴）到头顶；下方 = 人物底到气泡顶。"""
-        b, p = self.pa.bubble, self.pa.pet
-        if b.y() + b.height() <= p.y():
-            return p.y() - (b.y() + b.height())
-        return b.y() - (p.y() + p.height())
+        """气泡尾尖与人物可见像素的垂直间隙。"""
+        return visible_bubble_pet_gap(self.pa)
 
     def _s8_geometry(self):
         pa = self.pa
@@ -359,7 +450,7 @@ class Runner:
         self.check("S8 气泡与人物不重叠（间隙 6~10px）", 6 <= gap <= 10, f"gap={gap}")
         self.check("S8 气泡在人物正上方", b.y() + b.height() <= p.y(),
                    f"b.bottom={b.y() + b.height()} p.top={p.y()}")
-        tail_x = b.x() + b.width() - 34  # 尾巴尖全局 x（paintEvent: tail_x=w-44, 尖 +10）
+        tail_x = b.tail_tip_global_x
         self.check("S8 尾巴尖对准人物中心", abs(tail_x - (p.x() + p.width() // 2)) <= 2,
                    f"tail={tail_x} center={p.x() + p.width() // 2}")
         # 内容增长（气泡变高）后重新锚定，仍不重叠
@@ -386,7 +477,7 @@ class Runner:
         b, p = pa.bubble, pa.pet
         gap = self._s8_gap()
         self.check("S8 拖人物后气泡跟随不重叠", 6 <= gap <= 10, f"gap={gap}")
-        tail_x = b.x() + b.width() - 34
+        tail_x = b.tail_tip_global_x
         self.check("S8 拖人物后尾巴仍对准中心", abs(tail_x - (p.x() + p.width() // 2)) <= 2,
                    f"tail={tail_x} center={p.x() + p.width() // 2}")
         # 拖动结束位置已写入 pet-pos.json
@@ -407,12 +498,12 @@ class Runner:
     def _s8_bubble_dragged(self):
         pa = self.pa
         b, p = pa.bubble, pa.pet
-        tail_x = b.x() + b.width() - 34
+        tail_x = b.tail_tip_global_x
         self.check("S8 拖气泡后人物跟到尾巴正下方",
                    abs(tail_x - (p.x() + p.width() // 2)) <= 2
-                   and p.y() - (b.y() + b.height()) == 8,
+                   and visible_bubble_pet_gap(pa) == 8,
                    f"tail={tail_x} center={p.x() + p.width() // 2} "
-                   f"gap={p.y() - b.y() - b.height()}")
+                   f"gap={visible_bubble_pet_gap(pa)}")
         # 拖气泡结束同样持久化人物位置
         data = json.loads((Path(os.environ["HAOCHEN_HOME"]) / "pet-pos.json")
                           .read_text(encoding="utf-8"))
@@ -426,11 +517,58 @@ class Runner:
         p2.deleteLater()
         shot(pa.bubble, "11-bubble-after-drag.png")
         shot(pa.pet, "12-pet-after-drag.png")
+        QTimer.singleShot(300, self._s8_edges)
+
+    def _s8_edges(self):
+        pa = self.pa
+        b, p = pa.bubble, pa.pet
+        screen = QApplication.primaryScreen().availableGeometry()
+        p.move(screen.left() + 4, screen.center().y())
+        pa._place_bubble()
+        center_x = p.x() + p.width() // 2
+        self.check("S8 左缘夹回后尾巴仍锚定人物",
+                   abs(b.tail_tip_global_x - center_x) <= 2,
+                   f"tail={b.tail_tip_global_x} center={center_x}")
+        shot_pair(pa, "13-left-edge-tail.png")
+        p.move(screen.center().x() - p.width() // 2, screen.top() + 4)
+        pa._place_bubble()
+        center_x = p.x() + p.width() // 2
+        self.check("顶缘时气泡翻到人物下方且尾巴向上",
+                   b.tail_side == "top" and b.y() > p.y()
+                   and abs(b.tail_tip_global_x - center_x) <= 2,
+                   f"side={b.tail_side} tail={b.tail_tip_global_x} center={center_x}")
+        shot_pair(pa, "14-top-edge-tail.png")
+
+        # 模拟拖动指针越过 Dock：人物整体必须夹回 macOS 可用工作区。
+        proposed = QPoint(screen.center().x(), screen.bottom() + 200)
+        p.move(p._clamped_position(proposed, screen.center()))
+        pa._place_bubble()
+        self.check("底缘拖动后人物完整留在可用工作区",
+                   p.y() >= screen.top() and p.y() + p.height() - 1 <= screen.bottom(),
+                   f"pet={p.geometry()} available={screen}")
+        pa._aborted = False
+        pa._last_answer = "好"
+        pa._on_summary_done("好")
+        QTimer.singleShot(300, self._s8_bottom_ready)
+
+    def _s8_bottom_ready(self):
+        pa = self.pa
+        b = pa.bubble
+        self.check("无协议短答仍呈现可见结果",
+                   any("好" in label.text() for block in b.findChildren(SummaryBlock)
+                       for label in block.findChildren(QPushButton) + block.findChildren(QLabel)),
+                   "expected visible fallback summary")
+        pa._place_bubble()
+        shot_pair(pa, "15-bottom-edge-result.png")
         QTimer.singleShot(300, self.next)
 
     # ── 收尾 ──
     def finish(self):
         (OUT / "state-transitions.log").write_text("\n".join(LOG) + "\n", encoding="utf-8")
+        (OUT / "visual-metrics.json").write_text(
+            json.dumps(VISUAL_EVIDENCE, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         report = "\n".join(self.results) + "\n"
         (OUT / "results.log").write_text(report, encoding="utf-8")
         print("\n===== RESULTS =====\n" + report, flush=True)
@@ -448,7 +586,8 @@ def main() -> int:
     QTimer.singleShot(120000, app.quit)  # 全局兜底
     code = app.exec()
     pa.client.stop()
-    return code
+    failed = any(line.startswith("FAIL") for line in runner.results)
+    return 1 if failed else code
 
 
 if __name__ == "__main__":

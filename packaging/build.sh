@@ -34,7 +34,7 @@ case "$BUILD_MODE" in
     fi
     ;;
   legacy)
-    # 0.1.x 时代模式：稳定自签身份优先（无 Developer ID/公证）。用户已知情选择此模式。
+    # Legacy 分发：稳定自签身份优先（无 Developer ID/公证）。用户已知情选择此模式用于 v0.3.0。
     LEGACY_IDENTITY="haochen Local Signing"
     LEGACY_KEYCHAIN="$HOME/Library/Keychains/haochen-signing.keychain-db"
     if [ -f "$LEGACY_KEYCHAIN" ]; then
@@ -143,7 +143,7 @@ case "$BUILD_MODE" in
   release) SIGN_ARGS+=(--options runtime --timestamp) ;;
   development) SIGN_ARGS+=(--timestamp=none) ;;
   legacy)
-    # 0.1.x 模式：无 hardened runtime/timestamp 要求；自签身份在用户搜索列表中。
+    # Legacy 模式：无 hardened runtime/timestamp 要求；自签身份在用户搜索列表中。
     if [ -z "${HAOCHEN_KEYCHAIN:-}" ] && [ -f "$LEGACY_KEYCHAIN" ]; then
         SIGN_ARGS+=(--keychain "$LEGACY_KEYCHAIN")
     fi

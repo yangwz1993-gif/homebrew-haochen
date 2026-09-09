@@ -73,3 +73,67 @@ def test_humanize_error_passthrough_for_plain_messages() -> None:
     assert conversation.humanize_error("引擎已退出") == "引擎已退出"
     assert conversation.humanize_error("") == ""
     assert conversation.humanize_error("503: 不是json") == "503: 不是json"
+
+
+def test_input_state_drops_stale_result_height(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(bubble_module.a11y, "reduce_motion_enabled", lambda: True)
+    win = BubbleWindow()
+    qtbot.addWidget(win)
+    win.summon()
+    win.present_summary("结论。\n- 这是一个用于撑高旧结果状态的长要点。" * 8)
+    qtbot.wait(50)
+
+    win.start_input()
+    qtbot.wait(50)
+    metrics = win.layout_metrics()
+
+    assert metrics["input_visible"] is True
+    assert metrics["scroll_visible"] is False
+    assert metrics["flow_content_height"] == 0
+    assert metrics["input_top_gap"] <= 24
+    assert metrics["height"] <= 100
+    assert metrics["width"] == bubble_module.INPUT_WIDTH
+    assert metrics["mode"] == "input"
+
+
+def test_work_and_result_use_distinct_compact_shells(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(bubble_module.a11y, "reduce_motion_enabled", lambda: True)
+    win = BubbleWindow()
+    qtbot.addWidget(win)
+    win.summon()
+
+    win.present_status("收到，我接住了", cancellable=True)
+    progress = win.layout_metrics()
+    assert progress["mode"] == "progress"
+    assert progress["width"] == bubble_module.PROGRESS_WIDTH
+    assert progress["height"] <= 90
+    assert progress["input_visible"] is False
+
+    win.present_summary("直接说结论：已经处理好了。")
+    result = win.layout_metrics()
+    assert result["mode"] == "result"
+    assert result["width"] == bubble_module.BUBBLE_WIDTH
+    assert result["input_visible"] is False
+
+
+def test_humanize_error_redacts_invalid_authorization_value() -> None:
+    raw = "Header 'Authorization' has invalid value 'Bearer sk-在此填入你的-DeepSeek-Key'"
+    out = conversation.humanize_error(raw)
+
+    assert out == "API Key 无效或格式不正确。请打开设置重新配置后再试。"
+    assert "Bearer" not in out
+    assert "sk-" not in out
+
+
+def test_humanize_error_hides_cli_help_and_internal_paths() -> None:
+    raw = (
+        "No API key found for the selected model. Use /login to log into a provider. "
+        "See /private/tmp/build/haochen.app/Contents/Resources/engine/docs/providers.md "
+        "and models.md."
+    )
+    out = conversation.humanize_error(raw)
+
+    assert out == "当前模型还没有配置 API Key。请打开设置，保存并验证后再试。"
+    assert "/private" not in out
+    assert "/login" not in out
+    assert ".md" not in out

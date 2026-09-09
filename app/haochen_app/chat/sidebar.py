@@ -16,6 +16,23 @@ from PyQt6.QtWidgets import (
 
 from .theme import BORDER, FONT, RADIUS_BTN, C, button_solid
 
+_MODEL_LABELS = {
+    "deepseek-v4-flash-vision-exp": "DeepSeek V4 Vision · 实验版",
+    "deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek-v4-pro": "DeepSeek V4 Pro",
+}
+
+
+def model_display_name(model: str) -> str:
+    """Return a compact product label while preserving the exact id in the tooltip."""
+    model_id = model.rsplit("/", 1)[-1] if model else ""
+    if not model_id:
+        return "未连接"
+    if model_id in _MODEL_LABELS:
+        return _MODEL_LABELS[model_id]
+    words = [part for part in model_id.replace("_", "-").split("-") if part]
+    return " ".join(word.upper() if len(word) <= 3 else word.capitalize() for word in words)
+
 
 class SessionSidebar(QWidget):
     session_selected = pyqtSignal(str)          # session_path
@@ -58,6 +75,7 @@ class SessionSidebar(QWidget):
             }}
         """)
         self.list.itemClicked.connect(self._on_click)
+        self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._on_menu)
         root.addWidget(self.list, 1)
@@ -70,7 +88,7 @@ class SessionSidebar(QWidget):
         root.addWidget(btn_new)
 
         self.status = QLabel("")
-        self.status.setWordWrap(True)
+        self.status.setWordWrap(False)
         self.status.setStyleSheet(f"color: {C['ink_soft']}; font-size: {FONT['body_sm']}px;")
         root.addWidget(self.status)
 
@@ -107,6 +125,15 @@ class SessionSidebar(QWidget):
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)
+        self.status.setToolTip(text)
+
+    def set_model(self, model: str) -> None:
+        """窄侧栏只显示可辨认的模型名，完整 provider/id 留在悬停提示。"""
+        self.status.setText(f"模型  {model_display_name(model)}")
+        self.status.setToolTip(model or "模型尚未连接")
+        self.status.setAccessibleName(
+            f"当前模型 {model_display_name(model)}" if model else "模型尚未连接"
+        )
 
     # ── 交互 ──────────────────────────────────────────────────
 

@@ -1,65 +1,91 @@
-# v0.2.0 发布清单
+# v0.3.0 正式发布清单
 
-> 状态（2026-09 更新）：所有者已知情选择沿用 0.1.x 的 legacy 发布模式（自签身份 + cask postflight 去隔离，不经 Apple 公证）。
-> DMG 已按该模式构建并通过校验；cask 已推送 tap；tag v0.2.0 已推。**剩余唯一步骤：网页创建 Release v0.2.0 并上传 DMG 资产。**
+> 更新：2026-09-09。所有者明确选择 v0.3.0 延续上一版 legacy DMG + Homebrew
+> Cask 分发：App 使用稳定的发布者自签身份，不经过 Apple 公证；Cask 安装后移除
+> quarantine。不得把该产物描述为 Developer ID、Notarized 或 Gatekeeper 认证版本。
 
-## A. 已完成的验收（证据可复跑）
+## 发布门禁
 
-| 项目 | 命令 | 结果 |
+| 门禁 | 证据 | 状态 |
 |---|---|---|
-| 静态检查 | `make check`（版本/secret/ruff/pyright/shellcheck/pytest/coverage） | 全绿，241 passed，覆盖率 81% |
-| 单元/安全/生命周期/会话/UI 流程 | `pytest tests/` | 241/241（两轮确认） |
-| L1 引擎协议 | `python3 mock-engine/driver.py` | 45/45 |
-| L2 配置自检 | selfcheck | 27/27 |
-| 视觉扩展 | `bun run app/ext/test-visual-mode.ts` | 21/21 |
-| L3 对话场景 | chat/verification/run_scenarios.py | 全部场景完成 |
-| L3 桌宠场景 | pet/verification/run_scenarios.py | 0 FAIL |
-| L3 P4 集成 | p4_integration.py | 28/28 |
-| L4 打包（开发签名） | `HAOCHEN_BUILD_MODE=development bash packaging/build.sh` | App+DMG 构建成功，codesign 校验通过，版本一致（App 0.2.0 / build 1 / engine 0.2.0-dev.1） |
-| 全量回归 | `bash tests/run_all_regressions.sh` | PASS=6 FAIL=0 |
-| 仓库凭据扫描 | `scripts/check_secrets.py` + Git 全历史扫描 | 无泄露 |
-| release 缺凭据失败路径 | 无凭据跑 release 构建 | 正确拒绝（不静默降级） |
+| 独立用户验收 | `docs/reviews/v0.3.0-aesthetic-review-19.md`，最终 legacy 包 | PASS |
+| 代码质量 | `make check`：336 tests，coverage 85% | PASS |
+| 分层回归 | `make regressions`：6/6 | PASS |
+| PR | PR #6，最新提交和远端 macOS quality gate | 待最终版本提交复核 |
+| 发布模式 | 所有者 2026-09-09 明确选择 legacy | 已授权 |
+| 签名 | `haochen Local Signing`，门禁确认不是 ad-hoc | PASS |
+| DMG / Cask | 0.3.0，SHA-256 `27862a…ecc5c`，legacy Cask 一致 | PASS |
+| Homebrew 安装 | 从线上 Release 安装、启动、升级与卸载 | 待发布复核 |
 
-## B. 发布前必须由凭据所有者完成（外部动作）
+## 风险边界
 
-1. 轮换/吊销旧凭据（见 `credential-rotation-required.md`）：旧自签私钥/P12/Keychain 口令、泄露的第三方 API Key。
-2. 准备 Apple Developer ID Application 证书（导入 Keychain）。
-3. `xcrun notarytool store-credentials <profile>` 存入公证凭据。
+- Homebrew 安装路径通过 Cask 的 `postflight_steps` 移除 App quarantine，延续上一版机制。
+- 直接下载 DMG 可能被 macOS Gatekeeper 拦截；README 与 Release Notes 必须明确提示使用 Homebrew。
+- 自签名只能证明构建前后使用了同一发布者身份，不能替代 Apple 对开发者身份和软件的公证。
+- `development` 模式产生的 ad-hoc 包绝不允许上传；legacy 构建也必须通过独立门禁。
+- 默认 `release` 模式继续强制 Developer ID 与 Apple 公证，不能在失败时静默降级。
 
-## C. 凭据就绪后的发布流程
+## 发布步骤
 
-```bash
-# 1. 正式构建（自动：hardened runtime 签名 → 公证 → staple App → 签名 DMG → 公证 staple → spctl）
-export HAOCHEN_SIGNING_IDENTITY='Developer ID Application: … (TEAMID)'
-export HAOCHEN_NOTARY_PROFILE='<profile>'
-HAOCHEN_BUILD_MODE=release bash packaging/build.sh
+1. 将版本稳定为 `0.3.0`，同步 Python、引擎与锁文件，完成 CHANGELOG/README。
+2. 执行完整验证并确认 PR CI 通过：
 
-# 2. 产物校验
-codesign --verify --deep --strict packaging/dist/haochen.app
-spctl --assess --type execute --verbose=2 packaging/dist/haochen.app
-xcrun stapler validate packaging/dist/haochen.app
-xcrun stapler validate packaging/dist/haochen-0.2.0.dmg
-shasum -a 256 packaging/dist/haochen-0.2.0.dmg
+   ```bash
+   make check
+   make regressions
+   ```
 
-# 3. Cask 渲染（读取根 VERSION 与真实 SHA-256）
-python3 scripts/version.py render-cask packaging/dist/haochen-0.2.0.dmg
+3. 使用稳定自签身份构建，禁止回落为 ad-hoc：
 
-# 4. 干净机器安装验收（docs/qa-script.md 全量走查，含升级保留配置）
+   ```bash
+   HAOCHEN_BUILD_MODE=legacy bash packaging/build.sh
+   ```
 
-# 5. 发布：打签名 tag v0.2.0、上传 DMG 到 GitHub Release、推送 Cask
-git tag -s v0.2.0 -m 'haochen v0.2.0'
-```
+4. 用真实 DMG 的 SHA-256 生成唯一发布 Cask：
 
-## D. 人工验收项（无头 CI 无法覆盖，发布时在真机执行）
+   ```bash
+   uv run python scripts/version.py render-cask --legacy \
+     packaging/dist/haochen-0.3.0.dmg
+   ```
 
-- VoiceOver 朗读关键控件；纯键盘完成发送/确认/会话管理主流程。
-- 系统设置开启 Reduce Motion → 确认动画跳过。
-- 副屏拖动桌宠 → 气泡锚定同屏。
-- 屏幕录制授权后重启生效；TCC 授权跨升级保持。
-- 干净机器双击安装：Gatekeeper 放行（无右键绕过）；升级安装保留会话与配置。
+5. 运行 legacy 产物门禁；它会验证 App/内嵌版本、稳定自签身份、拒绝 ad-hoc、DMG
+   完整性、Cask 版本、SHA-256、quarantine 处理和 Ruby 语法：
 
-## E. 回滚说明
+   ```bash
+   bash scripts/release_preflight.sh legacy-artifacts \
+     packaging/dist/haochen.app \
+     packaging/dist/haochen-0.3.0.dmg
+   ```
 
-- 发布失败：不删 tag，直接发 patch 版本（0.2.1）修复；DMG 下载链接指向 Release 资产。
-- 用户侧回滚：Cask `zap trash` 清数据后安装旧版本 DMG（历史版本按 SemVer 留存在 Release）。
-- 配置迁移可回滚：Keychain 迁移保留备份能力（corrupt 备份机制）；会话数据从未破坏性改写。
+6. 提交稳定版本与 Cask，复跑 `make check` 并等待远端 CI 通过；将 PR #6 合并到
+   `main`。标签必须指向包含完整源码和最终 Cask 的 `main` 提交。
+7. 创建不可变标签 `v0.3.0` 和 GitHub Release，上传门禁验证过的同一个 DMG；Release
+   Notes 明确“未经 Apple 公证，建议使用 Homebrew 安装”。
+8. 从线上渠道复核：
+
+   ```bash
+   brew tap yangwz1993-gif/haochen
+   brew install --cask haochen
+   open -a haochen
+   ```
+
+   验证首次引导、点击/右键人物、发送与停止、简答/详情、读屏拒绝与授权、冷启动历史、
+   覆盖升级、`brew uninstall --cask haochen`。保存系统版本、步骤和结论。
+
+## 放行定义
+
+只有以下条件同时成立，才能称为“v0.3.0 legacy Homebrew 版已交付”：
+
+- 第 19 轮最终 legacy 包独立用户验收 PASS；
+- `main` 稳定版本源码、本地检查、回归和远端 CI 全绿；
+- App 使用 `haochen Local Signing`，不是 ad-hoc；
+- DMG、App、内嵌版本、Cask、标签和 Release 全为 `0.3.0`；
+- 本地与线上 DMG SHA-256 等同 Cask；
+- Homebrew 安装、首次启动、升级与卸载复核通过；
+- README、Cask、Release Notes 均清楚披露未经 Apple 公证。
+
+## 回滚
+
+- 发布前任一门禁失败：不创建标签和 Release，修复后完整重建。
+- 发布后发现问题：保留既有标签和资产，以 patch 版本修复，禁止覆盖历史文件。
+- 立即从 Cask 撤回有问题的版本，并在 Release Notes 标明影响和替代方案。

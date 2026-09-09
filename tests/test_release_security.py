@@ -59,6 +59,35 @@ def test_main_cask_template_stays_notarized_only() -> None:
     assert "xattr" not in source
 
 
+def test_release_preflight_independently_checks_public_distribution_gates() -> None:
+    source = read("scripts/release_preflight.sh")
+    assert "Developer ID Application:" in source
+    assert "notarytool history" in source
+    assert "codesign --verify --deep --strict" in source
+    assert "CFBundleShortVersionString" in source
+    assert "Contents/Resources/VERSION" in source
+    assert "stapler validate" in source
+    assert source.count("spctl --assess") == 2
+    assert "TeamIdentifier" in source
+    assert "shasum -a 256" in source
+    assert "check_legacy_artifacts" in source
+    assert "Authority=haochen Local Signing" in source
+    assert "Signature=adhoc" in source
+    assert "hdiutil verify" in source
+    assert "postflight_steps" in source
+    assert "com.apple.quarantine" in source
+
+
+def test_v030_release_checklist_authorizes_only_explicit_legacy_distribution() -> None:
+    checklist = read("docs/release-checklist.md")
+    assert checklist.startswith("# v0.3.0 正式发布清单")
+    assert "所有者明确选择" in checklist
+    assert "未经 Apple 公证" in checklist
+    assert "scripts/release_preflight.sh legacy-artifacts" in checklist
+    assert "--legacy" in checklist
+    assert "ad-hoc" in checklist
+
+
 def test_legacy_cask_template_documents_quarantine_removal() -> None:
     source = read("cask/Casks/haochen.rb.legacy.template")
     assert "postflight" in source

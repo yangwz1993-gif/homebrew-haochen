@@ -31,13 +31,17 @@ from PyQt6.QtWidgets import (
 
 from .theme import ANIM_FADE_MS, BORDER, FONT, RADIUS_BTN, RADIUS_CARD, C, button_outline
 
-# 两步协议标记（流式渲染时做部分标记抑制，与 conversation.py 的冻结标记一致）
-_KNOWN_TAGS = ("【answer】", "【/answer】", "【summary】", "【/summary】")
+# 新旧协议标记（流式渲染时抑制，最终由 ConversationController 分层）。
+_KNOWN_TAGS = tuple(
+    f"【{slash}{kind}】"
+    for kind in ("brief", "detail", "answer", "summary")
+    for slash in ("", "/")
+)
 
 # 渲染前清洗（v0.1.10）：Qt setMarkdown 不认 ==高亮==/===标题===/==闭合标记==，
 # 模型又实际在输出这些（见 conversation.py 配对正则注释）。渲染入口统一转换，
 # 纯兜底，不换渲染器。
-_RE_FULL_TAG = re.compile(r"==/?(?:answer|summary)==")
+_RE_FULL_TAG = re.compile(r"==/?(?:brief|detail|answer|summary)==")
 _RE_SETEXT_EQ = re.compile(r"===([^=\n]+)===")
 _RE_HIGHLIGHT = re.compile(r"==([^=\n]+)==")
 
@@ -45,6 +49,8 @@ _RE_HIGHLIGHT = re.compile(r"==([^=\n]+)==")
 def _sanitize_markdown(text: str) -> str:
     """==标题===/==高亮== → Qt 认的粗体；残留协议标记剥净。"""
     out = _RE_FULL_TAG.sub("", text)          # ==answer==/==/answer== 等整标记
+    for tag in _KNOWN_TAGS:
+        out = out.replace(tag, "")
     out = _RE_SETEXT_EQ.sub(r"**\1**", out)   # ===文字=== → 粗体（先三元，防被二元吃掉）
     out = _RE_HIGHLIGHT.sub(r"**\1**", out)   # ==文字== → 粗体
     return out
@@ -134,6 +140,11 @@ class MarkdownView(QTextBrowser):
         self.setMarkdown(_sanitize_markdown(text or ""))
         self._fit()
 
+    def set_plain_text(self, text: str) -> None:
+        """Render user-authored text literally, preserving line breaks."""
+        self.setPlainText(text or "")
+        self._fit()
+
     def set_max_width(self, w: int) -> None:
         self._max_w = max(160, w)
         self._fit()
@@ -196,7 +207,7 @@ class UserBubble(_BubbleFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 10, 14, 10)
         self.view = MarkdownView()
-        self.view.set_markdown(text)
+        self.view.set_plain_text(text)
         lay.addWidget(self.view)
 
     def set_max_width(self, w: int) -> None:
@@ -205,7 +216,7 @@ class UserBubble(_BubbleFrame):
 
 class AssistantBubble(_BubbleFrame):
     """haochen 气泡：居左，color-surface 卡面浮在 color-bg 底上（v0.1.4 §2）。
-    kind: answer（详答）/ summary（短结，结论在详答之后）。"""
+    kind: answer（详答）/ summary（短结）/ partial（用户停止后的残片）。"""
 
     def __init__(self, kind: str = "answer", parent=None):
         super().__init__(C["surface"], parent)
@@ -214,13 +225,22 @@ class AssistantBubble(_BubbleFrame):
         lay.setSpacing(4)
         self.kind = kind
         self.tag: QLabel | None = None
-        if kind == "summary":
-            self.tag = QLabel("结论")
+        if kind in ("summary", "answer", "partial"):
+            label = {
+                "summary": "结论",
+                "answer": "依据与细节",
+                "partial": "未完成内容",
+            }[kind]
+            highlighted = kind == "summary"
+            warning = kind == "partial"
+            self.tag = QLabel(label)
             self.tag.setStyleSheet(f"""
-                color: {C['bg']}; background: {C['accent']};
+                color: {C['bg'] if highlighted else (C['warn'] if warning else C['ink_soft'])};
+                background: {C['accent'] if highlighted else C['bg']};
                 border-radius: 6px; padding: 1px 8px;
                 font-size: {FONT['body_sm']}px; font-weight: bold;
             """)
+            self.tag.setAccessibleName(label)
             lay.addWidget(self.tag, 0, Qt.AlignmentFlag.AlignLeft)
         self.view = MarkdownView()
         lay.addWidget(self.view)
@@ -294,6 +314,7 @@ class ToolCard(QFrame):
         self.args = args or {}
         self.output = ""
         self.is_error = False
+        self._not_run_reason = ""
         self._expanded = False
         self._started_at: float | None = None
 
@@ -396,18 +417,52 @@ class ToolCard(QFrame):
         import time
         return int((time.monotonic() - self._started_at) * 1000)
 
-    def mark_done(self, result_text: str, is_error: bool, elapsed_ms: int | None = None) -> None:
+    def mark_done(
+        self,
+        result_text: str,
+        is_error: bool,
+        elapsed_ms: int | None = None,
+        details: dict | None = None,
+    ) -> None:
         self.is_error = is_error
         self.output = result_text or ""
         self.cancel_button.hide()
-        if is_error:
-            self.status.setText("✗ 失败")
+        result_details = details or {}
+        denied_read = self.tool_name == "read_screen" and any(
+            token in self.output for token in ("用户拒绝了读屏", "超时未确认")
+        )
+        permission_failure = self.tool_name == "read_screen" and (
+            bool(result_details.get("permissionDenied") or result_details.get("needScreenRecording"))
+            or any(
+                token in self.output
+                for token in (
+                    "屏幕读取权限未授权",
+                    "需要「屏幕录制」权限",
+                    "读屏失败",
+                )
+            )
+        )
+        if self._not_run_reason or denied_read:
+            reason = self._not_run_reason or "未获授权"
+            self.status.setText(f"未执行 · {reason}")
+            self._set_status_color(C["ink_soft"])
+            self.retry_button.hide()
+        elif is_error or permission_failure:
+            self.status.setText("✗ 权限不足" if permission_failure else "✗ 失败")
             self._set_status_color(C["danger"])
             self.retry_button.show()
         else:
             elapsed = self._format_elapsed(elapsed_ms)
             self.status.setText(f"✓ 完成{elapsed}")
             self._set_status_color(C["accent"])
+        self._refresh_detail()
+
+    def mark_not_run(self, reason: str) -> None:
+        """用户拒绝或取消敏感工具时使用中性终态，不展示成功对勾。"""
+        self._not_run_reason = reason
+        self.cancel_button.hide()
+        self.status.setText(f"未执行 · {reason}")
+        self._set_status_color(C["ink_soft"])
         self._refresh_detail()
 
     def mark_cancelled(self) -> None:

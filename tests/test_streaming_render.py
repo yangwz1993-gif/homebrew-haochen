@@ -60,6 +60,8 @@ def test_streaming_render_is_throttled_not_per_delta(qtbot) -> None:
     assert len(window._stream_row.content._text) == 200
     # Flushed on completion regardless of timer.
     window._on_answer_done("完整回答")
+    assert window._stream_row is not None  # 等 brief 到达后再按“结论→详情”重排
+    window._on_summary_done("简短结论")
     assert window._stream_row is None
 
 

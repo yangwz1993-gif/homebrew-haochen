@@ -16,7 +16,7 @@ hotkey_module = importlib.import_module("haochen_app.pet.hotkey")
 bubble_module = importlib.import_module("haochen_app.pet.bubble")
 
 
-def test_engine_event_read_screen_without_accessibility_guides(qtbot, tmp_path: Path, monkeypatch) -> None:
+def test_read_screen_permission_guidance_waits_for_explicit_consent(qtbot, tmp_path: Path, monkeypatch) -> None:
     shell = AppShell(mock=True, home=tmp_path)
     qtbot.addWidget(shell.chat)
     guided: list = []
@@ -32,6 +32,10 @@ def test_engine_event_read_screen_without_accessibility_guides(qtbot, tmp_path: 
     })
 
     qtbot.wait(50)
+    assert guided == []
+
+    shell.pet.read_permission_requested.emit()
+    qtbot.wait(50)
     assert guided == ["ax"]
 
 
@@ -42,7 +46,7 @@ def test_engine_event_need_screen_recording_shows_hint(qtbot, tmp_path: Path) ->
     shell._on_engine_event({
         "type": "tool_execution_end",
         "toolName": "read_screen",
-        "result": {"needScreenRecording": True},
+        "result": {"details": {"needScreenRecording": True}},
     })
 
     from haochen_app.pet.bubble import HintBlock  # noqa: E402
@@ -127,6 +131,76 @@ def test_show_chat_and_settings_raise_windows(qtbot, tmp_path: Path) -> None:
     shell.show_chat()
     shell.show_settings()
     # offscreen raise() 不可用但不应崩溃
+
+
+def test_shell_routes_pet_chat_and_new_session_actions(qtbot, tmp_path: Path) -> None:
+    shell = AppShell(mock=True, home=tmp_path)
+    qtbot.addWidget(shell.chat)
+    qtbot.addWidget(shell.pet.pet)
+    qtbot.addWidget(shell.pet.bubble)
+    new_calls: list[bool] = []
+    shell.chat._new_session = lambda: new_calls.append(True)
+    shell.pet.new_session_opener = shell.chat._new_session
+
+    shell.new_session()
+    assert new_calls == [True]
+    assert shell.pet._session_needs_title is True
+
+    shell.pet.chat_requested.emit()
+    assert shell.chat.isVisible()
+
+
+def test_normal_chat_hides_pet_and_close_restores_it(qtbot, tmp_path: Path) -> None:
+    shell = AppShell(mock=True, home=tmp_path)
+    qtbot.addWidget(shell.chat)
+    qtbot.addWidget(shell.pet.pet)
+    qtbot.addWidget(shell.pet.bubble)
+    shell.pet.pet.show()
+
+    shell.show_chat()
+    assert shell.chat.isVisible()
+    assert not shell.pet.pet.isVisible()
+
+    shell.chat.close()
+    qtbot.wait(20)
+    assert not shell.chat.isVisible()
+    assert shell.pet.pet.isVisible()
+
+
+def test_settings_round_trip_restores_error_and_retry_context(qtbot, tmp_path: Path) -> None:
+    from haochen_app.pet.bubble import ErrorBlock
+
+    shell = AppShell(mock=True, home=tmp_path)
+    qtbot.addWidget(shell.chat)
+    qtbot.addWidget(shell.settings)
+    qtbot.addWidget(shell.pet.bubble)
+    qtbot.addWidget(shell.pet.pet)
+    shell.pet.bubble.summon(show_input=False)
+    shell.pet._on_failed("invalid API key")
+    assert shell.pet.bubble.findChildren(ErrorBlock)
+
+    shell.show_settings()
+    assert shell.pet.bubble.summoned
+    assert not shell.pet.bubble.isVisible()
+
+    shell.settings.close()
+    qtbot.wait(20)
+    assert shell.pet.bubble.isVisible()
+    assert shell.pet.bubble.findChildren(ErrorBlock)
+
+
+def test_closing_settings_does_not_summon_previously_hidden_bubble(qtbot, tmp_path: Path) -> None:
+    shell = AppShell(mock=True, home=tmp_path)
+    qtbot.addWidget(shell.settings)
+    qtbot.addWidget(shell.pet.bubble)
+    assert not shell.pet.bubble.summoned
+
+    shell.show_settings()
+    shell.settings.close()
+    qtbot.wait(20)
+
+    assert not shell.pet.bubble.summoned
+    assert not shell.pet.bubble.isVisible()
 
 
 def test_hotkey_degraded_when_tap_unavailable(monkeypatch) -> None:

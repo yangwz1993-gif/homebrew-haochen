@@ -1,6 +1,6 @@
 # haochen RPC 接口契约（App 壳 ↔ 引擎）
 
-> 版本：v1.0（冻结）｜ 日期：2026-08-25 ｜ 作者：研发 Agent-A（P1）
+> 版本：v2.0（冻结）｜ 日期：2026-09-08 ｜ 作者：研发 Agent-A（P1）
 > 适用：P3 三 UI 并行开发的**唯一接口依据**。引擎 = `engine/haochen-engine`（pi v0.84.3 Bun 单文件，`--mode rpc`）。
 > 本契约中所有事件名/字段均以真引擎实际 dump 验证（证据：`mock-engine/verification/real-engine-dump.jsonl`、`real-engine-dump-tool.jsonl`）或 pi-source 源码类型（`packages/coding-agent/src/modes/rpc/rpc-types.ts`、`packages/agent/src/types.ts`、`packages/ai/src/types.ts`）为准。
 
@@ -9,7 +9,7 @@
 ## 0. 变更规则（冻结条款）
 
 1. 本文件冻结后，任何改动必须：在 §0.1 变更记录中新增一行（版本号 + 日期 + 改动点 + 影响面），并在多人开发通信中显式通知三个 UI agent（C/D/E）与集成负责人。
-2. **只允许追加，不允许改语义**：新增事件字段、新增命令算 minor（v1.x）；改字段名、改事件序列顺序、改两步协议标记算 major（v2.0），需所有并行模块同步改。
+2. **只允许追加，不允许改语义**：新增事件字段、新增命令算 minor；改字段名、事件序列或结果协议标记算 major，需引擎、壳、UI 与验证同步改。
 3. 契约与真引擎行为冲突时，以真引擎实测为准，当场修文档并走第 1 条流程。
 
 ### 0.1 变更记录
@@ -21,6 +21,7 @@
 | v1.1 | 2026-08-25 | §1.1 冻结数据隔离约定：新增 `PI_CODING_AGENT_DIR` env、模型配置三文件指向 `config/README.md`；运行期换模型命令 `get_available_models`/`set_model` 的说明见 `config/README.md` §6。消息 schema 无变化 | 壳 spawn 参数；配置前端（Agent-D） |
 | v1.2 | 2026-08-30 | 壳侧请求统一 5s 超时；停止/崩溃结算全部 pending；坏 JSON/stderr 仅记录长度与哈希；停止改为后台进程组回收 | EngineClient / supervisor / UI RPC callback |
 | v1.3 | 2026-08-30 | 当前会话和双入口 FIFO 队列统一由 SessionCoordinator 持久化；用户消息到 `message_end(role=user)` 才确认出队；崩溃后需用户重发或取消 | supervisor / chat / pet / recovery UI |
+| v2.0 | 2026-09-08 | `answer → summary` 两回合改为单回合 `brief + detail`；保留旧标记历史解析，不再发送 summary 踢令 | 扩展 / ConversationController / chat / pet / mock / 验证 |
 
 ---
 
@@ -35,9 +36,9 @@ haochen-engine --mode rpc --no-extensions -e <haochen-ext.ts> \
 
 - **cwd**：`<APP_SUPPORT>/pi-home/`（haochen 专属 home，项目级 `.pi` 发现落在自己目录，与全局 pi 隔离）。
 - **环境变量**：
-  - `HAOCHEN_PET=1`（扩展据此判定处于宠物进程，强制两步输出协议）；
+  - `HAOCHEN_PET=1`（扩展据此判定处于宠物进程，强制单回合分层结果协议）；
   - `PI_CODING_AGENT_DIR=<APP_SUPPORT>/agent`（pi 原生 env，P2 起冻结）：引擎的 auth/models/settings/会话默认目录全部重定向到 haochen 数据目录，**运行期间 ~/.pi 零写入**（已实测，见 `engine/RESULT.md` P2 节）。
-- `--no-extensions` 与 `-e` 同用：禁用全局/项目扩展自动发现，**仅**显式加载 haochen 专属扩展（提供 `read_screen` 工具 + 两步输出规则注入）。**TS 扩展直接加载已于 2026-08-25 实测通过**（jiti + virtualModules，见 `engine/RESULT.md` 追记），无需预编译 JS。
+- `--no-extensions` 与 `-e` 同用：禁用全局/项目扩展自动发现，**仅**显式加载 haochen 专属扩展（提供 `read_screen` 工具 + 分层结果规则注入）。**TS 扩展直接加载已于 2026-08-25 实测通过**（jiti + virtualModules，见 `engine/RESULT.md` 追记），无需预编译 JS。
 - 模型/provider/key：由 `<APP_SUPPORT>/agent/` 下 `auth.json` + `models.json` + `settings.json` 提供，schema 与模板见 `config/README.md`（P2 冻结，P3 配置前端的依据）。运行期热切换用 `set_model`；新增 provider 需重启引擎。
 - 数据目录约定：`APP_SUPPORT = ~/Library/Application Support/haochen`（开发期用 `HAOCHEN_HOME` 环境变量指到临时目录，壳把 `$HAOCHEN_HOME/agent` 赋给 `PI_CODING_AGENT_DIR`，见总纲 §四.5）。
 
@@ -243,44 +244,43 @@ agent_settled                       ← 见 §3.5 时序坑
 
 ---
 
-## 4. answer / summary 两步协议
+## 4. brief / detail 单回合协议
 
-### 4.1 选定方案：**扩展注入规则 + Python 壳踢 summary 回合**（沿用上一版，不改）
+### 4.1 选定方案：**扩展注入规则 + 一次模型调用生成两层结果**
 
-- **answer 阶段**：haochen 扩展在 `before_agent_start` 钩子里向 systemPrompt 注入 ANSWER_RULES，强制模型最终正文只产出配对 `【answer】…【/answer】`。
-- **summary 阶段**：壳在 answer 回合结束（`agent_end`）后，**由壳再发一条 prompt** 触发短结回合，消息以固定标记 `haochen-summary-phase` 开头；扩展检测到该标记改注 SUMMARY_RULES，模型只产出 `【summary】…【/summary】`。
-
-### 4.2 为什么不让扩展自己踢（决策记录）
-
-上一版实测：pi RPC 模式下扩展内 `sendMessage/sendUserMessage` 的 followUp 投递被**静默丢弃**（resolve 成功但消息不进会话、不触发回合，见 `previous-version/haochen-app/ext/index.ts` 头注释）。因此短结回合只能由壳走 stdin `prompt` 发起。该做法已在上一版生产验证，冻结沿用。
-
-### 4.3 壳侧职责（冻结逻辑）
-
-1. answer 回合 `agent_end` 后，从 assistant 文本解析配对的 `【answer】…【/answer】`。
-2. 解析成功 → 壳发 prompt（内容模板冻结如下，含标记与【answer】回引，截断 8000 字）：
+haochen 扩展在 `before_agent_start` 钩子向 system prompt 注入 RESULT_RULES。工具调用结束后，模型最终正文严格按以下顺序输出：
 
 ```
-haochen-summary-phase
-下面是详答。请只输出短结：严格【summary】…【/summary】；篇幅 80～160 字；结构=1 句结论 + 最多 2～3 要点；禁止元评论/括号旁白/大段引用；不要工具、不要再写 answer。
-
-【answer】
-<answer 正文，最多 8000 字>
-【/answer】
+【brief】
+<一句结论 + 最多两个高信息量要点，通常 24～120 个中文字符>
+【/brief】
+【detail】
+<完整回答：依据、步骤、限制与产物>
+【/detail】
 ```
 
-3. summary 回合 `agent_end` 后解析 `【summary】…【/summary】`：
-   - 配对成功 → L1 短结用解析值；
-   - 未配对（模型没守规矩）→ 壳用 answer 文本做**抽取式兜底**生成短结（参考上一版 `parse_blocks.extractive_summary`），流程必须终结，不许死循环再踢。
-4. **UI 识别**：壳在上抛事件时给每条助手回合标注 `phase: "answer" | "summary"`（壳侧信息，不是引擎事件）。`haochen-summary-phase` 是**协议保留前缀**，用户消息永不以它开头；summary 踢令不进 UI 对话流渲染。
+桌宠只显示 `brief`；用户点“查看详情”后，完整窗口按“brief 在前、detail 在后”呈现。这样去掉了旧版为生成 summary 而产生的第二次模型等待、成本和失败点。
 
-### 4.4 标记汇总（冻结字符串）
+### 4.2 壳侧职责（冻结逻辑）
+
+1. 一轮 `agent_end` 后，从最后一条 assistant 文本分别解析配对 `brief` 与 `detail`。
+2. 两块齐全：一次性构造 `TurnResult(brief, detail)`，并结束 busy 状态；不得再发内部 prompt。
+3. 降级顺序：
+   - 新协议缺块时，兼容解析旧 `【summary】` 为 brief、`【answer】` 为 detail；
+   - detail 仍缺失时，剥离所有协议标记后使用原始正文；
+   - brief 仍缺失时，从 detail 做确定性抽取式短结；
+   - 任一降级都必须终结当前流程，禁止递归请求模型。
+4. 旧前缀 `haochen-summary-phase` 只用于过滤既有会话历史，不再由壳发送，扩展也不再响应。
+
+### 4.3 标记汇总（冻结字符串）
 
 | 标记 | 位置 | 作用 |
 |---|---|---|
-| `haochen-summary-phase` | 壳发的 summary prompt 首行 | 触发扩展注入 SUMMARY_RULES；壳识别该回合为 summary 阶段 |
-| `【answer】…【/answer】` | 模型 answer 回合正文 | 详答载体，壳解析 |
-| `【summary】…【/summary】` | 模型 summary 回合正文 | 短结载体，壳解析 |
-| `HAOCHEN_PET=1` | 环境变量 | 扩展判定宠物进程、强制两步协议 |
+| `【brief】…【/brief】` | 模型最终正文第一块 | 桌宠临时简答与详情页首屏结论 |
+| `【detail】…【/detail】` | 模型最终正文第二块 | 展开后的完整回答 |
+| `【answer】` / `【summary】` | 旧会话历史 | 仅兼容读取，不再生成 |
+| `haochen-summary-phase` | 旧会话历史 | 仅过滤，不再发送 |
+| `HAOCHEN_PET=1` | 环境变量 | 扩展判定 App 进程、强制分层结果协议 |
 
 ---
 
@@ -332,7 +332,7 @@ haochen-summary-phase
 | 能力 | 实现方 | 依据 |
 |---|---|---|
 | prompt / 流式事件 / abort | 引擎 | pi RPC 原生 |
-| answer→summary 两步 | **协作**：扩展注入规则，**壳踢 summary 回合**、壳解析标记与兜底 | §4（扩展内 followUp 被静默丢弃，实测） |
+| brief + detail 单回合结果 | **协作**：扩展注入规则，壳解析与确定性兜底 | §4 |
 | 读屏确认 | 引擎（扩展 confirm → extension_ui_request），壳负责渲染确认条并回响应 | §5 |
 | new_session / switch_session / get_messages / get_state / set_session_name | 引擎 | §2，均实测 |
 | **会话列表 list** | **壳侧**（扫 session-dir jsonl） | §2.8，RPC 无此命令 |
@@ -352,6 +352,6 @@ haochen-summary-phase
 
 ## 9. 已知风险（冻结时记录）
 
-1. ~~**Bun 二进制加载扩展未验证**~~ → **已排除（2026-08-25 实测）**：jiti + `virtualModules`（typebox/pi 包静态内嵌）在编译二进制上可直接加载 TS 扩展；上一版 `ext/index.ts` 原样加载成功，confirm 链路与 ANSWER_RULES 注入端到端验证通过。证据：`engine/RESULT.md` 追记 + `mock-engine/verification/ext-test-*`。
+1. ~~**Bun 二进制加载扩展未验证**~~ → **已排除（2026-08-25 实测）**：jiti + `virtualModules`（typebox/pi 包静态内嵌）在编译二进制上可直接加载 TS 扩展；上一版 `ext/index.ts` 原样加载成功，confirm 链路与当时的结果规则注入端到端验证通过。证据：`engine/RESULT.md` 追记 + `mock-engine/verification/ext-test-*`。
 2. `export_html` 等依赖二进制旁资源的功能不可用（P0 已知限制），本契约不依赖它们。
 3. `agent_settled` 时序坑（§3.5）已在上一版咬过人，驱动层必须照 §3.5 实现。

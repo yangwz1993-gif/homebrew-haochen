@@ -14,11 +14,11 @@ import json
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QPixmap
 from PyQt6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLabel, QMenu, QVBoxLayout, QWidget
 
-from .. import paths
+from .. import a11y, paths
 from ..engine_client import haochen_home
 from ..secure_storage import atomic_write_private, ensure_private_file
 from .theme import ANIM_POSE_MS
@@ -30,12 +30,15 @@ ASSETS_DIR = paths.pet_assets()
 PET_SIZE = 96            # 常驻尺寸（visual-spec §4）；set_pet_size 留缩放口
 _FLOAT_MS = 600
 _FLOAT_PX = 2
+_SINGLE_CLICK_MS = 220
+_SCREEN_MARGIN = 8
 
 
 class PetWindow(QWidget):
     """L0 桌面宠物本体。"""
 
     summon_requested = pyqtSignal()      # 双击 / 热键唤起（或收起）气泡
+    open_chat_requested = pyqtSignal()   # 直接打开完整对话窗口
     new_session_requested = pyqtSignal()
     settings_requested = pyqtSignal()    # 设置占位（P4 接配置面板）
     quit_requested = pyqtSignal()
@@ -51,6 +54,8 @@ class PetWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
+        self.setAccessibleName("haochen 桌宠，点击开始对话")
+        self.setAccessibleDescription("单击人物打开输入气泡；右键打开菜单")
 
         self._size = PET_SIZE
         self._pose = ""
@@ -58,7 +63,12 @@ class PetWindow(QWidget):
         self._pose_anim = None
 
         self.label = QLabel()
+        self.label.setAccessibleName("haochen，点击开始对话")
         self.label.setStyleSheet("background: transparent;")
+        # The image covers the whole window. Route pointer events to the parent
+        # deliberately so one implementation owns click, drag, double-click,
+        # right-click and the native macOS Control-click gesture.
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.label)
@@ -70,13 +80,20 @@ class PetWindow(QWidget):
 
         self._drag_pos = None
         self._moved = False
+        self.setToolTip("单击和我说话 · 右键打开菜单")
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        self._click_timer.setInterval(_SINGLE_CLICK_MS)
+        self._click_timer.timeout.connect(self.summon_requested.emit)
+        self._context_menu: QMenu | None = None
 
         # idle 轻微浮动（视觉生命感；拖拽/非 idle 时暂停）
         self._float_dir = 1
         self._floating_enabled = True
         self._float_timer = QTimer(self)
         self._float_timer.timeout.connect(self._float)
-        self._float_timer.start(_FLOAT_MS)
+        if not a11y.reduce_motion_enabled():
+            self._float_timer.start(_FLOAT_MS)
 
     # ── 姿态 ──────────────────────────────────────────────────
 
@@ -92,13 +109,18 @@ class PetWindow(QWidget):
             if not p.exists():
                 log.warning("pet asset missing: %s", p)
                 return None
+            dpr = max(1.0, float(self.devicePixelRatioF()))
+            physical_size = round(self._size * dpr)
             pm = QPixmap(str(p)).scaled(
-                self._size, self._size,
+                physical_size, physical_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation)
             if pm.isNull():
                 log.warning("pet asset load failed: %s", p)
                 return None
+            # QLabel 仍占 96×96 逻辑像素，但 Retina 屏使用 2× 物理采样，避免先缩成
+            # 96px 再由系统放大；人物风格不变，只提升眼镜、肤色和轮廓的清晰度。
+            pm.setDevicePixelRatio(dpr)
             self._pixmaps[pose] = pm
         return self._pixmaps[pose]
 
@@ -111,7 +133,7 @@ class PetWindow(QWidget):
             return  # C++ 对象已销毁（延迟回调触发）：静默
         self._pose = pose
         pm = self._pixmap(pose)
-        if animate and pm is not None and self.isVisible():
+        if animate and not a11y.reduce_motion_enabled() and pm is not None and self.isVisible():
             eff = QGraphicsOpacityEffect(self.label)
             self.label.setGraphicsEffect(eff)
             out = QPropertyAnimation(eff, b"opacity", self)
@@ -156,8 +178,26 @@ class PetWindow(QWidget):
 
     def _float(self) -> None:
         if self._floating_enabled and self._drag_pos is None:
-            self.move(self.x(), self.y() + self._float_dir * _FLOAT_PX)
+            proposed = QPoint(self.x(), self.y() + self._float_dir * _FLOAT_PX)
+            self.move(self._clamped_position(proposed, self.geometry().center()))
             self._float_dir *= -1
+
+    def _clamped_position(self, proposed: QPoint, pointer: QPoint | None = None) -> QPoint:
+        """Keep the whole character inside the target screen's visible work area."""
+        anchor = pointer or QPoint(
+            proposed.x() + self.width() // 2,
+            proposed.y() + self.height() // 2,
+        )
+        screen = QApplication.screenAt(anchor) or a11y.screen_of(self)
+        area = screen.availableGeometry()
+        width = max(1, self.width())
+        height = max(1, self.height())
+        return QPoint(
+            max(area.left() + _SCREEN_MARGIN,
+                min(proposed.x(), area.right() - width + 1 - _SCREEN_MARGIN)),
+            max(area.top() + _SCREEN_MARGIN,
+                min(proposed.y(), area.bottom() - height + 1 - _SCREEN_MARGIN)),
+        )
 
     # ── 位置记忆（v0.1.6）──────────────────────────────────────
 
@@ -172,8 +212,14 @@ class PetWindow(QWidget):
             ensure_private_file(path)
             data = json.loads(path.read_text(encoding="utf-8"))
             rect = QRect(int(data["x"]), int(data["y"]), self._size, self._size)
-            if any(s.availableGeometry().intersects(rect) for s in QApplication.screens()):
-                self.move(rect.topLeft())
+            candidates = [s.availableGeometry() for s in QApplication.screens()
+                          if s.availableGeometry().intersects(rect)]
+            if candidates:
+                target = max(candidates, key=lambda area: area.intersected(rect).width()
+                             * area.intersected(rect).height())
+                x = max(target.left(), min(rect.x(), target.right() - self._size + 1))
+                y = max(target.top(), min(rect.y(), target.bottom() - self._size + 1))
+                self.move(x, y)
                 return
         except Exception:
             pass
@@ -191,7 +237,19 @@ class PetWindow(QWidget):
 
     # ── 鼠标：拖拽 / 双击唤起 / 右键菜单 ──────────────────────
 
+    @staticmethod
+    def _is_secondary_click(e) -> bool:
+        return e.button() == Qt.MouseButton.RightButton or (
+            e.button() == Qt.MouseButton.LeftButton
+            # On Apple platforms Qt maps MetaModifier to the physical Control
+            # key (and ControlModifier to Command).
+            and bool(e.modifiers() & Qt.KeyboardModifier.MetaModifier)
+        )
+
     def mousePressEvent(self, e):
+        if self._is_secondary_click(e):
+            e.accept()
+            return
         if e.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = e.globalPosition().toPoint() - self.pos()
             self._moved = False
@@ -199,25 +257,36 @@ class PetWindow(QWidget):
 
     def mouseMoveEvent(self, e):
         if self._drag_pos is not None:
-            self.move(e.globalPosition().toPoint() - self._drag_pos)
+            pointer = e.globalPosition().toPoint()
+            self.move(self._clamped_position(pointer - self._drag_pos, pointer))
             self._moved = True
             self.moved.emit(self.x(), self.y())  # v0.1.6：气泡跟随
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
+        if self._is_secondary_click(e):
+            self._show_context_menu(e.globalPosition().toPoint())
+            e.accept()
+            return
         if e.button() == Qt.MouseButton.LeftButton:
             if self._drag_pos is not None and self._moved:
                 self.save_position()  # v0.1.6：拖动结束记位置
+            elif self._drag_pos is not None:
+                self._click_timer.start()
             self._drag_pos = None
         super().mouseReleaseEvent(e)
 
     def mouseDoubleClickEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton and not self._moved:
+            self._click_timer.stop()
             self.summon_requested.emit()
         else:
             super().mouseDoubleClickEvent(e)
 
-    def contextMenuEvent(self, e):
+    def _show_context_menu(self, global_pos: QPoint) -> None:
+        if self._context_menu is not None and self._context_menu.isVisible():
+            self._context_menu.raise_()
+            return
         menu = QMenu(self)
         act_key = QAction(f"唤起气泡 {self._hotkey_hint}", self)
         act_key.setEnabled(False)
@@ -225,15 +294,33 @@ class PetWindow(QWidget):
         act_open = QAction("打开气泡", self)
         act_open.triggered.connect(self.summon_requested.emit)
         menu.addAction(act_open)
+        act_chat = QAction("打开完整对话", self)
+        act_chat.triggered.connect(self.open_chat_requested.emit)
+        menu.addAction(act_chat)
         menu.addSeparator()
         act_new = QAction("新会话", self)
         act_new.triggered.connect(self.new_session_requested.emit)
         menu.addAction(act_new)
-        act_settings = QAction("设置（占位）", self)
+        act_settings = QAction("设置…", self)
         act_settings.triggered.connect(self.settings_requested.emit)
         menu.addAction(act_settings)
         menu.addSeparator()
         act_quit = QAction("退出", self)
         act_quit.triggered.connect(self.quit_requested.emit)
         menu.addAction(act_quit)
-        menu.exec(e.globalPos())
+        # `exec()` keeps the pointer event handler in a nested event loop. Some
+        # macOS accessibility/CGEvent right-click paths then wait for the
+        # handler to return and immediately swallow the menu. `popup()` is
+        # non-blocking, so the menu remains visible after the real click ends.
+        self._context_menu = menu
+
+        def _release_menu() -> None:
+            if self._context_menu is menu:
+                self._context_menu = None
+            menu.deleteLater()
+
+        menu.aboutToHide.connect(_release_menu)
+        menu.popup(global_pos)
+
+    def contextMenuEvent(self, e):
+        self._show_context_menu(e.globalPos())

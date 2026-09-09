@@ -93,9 +93,9 @@ def main() -> int:
     print("── S1 气泡提问（窗口隐藏）──", flush=True)
     session_at_start = chat._current_path
     pet.send("自我介绍")
-    ok = wait_until(lambda: not pet.ctrl.busy and pet.state.value == "AWAKE",
+    ok = wait_until(lambda: not pet.ctrl.busy and pet.state.value == "PRESENTING",
                     30, "气泡回合完成")
-    check("S1 气泡两步回合完成（短结已出）", ok)
+    check("S1 气泡单回合完成（简答已出）", ok)
 
     # ── S2 镜像：窗口可见即同步气泡历史 ────────────────────────
     print("── S2 打开对话窗口 → 镜像同一会话 ──", flush=True)
@@ -125,7 +125,7 @@ def main() -> int:
     check("S4 对话窗口未重复弹确认", chat._confirm is None)
     pet._resolve_confirm(confirmed=True)
     ok = wait_until(lambda: not pet.ctrl.busy, 30, "读屏回合完成")
-    check("S4 气泡授权后两步完成", ok)
+    check("S4 气泡授权后单回合完成", ok)
     pet.bubble.grab().save(str(OUT / "p4-02-bubble-after-readscreen.png"))
     pet.pet.grab().save(str(OUT / "p4-03-pet-idle.png"))
 
@@ -137,7 +137,7 @@ def main() -> int:
     check("S4b 气泡未重复弹确认", pet._confirm_id is None)
     chat._answer_confirm(True)
     ok = wait_until(lambda: not chat.ctrl.busy, 30, "窗口读屏回合完成")
-    check("S4b 窗口授权后两步完成", ok)
+    check("S4b 窗口授权后单回合完成", ok)
 
     # ── S5 并发仲裁：气泡生成中，窗口输入排队 ──────────────────
     print("── S5 并发仲裁（不双发引擎）──", flush=True)

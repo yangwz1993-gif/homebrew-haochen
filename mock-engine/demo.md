@@ -2,7 +2,7 @@
 
 > 日期：2026-08-25 ｜ 环境：macOS arm64，Python 3.9.6（系统自带，无第三方依赖）
 
-## 1. 驱动全流程（门禁：发 prompt → 收流式 → 收工具确认 → 授权 → 收 answer → 收 summary）
+## 1. 驱动全流程（门禁：发 prompt → 收流式 → 收工具确认 → 授权 → 同回合收 brief + detail）
 
 命令：
 
@@ -11,30 +11,32 @@ cd mock-engine
 MOCK_TICK_MS=10 python3 driver.py --dump verification/mock-demo.jsonl
 ```
 
-退出码 0，45/45 断言全过。完整输出见 `verification/demo-output.txt`，首尾摘录：
+退出码 0 即全部断言通过。`verification/demo-output.txt` 保留 v1.0 两回合协议的历史基线；当前结果以实时运行 `driver.py` 为准。
 
 ```
 [PASS] 普通对话: prompt 受理成功
 [PASS] 普通对话: agent_start 开头 — ['agent_start', 'turn_start', 'message_start']
 [PASS] 普通对话: 含 turn_start/turn_end
 [PASS] 普通对话: 有流式 message_update
-[PASS] 普通对话: answer 含【answer】标记
-[PASS] summary 回合: prompt 受理成功
-[PASS] summary 回合: 含【summary】标记 — 【summary】结论：mock 引擎按契约完成两步输出…
+[PASS] 普通对话: 含配对【brief】标记
+[PASS] 普通对话: 含配对【detail】标记
+[PASS] 普通对话: brief 可独立显示
+[PASS] 普通对话: detail 可展开查看
 [PASS] 读屏: tool_execution_start(read_screen)
 [PASS] 读屏: confirm 标题/文案符合契约
 [PASS] 读屏: 授权后工具成功（isError=false）
-[PASS] 读屏: answer 含【answer】标记
+[PASS] 读屏: 含配对【brief】标记
+[PASS] 读屏: 含配对【detail】标记
 [PASS] 错误: assistant stopReason=error + errorMessage
 [PASS] 会话: new_session 成功 / get_messages / set_session_name / switch_session …
 [PASS] 未知命令: success=false + error
-==== 45/45 通过 ====
+==== 36/36 通过 ====
 ```
 
 四个场景全部走通：
 
-1. **普通对话 + 两步**：driver 发 prompt → 收 thinking/text 流式 → `agent_end` → 按契约 §4.3 解析【answer】、踢 `haochen-summary-phase` prompt → 收【summary】。
-2. **读屏确认**（门禁主流程）：prompt 含「屏幕」→ `tool_execution_start(read_screen)` → `extension_ui_request`(confirm) → driver 回 `{"confirmed":true}` → `tool_execution_end` isError=false → answer → summary。
+1. **普通对话 + 分层结果**：driver 发 prompt → 收 thinking/text 流式 → `agent_end` → 同一正文解析【brief】与【detail】，不再追加内部 prompt。
+2. **读屏确认**（门禁主流程）：prompt 含「屏幕」→ `tool_execution_start(read_screen)` → `extension_ui_request`(confirm) → driver 回 `{"confirmed":true}` → `tool_execution_end` isError=false → brief + detail。
 3. **错误路径**：prompt 含「错误」→ assistant `stopReason:"error"` + `errorMessage`，`agent_end.willRetry=false` 正常收尾。
 4. **多会话**：get_state → new_session → 第二会话对话 → get_messages（2 条）→ set_session_name → switch_session 切回 → switch 不存在的会话报错。
 
@@ -68,7 +70,7 @@ python3 driver.py --engine ../engine/haochen-engine --real --dump verification/r
 ==== 9/9 通过 ====
 ```
 
-注：真引擎未加载 haochen 扩展时不产 `【answer】/【summary】` 标记，属预期（两步规则由扩展注入，契约 §4），故 --real 模式不断言标记。
+注：真引擎未加载 haochen 扩展时不产 `【brief】/【detail】` 标记，属预期（分层规则由扩展注入，契约 §4），故 --real 模式不断言标记。
 
 ## 3. 契约事件形状的真机依据
 

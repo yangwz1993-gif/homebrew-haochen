@@ -4,7 +4,7 @@
 （用户气泡居右、haochen 居左、最大宽 ~72%、逐条淡入 180ms）。
 
 数据流：
-- 两步协议（answer→summary）走共享的 ConversationController（只订阅信号）；
+- 单回合分层结果（brief + detail）走共享的 ConversationController（只订阅信号）；
 - 工具卡 / 读屏确认条直接订阅 EngineClient.event；
 - 命令响应按 id 关联（rpc-contract §1.2），_rpc() 挂回调。
 
@@ -23,6 +23,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QLabel,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -33,8 +34,19 @@ from PyQt6.QtWidgets import (
 
 from ..a11y import screen_of
 from ..app_tracking import write_last_user_text
-from ..conversation import SUMMARY_KICK_PREFIX, ConversationController, humanize_error, parse_paired, strip_tags
-from ..engine_client import EngineClient, delete_session, restore_session
+from ..conversation import (
+    SUMMARY_KICK_PREFIX,
+    ConversationController,
+    humanize_error,
+    make_session_title,
+    parse_paired,
+    parse_turn_result,
+    same_visible_text,
+    sanitize_runtime_details,
+    strip_tags,
+    visible_user_text,
+)
+from ..engine_client import EngineClient, delete_session, list_sessions, restore_session
 from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
 from .sidebar import SessionSidebar
@@ -84,7 +96,13 @@ class _InputBox(QPlainTextEdit):
 
     def keyPressEvent(self, ev) -> None:
         if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if ev.modifiers() & Qt.KeyboardModifier.MetaModifier:
+            # Qt maps the macOS Command key to ControlModifier; accept Meta as
+            # well so the contract remains stable on every platform/backend.
+            if ev.modifiers() & (
+                Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.MetaModifier
+                | Qt.KeyboardModifier.ShiftModifier
+            ):
                 self.insertPlainText("\n")
             else:
                 self._on_send()
@@ -104,12 +122,14 @@ class ChatWindow(QWidget):
     SCROLL_FOLLOW_THRESHOLD = 24     # 距底小于该像素视为“用户在底部”
 
     detail_collapsed = pyqtSignal()   # 详情模式收起动画播完、窗口已隐藏
+    normal_closed = pyqtSignal()      # 普通完整对话窗关闭，壳层恢复桌宠
+    read_permission_requested = pyqtSignal()  # 用户明确同意后才请求系统读屏权限
 
     def __init__(self, client: EngineClient | None = None, supervisor=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("haochen")
-        self.resize(1200, 800)
-        self.setMinimumSize(900, 600)
+        self.resize(980, 680)
+        self.setMinimumSize(820, 560)
         # 防御性加固（v0.1.4 hotfix 问题4）：关窗永不退出 app
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
 
@@ -122,6 +142,7 @@ class ChatWindow(QWidget):
         self._pending_rpc: dict[str, callable] = {}
         self._sessions: list[dict] = []        # [{path, title}]，新→旧
         self._current_path: str | None = None
+        self._accept_pending_empty_session = False
         self.coordinator = (
             supervisor.coordinator if supervisor is not None else SessionCoordinator(self.client.home, parent=self)
         )
@@ -132,6 +153,8 @@ class ChatWindow(QWidget):
         self._stream_row: BubbleRow | None = None
         self._stream_buf = ""
         self._stream_dirty = False      # 节流窗口内已有新增量待渲染
+        self._pending_answer = ""       # brief 到达后再按“结论→详情”落位
+        self._turn_aborted = False       # 中止回合绝不能伪装成正常完成答案
         self._stream_timer: QTimer | None = None
         self._follow_stream = True      # 用户是否在底部（决定是否自动跟随）
         self._thinking_row: BubbleRow | None = None
@@ -144,12 +167,15 @@ class ChatWindow(QWidget):
         self._detail_mode = False
         self._detail_collapsing = False
         self._detail_source_rect = QRect()
+        self._normal_geometry = QRect()
         self._geom_anim: QPropertyAnimation | None = None
 
         self._build_ui()
+        self._reload_persisted_sessions()
         self._wire()
         self._sync_queue_banners()
         self._restore_geometry()
+        self._remember_normal_geometry()
 
         # ⌘W：详情模式 = 收起；正常模式不拦截（行为不变）
         sc = QShortcut(QKeySequence.StandardKey.Close, self)
@@ -181,6 +207,7 @@ class ChatWindow(QWidget):
     def _save_geometry(self) -> None:
         """关闭时保存当前几何（0600，原子写）。"""
         geo = self.geometry()
+        self._normal_geometry = QRect(geo)
         try:
             atomic_write_private(
                 self._geometry_file(),
@@ -207,6 +234,25 @@ class ChatWindow(QWidget):
         rlay.setSpacing(0)
         root.addWidget(right, 1)
 
+        self.detail_header = QWidget()
+        detail_header_layout = QHBoxLayout(self.detail_header)
+        detail_header_layout.setContentsMargins(18, 14, 18, 8)
+        detail_header_layout.setSpacing(8)
+        self.detail_title = QLabel("会话详情")
+        self.detail_title.setAccessibleName("会话详情")
+        self.detail_title.setStyleSheet(
+            f"font-size: {FONT['title']}px; font-weight: bold; color: {C['ink']};"
+        )
+        detail_header_layout.addWidget(self.detail_title)
+        detail_header_layout.addStretch(1)
+        self.detail_close_button = QPushButton("收起  Esc")
+        self.detail_close_button.setAccessibleName("收起会话详情")
+        self.detail_close_button.setStyleSheet(button_outline())
+        self.detail_close_button.clicked.connect(self.collapse_detail)
+        detail_header_layout.addWidget(self.detail_close_button)
+        self.detail_header.hide()
+        rlay.addWidget(self.detail_header)
+
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet("QScrollArea { border: none; }")
@@ -218,6 +264,9 @@ class ChatWindow(QWidget):
         self.flow = QVBoxLayout(self.flow_host)
         self.flow.setContentsMargins(0, 12, 0, 12)
         self.flow.setSpacing(6)
+        # Standard reading order: short conversations begin at the top. Keep
+        # any unused space *after* the messages so people do not have to scan
+        # an empty screen before finding the current answer at the bottom.
         self.flow.addStretch(1)
         self.scroll.setWidget(self.flow_host)
         rlay.addWidget(self.scroll, 1)
@@ -228,19 +277,21 @@ class ChatWindow(QWidget):
         self.jump_to_latest_button.clicked.connect(self._jump_to_latest)
         self.jump_to_latest_button.hide()
         jump_row = QHBoxLayout()
+        self._jump_row = jump_row
         jump_row.setContentsMargins(16, 0, 16, 0)
         jump_row.addStretch(1)
         jump_row.addWidget(self.jump_to_latest_button)
         rlay.addLayout(jump_row)
 
         input_bar = QHBoxLayout()
+        self._input_bar = input_bar
         input_bar.setContentsMargins(16, 8, 16, 0)
         input_bar.setSpacing(8)
         self.input = _InputBox(self._on_send)
         input_bar.addWidget(self.input, 1)
-        self.btn_send = QPushButton("➤")
+        self.btn_send = QPushButton("发送  ➤")
         self.btn_send.setAccessibleName("发送")
-        self.btn_send.setFixedWidth(56)
+        self.btn_send.setFixedWidth(92)
         self.btn_send.setStyleSheet(button_solid())
         self.btn_send.clicked.connect(self._on_send)
         input_bar.addWidget(self.btn_send)
@@ -267,6 +318,7 @@ class ChatWindow(QWidget):
             sup.restarting.connect(self._on_sup_restarting)
             sup.restarted.connect(self._on_sup_restarted)
             sup.restart_failed.connect(self._on_sup_restart_failed)
+            sup.state_changed.connect(self._on_supervisor_state)
             self.client.event.connect(self._on_foreign_turn_end)
         else:
             self.client.crashed.connect(self._on_crash)
@@ -291,6 +343,7 @@ class ChatWindow(QWidget):
         self.ctrl.busy_changed.connect(self._on_busy_changed)
         self.ctrl.request_committed.connect(self._on_request_committed)
         self.ctrl.request_failed.connect(self._on_request_failed)
+        self.ctrl.turn_aborted.connect(self._on_turn_aborted)
         if self._supervisor is not None:
             self._supervisor.register(self.ctrl)
 
@@ -320,33 +373,96 @@ class ChatWindow(QWidget):
         data = resp.get("data") or {}
         path = data.get("sessionFile") or ""
         model = (data.get("model") or {}).get("id", "")
-        self.sidebar.set_status(f"模型：{model}")
+        self.sidebar.set_model(model)
+        name = data.get("sessionName") or "新会话"
+        if self._is_transient_startup_session(path, name):
+            return
+        if path:
+            self._accept_pending_empty_session = False
         if path:
             self.coordinator.set_current_session(path)
-        if path and path != self._current_path:
-            self._current_path = path
-            if not any(s["path"] == path for s in self._sessions):
-                name = data.get("sessionName") or "新会话"
+        if path:
+            record = next((s for s in self._sessions if s["path"] == path), None)
+            if record is None:
                 self._sessions.insert(0, {"path": path, "title": name})
+            elif record["title"] == "新会话" and name != "新会话":
+                record["title"] = name
+            changed_session = path != self._current_path
+            self._current_path = path
             self._refresh_sidebar()
-            self._rpc(self.client.get_messages, self._render_history)
+            self._update_detail_title()
+            if changed_session:
+                self._rpc(self.client.get_messages, self._render_history)
+
+    def _is_transient_startup_session(self, path: str, name: str) -> bool:
+        """Ignore the engine's prospective empty file while restoring durable history."""
+        if self._mock or self._accept_pending_empty_session or not path or name != "新会话":
+            return False
+        saved = self.coordinator.current_session
+        return bool(
+            saved
+            and saved != path
+            and Path(saved).is_file()
+            and not Path(path).exists()
+        )
+
+    def _reload_persisted_sessions(self) -> None:
+        """Rebuild the sidebar from durable JSONL files after app/engine restart."""
+        if self._mock:
+            return
+        records = []
+        for session in list_sessions(self.client.home):
+            preview = str(session.get("preview") or "").strip()
+            title = str(session.get("title") or "").strip()
+            if not title and preview:
+                title = make_session_title(preview)
+            records.append({
+                "path": str(session["path"]),
+                "title": title or "新会话",
+            })
+        self._sessions = records
+        if hasattr(self, "sidebar"):
+            self._refresh_sidebar()
+
+    def _on_supervisor_state(self, data: dict) -> None:
+        """Keep hidden-window session titles in sync with pet-originated turns."""
+        self._on_state({"success": True, "data": data})
 
     # ── 对话流渲染 ─────────────────────────────────────────────
 
     def _bubble_max_w(self) -> int:
-        return int(self.scroll.viewport().width() * 0.72)
+        content_width = min(920, max(320, self.scroll.viewport().width()))
+        return min(680, int(content_width * 0.72))
+
+    def _apply_responsive_margins(self) -> None:
+        """Keep conversation and composer on one centered reading column on wide screens."""
+        side = max(0, (self.scroll.viewport().width() - 920) // 2)
+        self.flow.setContentsMargins(side, 12, side, 12)
+        self._jump_row.setContentsMargins(side + 16, 0, side + 16, 0)
+        self._input_bar.setContentsMargins(side + 16, 8, side + 16, 0)
 
     def _add_row(self, content: QWidget, align: str, before: QWidget | None = None) -> BubbleRow:
         row = BubbleRow(content, align)
         row.set_max_content_width(self._bubble_max_w())
-        idx = self.flow.count() - 1 if before is None else self.flow.indexOf(before)
-        self.flow.insertWidget(idx, row)
+        if before is None:
+            self.flow.insertWidget(self.flow.count() - 1, row)
+        else:
+            self.flow.insertWidget(self.flow.indexOf(before), row)
         QTimer.singleShot(0, self._scroll_bottom)
         return row
 
     def _scroll_bottom(self) -> None:
         sb = self.scroll.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    def _scroll_top(self) -> None:
+        """Start an opened detail at the conversation's beginning, never its tail."""
+        sb = self.scroll.verticalScrollBar()
+        sb.setValue(sb.minimum())
+        # valueChanged sees min==max as "at bottom" for a not-yet-laid-out flow.
+        # Pin this after the write so later range changes cannot pull detail down.
+        self._follow_stream = False
+        self.jump_to_latest_button.hide()
 
     def _on_scroll_moved(self) -> None:
         """用户主动滚动后重估“是否在底部”；离开底部即停止强制跟随。"""
@@ -385,6 +501,7 @@ class ChatWindow(QWidget):
 
     def resizeEvent(self, ev) -> None:
         super().resizeEvent(ev)
+        self._apply_responsive_margins()
         w = self._bubble_max_w()
         for i in range(self.flow.count()):
             item = self.flow.itemAt(i)
@@ -417,6 +534,7 @@ class ChatWindow(QWidget):
         return self.coordinator.texts("chat")
 
     def _send_queued_item(self, item: QueueItem) -> None:
+        self._turn_aborted = False
         self._last_user_text = item.text
         # 仅落盘派生的看图意图 boolean，绝不持久化用户原文
         write_last_user_text(self.client.home, item.text)
@@ -431,6 +549,8 @@ class ChatWindow(QWidget):
     def _on_stop(self) -> None:
         if self._confirm:
             self._answer_confirm(None)        # Esc/停止时取消确认（契约 §5.3 cancelled）
+        if self.ctrl.busy:
+            self._turn_aborted = True
         self.ctrl.abort()
 
     def keyPressEvent(self, ev) -> None:
@@ -449,22 +569,29 @@ class ChatWindow(QWidget):
             self.collapse_detail()
 
     def closeEvent(self, ev) -> None:
-        self._save_geometry()
         # 详情模式下系统级关闭（⌘W/Mission Control 等）也走收起，绝不退出 app
         if self._detail_mode:
             ev.ignore()
             self.collapse_detail()
             return
-        super().closeEvent(ev)
+        self._save_geometry()
+        ev.ignore()
+        self.hide()
+        self.normal_closed.emit()
 
     # ── 详情模式：从气泡展开 / 收回气泡 ─────────────────────────
 
     def open_from_bubble(self, source_rect: QRect | None = None) -> None:
         """「展开详细」：从短会话气泡 rect 平滑扩展（OutCubic ~220ms）到正常尺寸，
-        并滚动定位到当前轮（对话流尾部）。"""
+        并从会话顶部开始阅读完整上下文。"""
+        self._remember_normal_geometry()
         self._detail_mode = True
         self._detail_collapsing = False
+        self._follow_stream = False
         self._detail_source_rect = source_rect or QRect()
+        self.sidebar.hide()
+        self.detail_header.show()
+        self.input.setPlaceholderText("继续这个话题…（⏎ 发送，⌘⏎ 换行）")
         target = self._detail_target_rect()
         if self._detail_source_rect.isValid() and not self._detail_source_rect.isNull():
             # 动画期间放开最小尺寸，否则起点 rect 会被 minimumSize 钳大
@@ -477,13 +604,14 @@ class ChatWindow(QWidget):
             self.show()
         self.raise_()
         self.activateWindow()
-        # 定位到当前轮：历史镜像渲染（showEvent）与动画落地后各滚一次底
-        QTimer.singleShot(0, self._scroll_bottom)
-        QTimer.singleShot(300, self._scroll_bottom)
+        # showEvent 可能异步重绘历史；动画前后都钉在顶部，最终 _render_history
+        # 还会再按 detail mode 定位一次，覆盖布局/rangeChanged 竞态。
+        QTimer.singleShot(0, self._scroll_top)
+        QTimer.singleShot(300, self._scroll_top)
 
     def _restore_min_size(self) -> None:
         if self._detail_mode and not self._detail_collapsing:
-            self.setMinimumSize(900, 600)
+            self.setMinimumSize(720, 500)
 
     def collapse_detail(self) -> None:
         """Esc / ⌘W：反向收回气泡 rect，播完隐藏并发 detail_collapsed。"""
@@ -501,14 +629,56 @@ class ChatWindow(QWidget):
         self._detail_mode = False
         self._detail_collapsing = False
         self.hide()
-        self.setMinimumSize(900, 600)
+        self.sidebar.show()
+        self.detail_header.hide()
+        self.input.setPlaceholderText("和 haochen 说点什么…（⏎ 发送，⌘⏎ 换行）")
+        self.setMinimumSize(820, 560)
+        self.setGeometry(self._normal_target_rect())
         self.detail_collapsed.emit()
 
-    def _detail_target_rect(self) -> QRect:
-        """正常尺寸（默认 1200×800，夹回屏幕），以气泡中心锚定（气泡所在屏）。"""
+    def _remember_normal_geometry(self) -> None:
+        """Keep detail animations and their tiny source rect out of normal-window state."""
+        geo = self.geometry()
+        if (not self._detail_mode and geo.width() >= 820 and geo.height() >= 560
+                and any(s.availableGeometry().intersects(geo) for s in QApplication.screens())):
+            self._normal_geometry = QRect(geo)
+
+    def _normal_target_rect(self) -> QRect:
+        if (self._normal_geometry.isValid()
+                and self._normal_geometry.width() >= 820
+                and self._normal_geometry.height() >= 560
+                and any(s.availableGeometry().intersects(self._normal_geometry)
+                        for s in QApplication.screens())):
+            return QRect(self._normal_geometry)
         screen = screen_of(self).availableGeometry()
-        w = min(1200, screen.width() - 16)
-        h = min(800, screen.height() - 16)
+        w = min(980, max(820, screen.width() - 32))
+        h = min(680, max(560, screen.height() - 32))
+        return QRect(
+            screen.center().x() - w // 2,
+            screen.center().y() - h // 2,
+            w,
+            h,
+        )
+
+    def show_normal(self) -> None:
+        """Open the full workspace with a sane geometry after any detail animation."""
+        self._detail_mode = False
+        self._detail_collapsing = False
+        self._follow_stream = True
+        self.sidebar.show()
+        self.detail_header.hide()
+        self.input.setPlaceholderText("和 haochen 说点什么…（⏎ 发送，⌘⏎ 换行）")
+        self.setMinimumSize(820, 560)
+        self.setGeometry(self._normal_target_rect())
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _detail_target_rect(self) -> QRect:
+        """从桌宠进入的详情工作台保持紧凑，并夹回气泡所在屏幕。"""
+        screen = screen_of(self).availableGeometry()
+        w = min(840, screen.width() - 16)
+        h = min(600, screen.height() - 16)
         if self._detail_source_rect.isValid() and not self._detail_source_rect.isNull():
             cx = self._detail_source_rect.center().x()
             cy = self._detail_source_rect.center().y()
@@ -546,13 +716,27 @@ class ChatWindow(QWidget):
         """首条用户消息自动命名会话（§6 标题自动/可重命名）。"""
         for s in self._sessions:
             if s["path"] == self._current_path and s["title"] == "新会话":
-                title = text[:20] + ("…" if len(text) > 20 else "")
+                title = make_session_title(text)
                 s["title"] = title
                 self.sidebar.update_title(s["path"], title)
+                self._update_detail_title()
                 self._rpc(self.client.set_session_name, lambda r: None, title)
                 return
 
-    # ── ConversationController 信号（两步协议）──────────────────
+    def _update_detail_title(self) -> None:
+        title = next(
+            (
+                str(session.get("title") or "")
+                for session in self._sessions
+                if session.get("path") == self._current_path
+            ),
+            "",
+        )
+        text = title if title and title != "新会话" else "会话详情"
+        self.detail_title.setText(text)
+        self.detail_title.setAccessibleName(f"当前会话：{text}")
+
+    # ── ConversationController 信号（单回合分层结果）────────────
 
     def _on_busy_changed(self, busy: bool) -> None:
         self.btn_stop.setVisible(busy)
@@ -683,17 +867,14 @@ class ChatWindow(QWidget):
     def _on_answer_done(self, answer: str) -> None:
         self._drop_thinking()
         self._flush_stream()
+        self._pending_answer = answer
         if self._stream_row is not None:
+            # 流式内容先保持可见；brief 到达后再重排为“结论在前、详情在后”。
             self._stream_row.content.set_text(answer)
-            self._stream_row = None
-            self._stream_buf = ""
-            self._stream_dirty = False
-            if self._stream_timer is not None:
-                self._stream_timer.stop()
-                self._stream_timer = None
-        else:
-            self._add_row(AssistantBubble("answer"), "left").content.set_text(answer)
         QTimer.singleShot(0, self._maybe_follow)
+
+    def _on_turn_aborted(self, _partial: str) -> None:
+        self._turn_aborted = True
 
     def _on_summarizing(self) -> None:
         self._status_row = self._add_row(StatusBubble("正在提炼结论", "thinking"), "left")
@@ -701,12 +882,38 @@ class ChatWindow(QWidget):
     def _on_summary_done(self, summary: str) -> None:
         self._drop_thinking()
         self._drop_status()
-        if not summary:
+        if self._stream_row is not None:
+            self._drop_row(self._stream_row)
+            self._stream_row = None
+        self._stream_buf = ""
+        self._stream_dirty = False
+        if self._stream_timer is not None:
+            self._stream_timer.stop()
+            self._stream_timer = None
+        if self._turn_aborted:
+            self._add_row(
+                StatusBubble("已停止生成，以下是停止前的未完成内容", "warn"), "left"
+            )
+            partial = self._pending_answer.strip() or summary.strip()
+            if partial:
+                bubble = AssistantBubble("partial")
+                bubble.set_text(partial)
+                self._add_row(bubble, "left")
+                self._add_row(StatusBubble("已停止生成 · 上述内容未完成", "warn"), "left")
+            self._pending_answer = ""
+            self._turn_aborted = False
+            QTimer.singleShot(0, self._maybe_follow)
             return
-        bubble = AssistantBubble("summary")
-        bubble.set_text(summary)
-        # 结论后置（v0.1.4 §1a）：summary 气泡追加到本轮 answer 气泡之后
-        self._add_row(bubble, "left")
+        if summary:
+            bubble = AssistantBubble("summary")
+            bubble.set_text(summary)
+            self._add_row(bubble, "left")
+        if self._pending_answer and not same_visible_text(self._pending_answer, summary):
+            detail = AssistantBubble("answer")
+            detail.set_text(self._pending_answer)
+            self._add_row(detail, "left")
+        self._pending_answer = ""
+        QTimer.singleShot(0, self._maybe_follow)
 
     def _on_failed(self, err: str) -> None:
         self._drop_thinking()
@@ -714,6 +921,8 @@ class ChatWindow(QWidget):
         self._stream_row = None
         self._stream_buf = ""
         self._stream_dirty = False
+        self._pending_answer = ""
+        self._turn_aborted = False
         if self._stream_timer is not None:
             self._stream_timer.stop()
             self._stream_timer = None
@@ -786,7 +995,12 @@ class ChatWindow(QWidget):
                 result = ev.get("result") or {}
                 text = "".join(c.get("text", "") for c in result.get("content", [])
                                if c.get("type") == "text")
-                card.mark_done(text, bool(ev.get("isError")), card.elapsed_ms())
+                card.mark_done(
+                    text,
+                    bool(ev.get("isError") or result.get("isError")),
+                    card.elapsed_ms(),
+                    result.get("details") or {},
+                )
         elif t == "extension_ui_request":
             self._on_ui_request(ev)
         elif t == "extension_error":
@@ -815,10 +1029,19 @@ class ChatWindow(QWidget):
         if confirmed is None:
             self.client.respond_ui(rid, cancelled=True)
             note, kind = "已取消读屏", "notice"
+            terminal_reason = "已取消"
         else:
             self.client.respond_ui(rid, confirmed=confirmed)
             note = "已授权读屏" if confirmed else "已拒绝读屏"
             kind = "perceive" if confirmed else "notice"
+            terminal_reason = "" if confirmed else "已拒绝"
+            if confirmed:
+                self.read_permission_requested.emit()
+        if terminal_reason:
+            for card in reversed(list(self._tool_cards.values())):
+                if card.tool_name == "read_screen":
+                    card.mark_not_run(terminal_reason)
+                    break
         self._drop_row(row)
         self._add_row(StatusBubble(note, kind), "left")
 
@@ -830,6 +1053,7 @@ class ChatWindow(QWidget):
     def _new_session(self) -> None:
         if self.ctrl.busy:
             return
+        self._accept_pending_empty_session = True
         self._rpc(self.client.new_session, lambda r: self._rpc(self.client.get_state, self._on_state))
 
     def _switch_session(self, path: str) -> None:
@@ -952,7 +1176,9 @@ class ChatWindow(QWidget):
         if not resp.get("success"):
             return
         self._clear_flow()
-        messages = (resp.get("data") or {}).get("messages") or []
+        messages = self._collapse_repeated_error_retries(
+            (resp.get("data") or {}).get("messages") or []
+        )
         for msg in messages:
             role = msg.get("role")
             if role == "user":
@@ -961,18 +1187,57 @@ class ChatWindow(QWidget):
                 if text.startswith(SUMMARY_KICK_PREFIX):
                     continue          # 契约 §4.4：summary 踢令永不渲染
                 if text:
-                    self._add_row(UserBubble(text), "right")
+                    self.ctrl.clear_resume_context()
+                    self._add_row(UserBubble(visible_user_text(text)), "right")
             elif role == "assistant":
                 self._render_history_assistant(msg)
             elif role == "toolResult":
                 card = ToolCard(msg.get("toolCallId", ""), msg.get("toolName", "tool"))
                 text = "".join(c.get("text", "") for c in msg.get("content", [])
                                if c.get("type") == "text")
-                card.mark_done(text, bool(msg.get("isError")))
+                card.mark_done(
+                    text,
+                    bool(msg.get("isError")),
+                    details=msg.get("details") or {},
+                )
                 self._add_row(card, "left")
-        QTimer.singleShot(0, self._scroll_bottom)
-        self._follow_stream = True
+        if self._detail_mode:
+            self._follow_stream = False
+            QTimer.singleShot(0, self._scroll_top)
+        else:
+            self._follow_stream = True
+            QTimer.singleShot(0, self._scroll_bottom)
         self.jump_to_latest_button.hide()
+
+    @staticmethod
+    def _collapse_repeated_error_retries(messages: list[dict]) -> list[dict]:
+        """Render an unchanged user/error retry pair once instead of flooding history."""
+        collapsed: list[dict] = []
+        previous_pair: tuple[str, str] | None = None
+        index = 0
+        while index < len(messages):
+            current = messages[index]
+            following = messages[index + 1] if index + 1 < len(messages) else None
+            if current.get("role") == "user" and following and (
+                    following.get("role") == "assistant"
+                    and following.get("stopReason") == "error"):
+                user_text = "".join(
+                    part.get("text", "") for part in current.get("content", [])
+                    if part.get("type") == "text"
+                ).strip()
+                error_text = humanize_error(
+                    following.get("errorMessage") or "引擎错误"
+                )
+                pair = (user_text, error_text)
+                if pair != previous_pair:
+                    collapsed.extend((current, following))
+                previous_pair = pair
+                index += 2
+                continue
+            previous_pair = None
+            collapsed.append(current)
+            index += 1
+        return collapsed
 
     def _render_history_assistant(self, msg: dict) -> None:
         if msg.get("stopReason") == "error":
@@ -981,26 +1246,57 @@ class ChatWindow(QWidget):
             return
         text = "".join(c.get("text", "") for c in msg.get("content", [])
                        if c.get("type") == "text")
+        if msg.get("stopReason") in ("aborted", "cancelled"):
+            result = parse_turn_result(text)
+            partial = result.detail or result.brief or strip_tags(text)
+            self._add_row(
+                StatusBubble("已停止生成，以下是停止前的未完成内容", "warn"), "left"
+            )
+            if partial:
+                bubble = AssistantBubble("partial")
+                bubble.set_text(partial)
+                self._add_row(bubble, "left")
+                self.ctrl.remember_aborted_context(partial)
+                self._add_row(StatusBubble("已停止生成 · 上述内容未完成", "warn"), "left")
+            return
         if not text:
             return
         answer = parse_paired(text, "answer")
         summary = parse_paired(text, "summary")
-        if summary:
+        has_current_protocol = any(tag in text for tag in (
+            "【brief】", "==brief==", "【detail】", "==detail==",
+        ))
+        if has_current_protocol:
+            result = parse_turn_result(text)
+            brief, detail = result.brief, result.detail
+            if brief:
+                bubble = AssistantBubble("summary")
+                bubble.set_text(brief)
+                self._add_row(bubble, "left")
+            if detail and not same_visible_text(detail, brief):
+                bubble = AssistantBubble("answer")
+                bubble.set_text(detail)
+                self._add_row(bubble, "left")
+        elif summary:
             bubble = AssistantBubble("summary")
-            bubble.set_text(summary)
-            # 结论后置（v0.1.4 §1a）：历史按时间序渲染，结论落在本轮详答之后
+            bubble.set_text(sanitize_runtime_details(summary))
             self._add_row(bubble, "left")
         elif answer:
             bubble = AssistantBubble("answer")
-            bubble.set_text(answer)
+            bubble.set_text(sanitize_runtime_details(answer))
             self._add_row(bubble, "left")
         elif text.strip():
-            bubble = AssistantBubble("answer")
-            bubble.set_text(strip_tags(text))
+            # A plain response is itself the visible conclusion, not hidden
+            # implementation detail. The controller uses the same fallback.
+            bubble = AssistantBubble("summary")
+            bubble.set_text(sanitize_runtime_details(strip_tags(text)))
             self._add_row(bubble, "left")
 
     def _clear_flow(self) -> None:
         self._thinking_row = self._status_row = self._stream_row = None
+        self._pending_answer = ""
+        self._turn_aborted = False
+        self.ctrl.clear_resume_context()
         self._confirm = None
         self._tool_cards.clear()
         self._queue_banners.clear()
@@ -1036,7 +1332,7 @@ class ChatWindow(QWidget):
     def _on_sup_restarted(self) -> None:
         self._engine_crashed = False
         self._make_controller()     # 旧 controller 可能卡在中途相位，重建并重注册
-        self._sessions.clear()
+        self._reload_persisted_sessions()
         self._current_path = None
         self._clear_flow()
         self._add_row(StatusBubble("引擎已自动重启 ✓ 会话已恢复", "notice"), "left")
@@ -1075,7 +1371,7 @@ class ChatWindow(QWidget):
             return
         self._engine_crashed = False
         self._make_controller()     # 旧 controller 可能卡在中途相位，重建
-        self._sessions.clear()
+        self._reload_persisted_sessions()
         self._current_path = None
         self._clear_flow()
         self._add_row(StatusBubble("引擎已重启，新会话已就绪", "notice"), "left")

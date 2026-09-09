@@ -12,6 +12,7 @@ P4 集成验证脚本共用本装配，保证「测的就是跑的」。
 环境变量：
     HAOCHEN_MOCK=1             用 mock 引擎（联调/测试）
     HAOCHEN_HOME=<path>        数据目录（测试隔离）
+    HAOCHEN_KEYCHAIN_SERVICE   Keychain 服务名（开发配置隔离）
     HAOCHEN_SKIP_ONBOARDING=1  自动化环境不显示首启向导
     HAOCHEN_AUTO_RESTART=1     配置要求重启引擎时免询问直接重启（自动化）
 """
@@ -53,8 +54,20 @@ class AppShell:
 
         # 双入口联动：气泡「展开详细」→ 对话窗口从气泡 rect 动画展开（v0.1.4 hotfix）
         self.pet.detail_opener = self.chat.open_from_bubble
+        self.pet.new_session_opener = self.chat._new_session
+        self.pet.chat_requested.connect(self.show_chat)
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
+        self.chat.normal_closed.connect(self._restore_pet_after_chat)
         self.pet.settings_requested.connect(self.show_settings)
+        self.pet.credential_validation.connect(self._on_credential_validation)
+        self.pet.read_permission_requested.connect(self._request_read_permission)
+        self.chat.read_permission_requested.connect(self._request_read_permission)
+        sup.restart_failed.connect(
+            lambda: self._on_credential_validation(
+                False, "当前模型连接失败，请检查凭据或模型设置"
+            )
+        )
+        self.settings.closed.connect(self.pet.restore_after_settings)
 
         # 配置 → 引擎生效链（M-D 预留信号，P4 接线）
         self.settings.modelChanged.connect(self._on_model_changed)
@@ -67,28 +80,49 @@ class AppShell:
 
     def _on_engine_event(self, ev: dict) -> None:
         t = ev.get("type")
-        if t == "tool_execution_start" and ev.get("toolName") == "read_screen":
-            from PyQt6.QtCore import QTimer as _QTimer
-
-            from .permissions import accessibility_granted, ensure_permissions
-            if not accessibility_granted():
-                _QTimer.singleShot(0, lambda: ensure_permissions(self.settings))
-        elif (t == "tool_execution_end" and ev.get("toolName") == "read_screen"
-              and (ev.get("result") or {}).get("needScreenRecording")):
+        result = ev.get("result") or {}
+        details = result.get("details") or {}
+        if (t == "tool_execution_end" and ev.get("toolName") == "read_screen"
+              and (result.get("needScreenRecording") or details.get("needScreenRecording"))):
             # P7：未授权屏幕录制 → 友好提示（图片缺失，文本正常）
             self.pet.bubble.add_perception_hint("如需看图识人，请在设置开启「屏幕录制」")
+
+    def _request_read_permission(self) -> None:
+        """敏感权限只在用户明确同意本次读屏后引导，拒绝前绝不抢焦点。"""
+        from PyQt6.QtCore import QTimer as _QTimer
+
+        from .permissions import accessibility_granted, ensure_permissions
+        if not accessibility_granted():
+            _QTimer.singleShot(0, lambda: ensure_permissions(self.settings))
 
     # ── 双入口动作 ─────────────────────────────────────────────
 
     def show_chat(self) -> None:
-        self.chat.show()
-        self.chat.raise_()
-        self.chat.activateWindow()
+        self.pet._result_timer.stop()
+        if self.pet.bubble.summoned:
+            self.pet.bubble.dismiss()
+        self.pet.pet.hide()
+        self.chat.show_normal()
+
+    def new_session(self) -> None:
+        """Create through the pet state reset and the chat session tracker exactly once."""
+        self.pet.new_session()
+
+    def _restore_pet_after_chat(self) -> None:
+        self.pet.pet.show()
+        self.pet.pet.raise_()
 
     def show_settings(self) -> None:
+        self.pet.suspend_for_settings()
         self.settings.show()
         self.settings.raise_()
         self.settings.activateWindow()
+
+    def _on_credential_validation(self, valid: bool, message: str) -> None:
+        """把真实请求结果带回设置页，区分“凭据存在”和“凭据可用”。"""
+        provider, _model = self.store.default_model()
+        if provider:
+            self.settings.set_runtime_key_validation(provider, valid, message)
 
     # ── 配置生效链 ─────────────────────────────────────────────
 

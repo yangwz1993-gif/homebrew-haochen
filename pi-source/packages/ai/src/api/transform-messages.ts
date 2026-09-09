@@ -192,7 +192,14 @@ export function transformMessages<TApi extends Api>(
 			// - Replaying them can cause API errors (e.g., OpenAI "reasoning without following item")
 			// - The model should retry from the last valid state
 			const assistantMsg = msg as AssistantMessage;
-			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
+			if (assistantMsg.stopReason === "aborted") {
+				// The preceding user message belongs to the cancelled turn. Keeping it while
+				// dropping only the aborted assistant makes the next request look like two
+				// unanswered user tasks, so models may resume work the user explicitly stopped.
+				if (result.at(-1)?.role === "user") result.pop();
+				continue;
+			}
+			if (assistantMsg.stopReason === "error") {
 				continue;
 			}
 

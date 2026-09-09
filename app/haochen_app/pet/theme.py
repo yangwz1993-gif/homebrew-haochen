@@ -22,7 +22,11 @@ RADIUS_BUBBLE = 16  # 气泡/卡片圆角
 RADIUS_BUTTON = 8   # 小标签/按钮
 RADIUS_INPUT = 12   # 输入框
 TAIL_SIZE = 14      # 气泡尾巴 ~14×14
-BUBBLE_PET_GAP = 8  # 气泡底边（含尾巴）与桌宠头顶的间隙 px
+# 气泡窗口底部仍有约 2px 到自绘尾尖，人物 PNG 顶部约有 3px 透明边。
+# 因此窗口间距设为 3px 时，肉眼看到的“尾尖 → 发顶”约为 8px。
+TAIL_TIP_BOTTOM_INSET = 2
+PET_VISIBLE_TOP_INSET = 3
+BUBBLE_PET_GAP = 3
 
 FONT_FAMILY = '-apple-system, "PingFang SC", "SF Pro", sans-serif'
 FONT_TITLE = 15   # title

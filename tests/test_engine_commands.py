@@ -106,6 +106,23 @@ def test_list_sessions_orders_by_timestamp_desc(tmp_path: Path) -> None:
     assert result[0]["preview"] == "最新"
 
 
+def test_list_sessions_reads_persisted_session_title(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    sessions = home / "pi-sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "named.jsonl").write_text(
+        json.dumps({"type": "session", "id": "s", "timestamp": "2026-03-01"})
+        + "\n"
+        + json.dumps({"type": "session_info", "name": "东京夜游建议"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = engine_module.list_sessions(home)
+
+    assert result[0]["title"] == "东京夜游建议"
+
+
 def test_session_helpers_with_default_home(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "data"
     monkeypatch.setattr(engine_module, "haochen_home", lambda: home)

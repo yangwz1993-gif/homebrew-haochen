@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QApplication, QMenu, QMenuBar, QWidget
 
@@ -11,6 +12,12 @@ if TYPE_CHECKING:
     from .app_shell import AppShell
 
 MENU_OBJECT_NAME = "haochen-menubar"
+
+
+def _standard_shortcut(key: QKeySequence.StandardKey, fallback: str) -> QKeySequence:
+    """Return the platform shortcut, with a fallback for headless Qt platforms."""
+    sequence = QKeySequence(key)
+    return sequence if not sequence.isEmpty() else QKeySequence(fallback)
 
 
 def _about(shell: AppShell, parent: QWidget) -> None:
@@ -45,18 +52,31 @@ def install_menu_bar(app: QApplication, shell: AppShell):
     menu.setObjectName("haochen-app-menu")
 
     open_chat = QAction("打开对话", menu)
-    open_chat.setShortcut(QKeySequence("Meta+1"))
+    # Qt on macOS maps ControlModifier to the native Command key.
+    open_chat.setShortcut(QKeySequence("Ctrl+1"))
+    # The standalone native menu bar is not owned by whichever haochen window
+    # is frontmost. Application scope keeps the shortcut active when only the
+    # frameless desktop pet has focus.
+    open_chat.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
     open_chat.triggered.connect(shell.show_chat)
     menu.addAction(open_chat)
 
     settings = QAction("设置…", menu)
-    settings.setShortcut(QKeySequence("Meta+,"))
+    # Give macOS an explicit Preferences action instead of relying on text
+    # heuristics. This both places it in the native application menu and makes
+    # the platform-standard Command-, shortcut dependable.
+    settings.setMenuRole(QAction.MenuRole.PreferencesRole)
+    settings.setShortcut(
+        _standard_shortcut(QKeySequence.StandardKey.Preferences, "Ctrl+,")
+    )
+    settings.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
     settings.triggered.connect(shell.show_settings)
     menu.addAction(settings)
 
     new_session = QAction("新会话", menu)
-    new_session.setShortcut(QKeySequence("Meta+N"))
-    new_session.triggered.connect(shell.chat._new_session)
+    new_session.setShortcut(_standard_shortcut(QKeySequence.StandardKey.New, "Ctrl+N"))
+    new_session.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+    new_session.triggered.connect(shell.new_session)
     menu.addAction(new_session)
 
     menu.addSeparator()
@@ -69,7 +89,8 @@ def install_menu_bar(app: QApplication, shell: AppShell):
     menu.addSeparator()
 
     quit_action = QAction("退出 haochen", menu)
-    quit_action.setShortcut(QKeySequence("Meta+Q"))
+    quit_action.setShortcut(_standard_shortcut(QKeySequence.StandardKey.Quit, "Ctrl+Q"))
+    quit_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
     quit_action.setMenuRole(QAction.MenuRole.QuitRole)
     quit_action.triggered.connect(app.quit)
     menu.addAction(quit_action)
