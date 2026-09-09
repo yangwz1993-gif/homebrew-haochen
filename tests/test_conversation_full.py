@@ -316,6 +316,11 @@ def test_session_title_is_distinguishable_and_elided() -> None:
     assert len(title) == 19
 
 
+def test_plain_visible_text_removes_compact_markdown_punctuation() -> None:
+    assert conversation.plain_visible_text("**答案：** `42`") == "答案： 42"
+    assert conversation.plain_visible_text("## 结论\n- 巴黎") == "结论\n巴黎"
+
+
 def test_parse_turn_result_recovers_mismatched_brief_closing_tag() -> None:
     raw = (
         "【brief】没读到屏——还缺辅助功能权限。【/detail】\n"

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from PyQt6.QtCore import QRect
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QApplication, QMenuBar
 
@@ -62,6 +62,7 @@ def test_menu_bar_provides_required_native_entries(qtbot) -> None:
         find(label)
 
     assert find("打开对话").shortcut().toString() == "Ctrl+1"
+    assert find("打开对话").shortcutContext() == Qt.ShortcutContext.ApplicationShortcut
     assert find("设置…").menuRole() == QAction.MenuRole.PreferencesRole
     assert find("设置…").shortcut() == menu_module._standard_shortcut(
         QKeySequence.StandardKey.Preferences, "Ctrl+,"
@@ -72,6 +73,8 @@ def test_menu_bar_provides_required_native_entries(qtbot) -> None:
     assert find("退出 haochen").shortcut() == menu_module._standard_shortcut(
         QKeySequence.StandardKey.Quit, "Ctrl+Q"
     )
+    for label in ("设置…", "新会话", "退出 haochen"):
+        assert find(label).shortcutContext() == Qt.ShortcutContext.ApplicationShortcut
 
     find("打开对话").trigger()
     find("设置…").trigger()

@@ -65,13 +65,10 @@ class PetWindow(QWidget):
         self.label = QLabel()
         self.label.setAccessibleName("haochen，点击开始对话")
         self.label.setStyleSheet("background: transparent;")
-        # QLabel covers the entire transparent window. On macOS its context
-        # event is not reliably forwarded to the parent QWidget, so handle it
-        # at the visible hit target as well.
-        self.label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.label.customContextMenuRequested.connect(
-            lambda pos: self._show_context_menu(self.label.mapToGlobal(pos))
-        )
+        # The image covers the whole window. Route pointer events to the parent
+        # deliberately so one implementation owns click, drag, double-click,
+        # right-click and the native macOS Control-click gesture.
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.label)
@@ -239,7 +236,19 @@ class PetWindow(QWidget):
 
     # ── 鼠标：拖拽 / 双击唤起 / 右键菜单 ──────────────────────
 
+    @staticmethod
+    def _is_secondary_click(e) -> bool:
+        return e.button() == Qt.MouseButton.RightButton or (
+            e.button() == Qt.MouseButton.LeftButton
+            # On Apple platforms Qt maps MetaModifier to the physical Control
+            # key (and ControlModifier to Command).
+            and bool(e.modifiers() & Qt.KeyboardModifier.MetaModifier)
+        )
+
     def mousePressEvent(self, e):
+        if self._is_secondary_click(e):
+            e.accept()
+            return
         if e.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = e.globalPosition().toPoint() - self.pos()
             self._moved = False
@@ -254,6 +263,10 @@ class PetWindow(QWidget):
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
+        if self._is_secondary_click(e):
+            self._show_context_menu(e.globalPosition().toPoint())
+            e.accept()
+            return
         if e.button() == Qt.MouseButton.LeftButton:
             if self._drag_pos is not None and self._moved:
                 self.save_position()  # v0.1.6：拖动结束记位置

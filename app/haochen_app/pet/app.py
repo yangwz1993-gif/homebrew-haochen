@@ -24,7 +24,7 @@ from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 from ..app_tracking import write_last_user_text
-from ..conversation import ConversationController, make_session_title
+from ..conversation import ConversationController, make_session_title, plain_visible_text
 from ..engine_client import EngineClient
 from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
@@ -597,7 +597,11 @@ class PetApp(QObject):
             # 终止竞争中引擎可能仍返回“写好了”等完成式 brief；停止后的 UI 不再信任它。
             brief = "我停下来了。停止前生成的内容已经保留。"
         else:
-            brief = summary.strip() or self._last_answer.strip() or "这次没有生成可显示的简答，请查看详情。"
+            source = summary.strip() or self._last_answer.strip()
+            # L1 is a compact speech card, not a Markdown document. Exposed
+            # markers such as **答案** make the character look like it is
+            # reciting protocol syntax, so keep only the visible wording.
+            brief = plain_visible_text(source) or "这次没有生成可显示的简答，请查看详情。"
             self.credential_validation.emit(True, "模型连接正常")
         self._last_summary = brief
         # 成功结果必须压过任何较早启动的收起动画，避免“详情里有答案、桌面结果消失”。

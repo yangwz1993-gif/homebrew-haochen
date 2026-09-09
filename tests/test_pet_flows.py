@@ -52,7 +52,7 @@ def test_send_runs_single_turn_and_shows_summary(qtbot, tmp_path: Path) -> None:
     getattr(client, "event").emit({"type": "message_end", "message": {"role": "user"}})
     getattr(client, "event").emit({"type": "agent_end", "messages": [
         user_message("你好"),
-        assistant_message("【brief】短结论【/brief】\n【detail】详答内容【/detail】"),
+        assistant_message("【brief】**短结论**【/brief】\n【detail】详答内容【/detail】"),
     ]})
 
     assert not pet.ctrl.busy
@@ -62,6 +62,9 @@ def test_send_runs_single_turn_and_shows_summary(qtbot, tmp_path: Path) -> None:
     assert blocks
     assert blocks[-1].continue_button.text() == "继续问"
     assert blocks[-1].expand_button.text() == "查看详情"
+    visible = " ".join(label.text() for label in blocks[-1].findChildren(QLabel))
+    assert "短结论" in visible
+    assert "**" not in visible
     assert not pet.bubble._input_visible()
     assert pet._result_timer.isActive()
 

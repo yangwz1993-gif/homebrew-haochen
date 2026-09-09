@@ -271,6 +271,7 @@ def test_pet_window_context_menu_emits_actions(qtbot, tmp_path: Path) -> None:
 def test_pet_image_opens_context_menu_directly(qtbot, tmp_path: Path) -> None:
     window = make_pet_window(qtbot, tmp_path)
     shown_at: list[QPoint] = []
+    assert window.label.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
     original_exec = QMenu.exec
 
@@ -281,7 +282,43 @@ def test_pet_image_opens_context_menu_directly(qtbot, tmp_path: Path) -> None:
     try:
         local_pos = QPoint(12, 18)
         expected = window.label.mapToGlobal(local_pos)
-        window.label.customContextMenuRequested.emit(local_pos)
+        release = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            QPointF(local_pos),
+            QPointF(expected),
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        window.mouseReleaseEvent(release)
+    finally:
+        QMenu.exec = original_exec
+
+    assert shown_at == [expected]
+
+
+def test_pet_image_control_click_opens_context_menu(qtbot, tmp_path: Path) -> None:
+    window = make_pet_window(qtbot, tmp_path)
+    shown_at: list[QPoint] = []
+
+    original_exec = QMenu.exec
+
+    def fake_exec(menu_self, global_pos, *args, **kwargs):
+        shown_at.append(global_pos)
+
+    QMenu.exec = fake_exec
+    try:
+        local_pos = QPoint(20, 24)
+        expected = window.label.mapToGlobal(local_pos)
+        release = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            QPointF(local_pos),
+            QPointF(expected),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.MetaModifier,
+        )
+        window.mouseReleaseEvent(release)
     finally:
         QMenu.exec = original_exec
 

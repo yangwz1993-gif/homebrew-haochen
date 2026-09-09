@@ -183,12 +183,13 @@ def _chinese_number(token: str) -> int | None:
     return None
 
 
-def _plain_visible(text: str) -> str:
+def plain_visible_text(text: str) -> str:
+    """Remove lightweight Markdown punctuation for compact plain-text surfaces."""
     return _VISIBLE_MARKDOWN.sub("", strip_tags(text or "")).strip()
 
 
 def _truncate_visible(text: str, limit: int) -> str:
-    plain = _plain_visible(text)
+    plain = plain_visible_text(text)
     if len(plain) <= limit:
         return plain
     if limit <= 1:
@@ -208,7 +209,7 @@ def apply_user_output_constraints(user_text: str, result: TurnResult) -> TurnRes
         brief = quoted_reply.group(1).strip()
         strict_single = True
     elif re.search(r"只(?:回答)?是或否|只(?:回答)?是/否", request):
-        match = re.search(r"(?<![不可])[是否]", _plain_visible(brief))
+        match = re.search(r"(?<![不可])[是否]", plain_visible_text(brief))
         if match:
             brief = match.group(0)
         strict_single = True
@@ -216,7 +217,7 @@ def apply_user_output_constraints(user_text: str, result: TurnResult) -> TurnRes
         candidate = re.sub(
             r"^(?:答案|结果)?\s*(?:是|为|等于)?\s*[:：]?\s*",
             "",
-            _plain_visible(brief),
+            plain_visible_text(brief),
         )
         if re.search(r"[0-9０-９]\s*[-+*/×÷]", request):
             number = re.search(r"-?\d+(?:\.\d+)?", candidate)
