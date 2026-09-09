@@ -4,7 +4,7 @@
   LSUIElement / NSStatusWindowLevel 留待 P4/P5 打包落地（README 有说明）。
 - 可拖拽换位；拖动结束位置持久化到 haochen_home()/pet-pos.json，启动恢复（v0.1.6）。
 - 双击唤起 L1 气泡；右键菜单（退出/新会话/设置占位）。
-- 姿态切换 idle/thinking/alert 带轻过渡（淡出 100ms + 淡入 100ms）。
+- 姿态切换 idle/thinking/alert 带轻过渡；保持接近不透明，避免桌面底色污染肤色。
 - idle 时轻微浮动（±2px / 600ms），有生命感。
 """
 
@@ -27,7 +27,12 @@ log = logging.getLogger("haochen.pet.window")
 
 ASSETS_DIR = paths.pet_assets()
 
-PET_SIZE = 96            # 常驻尺寸（visual-spec §4）；set_pet_size 留缩放口
+PET_SIZE = 112           # 全身姿态保持可辨认；set_pet_size 留缩放口
+POSE_ASSETS = {
+    "idle": "idle-fullbody.png",
+    "thinking": "thinking-fullbody.png",
+    "angry": "angry-fullbody.png",
+}
 _FLOAT_MS = 600
 _FLOAT_PX = 2
 _SINGLE_CLICK_MS = 220
@@ -105,7 +110,7 @@ class PetWindow(QWidget):
 
     def _pixmap(self, pose: str) -> QPixmap | None:
         if pose not in self._pixmaps:
-            p = ASSETS_DIR / f"{pose}.png"
+            p = ASSETS_DIR / POSE_ASSETS.get(pose, f"{pose}.png")
             if not p.exists():
                 log.warning("pet asset missing: %s", p)
                 return None
@@ -125,7 +130,7 @@ class PetWindow(QWidget):
         return self._pixmaps[pose]
 
     def set_pose(self, pose: str, animate: bool = True) -> None:
-        """切换姿态：idle / thinking / angry(alert)。轻过渡 = 淡出→换图→淡入。"""
+        """切换姿态：idle / thinking / angry(alert)，不让底色透过人物肤色。"""
         try:
             if pose == self._pose:
                 return
@@ -133,31 +138,37 @@ class PetWindow(QWidget):
             return  # C++ 对象已销毁（延迟回调触发）：静默
         self._pose = pose
         pm = self._pixmap(pose)
+        old = self._pose_anim
+        self._pose_anim = None
+        if old is not None:
+            try:
+                old.stop()
+            except RuntimeError:
+                pass
+        try:
+            self.label.setGraphicsEffect(None)
+        except RuntimeError:
+            return
+        # 先完整换到新姿态，再做极轻的 94%→100% 淡入。旧的两段式动画会让
+        # 人物一度接近透明，彩色桌面透过暖橙面部后看起来像灰紫色肤色漂移。
+        self._apply_pixmap(pm)
         if animate and not a11y.reduce_motion_enabled() and pm is not None and self.isVisible():
             eff = QGraphicsOpacityEffect(self.label)
             self.label.setGraphicsEffect(eff)
-            out = QPropertyAnimation(eff, b"opacity", self)
-            out.setDuration(ANIM_POSE_MS // 2)
-            out.setStartValue(1.0)
-            out.setEndValue(0.0)
-            out.setEasingCurve(QEasingCurve.Type.OutCubic)
+            transition = QPropertyAnimation(eff, b"opacity", self)
+            transition.setDuration(ANIM_POSE_MS)
+            transition.setStartValue(0.94)
+            transition.setEndValue(1.0)
+            transition.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-            def _swap():
-                self._apply_pixmap(pm)
-                inn = QPropertyAnimation(eff, b"opacity", self)
-                inn.setDuration(ANIM_POSE_MS // 2)
-                inn.setStartValue(0.0)
-                inn.setEndValue(1.0)
-                inn.setEasingCurve(QEasingCurve.Type.OutCubic)
-                inn.finished.connect(lambda: self.label.setGraphicsEffect(None))
-                inn.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
-                self._pose_anim = inn
+            def _finish_transition() -> None:
+                if self._pose_anim is transition:
+                    self._pose_anim = None
+                    self.label.setGraphicsEffect(None)
 
-            out.finished.connect(_swap)
-            out.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
-            self._pose_anim = out
-        else:
-            self._apply_pixmap(pm)
+            transition.finished.connect(_finish_transition)
+            transition.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+            self._pose_anim = transition
 
     def _apply_pixmap(self, pm: QPixmap | None) -> None:
         if pm is not None:

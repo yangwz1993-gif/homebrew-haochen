@@ -1,6 +1,6 @@
 cask "haochen" do
-  version "0.3.0"
-  sha256 "27862a5684921aee6de3b5e649d2f3bac80f93e088a53eed56f2af790a4ecc5c"
+  version "0.3.1"
+  sha256 "7ad032c0d43be1852222692cdec8bcae14fa1a9772b0b00f6944f9030931545e"
 
   url "https://github.com/yangwz1993-gif/homebrew-haochen/releases/download/v#{version}/haochen-#{version}.dmg"
   name "haochen"

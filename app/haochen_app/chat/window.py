@@ -156,6 +156,9 @@ class ChatWindow(QWidget):
         self._pending_answer = ""       # brief 到达后再按“结论→详情”落位
         self._turn_aborted = False       # 中止回合绝不能伪装成正常完成答案
         self._stream_timer: QTimer | None = None
+        # Use window-owned timers for deferred UI work. Static singleShot callbacks
+        # can outlive a test/window and call into an already deleted Qt object.
+        self._deferred_timers: set[QTimer] = set()
         self._follow_stream = True      # 用户是否在底部（决定是否自动跟随）
         self._thinking_row: BubbleRow | None = None
         self._status_row: BubbleRow | None = None   # 提炼结论等轻状态
@@ -257,9 +260,9 @@ class ChatWindow(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet("QScrollArea { border: none; }")
         bar = self.scroll.verticalScrollBar()
-        bar.valueChanged.connect(lambda _value: self._on_scroll_moved())
+        bar.valueChanged.connect(self._on_scroll_moved)
         # 内容高度变化（流式增长）时，若用户在底部则继续跟随。
-        bar.rangeChanged.connect(lambda _min, _max: self._on_range_changed())
+        bar.rangeChanged.connect(self._on_range_changed)
         self.flow_host = QWidget()
         self.flow = QVBoxLayout(self.flow_host)
         self.flow.setContentsMargins(0, 12, 0, 12)
@@ -310,7 +313,7 @@ class ChatWindow(QWidget):
         self.sidebar.session_selected.connect(self._switch_session)
         self.sidebar.rename_requested.connect(self._rename_session)
         self.sidebar.delete_requested.connect(self._delete_session)
-        self.coordinator.queue_changed.connect(lambda _queue: self._on_queue_changed())
+        self.coordinator.queue_changed.connect(self._on_queue_changed)
         if self._supervisor is not None:
             # P4：崩溃/重启由 supervisor 统一编排；镜像/泄流挂钩总线
             sup = self._supervisor
@@ -448,8 +451,22 @@ class ChatWindow(QWidget):
             self.flow.insertWidget(self.flow.count() - 1, row)
         else:
             self.flow.insertWidget(self.flow.indexOf(before), row)
-        QTimer.singleShot(0, self._scroll_bottom)
+        self._defer(0, self._scroll_bottom)
         return row
+
+    def _defer(self, delay_ms: int, callback) -> None:
+        """Run UI work later, but cancel it automatically with this window."""
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        self._deferred_timers.add(timer)
+
+        def run() -> None:
+            self._deferred_timers.discard(timer)
+            callback()
+            timer.deleteLater()
+
+        timer.timeout.connect(run)
+        timer.start(delay_ms)
 
     def _scroll_bottom(self) -> None:
         sb = self.scroll.verticalScrollBar()
@@ -485,7 +502,7 @@ class ChatWindow(QWidget):
         if self._follow_stream:
             # rangeChanged 会在布局完成后触发 _on_range_changed 完成跟随；
             # 这里再补一次同步滚动，覆盖“高度未变但内容变了”的场景。
-            QTimer.singleShot(0, self._scroll_bottom)
+            self._defer(0, self._scroll_bottom)
 
     def _on_range_changed(self) -> None:
         if self._follow_stream:
@@ -606,8 +623,8 @@ class ChatWindow(QWidget):
         self.activateWindow()
         # showEvent 可能异步重绘历史；动画前后都钉在顶部，最终 _render_history
         # 还会再按 detail mode 定位一次，覆盖布局/rangeChanged 竞态。
-        QTimer.singleShot(0, self._scroll_top)
-        QTimer.singleShot(300, self._scroll_top)
+        self._defer(0, self._scroll_top)
+        self._defer(300, self._scroll_top)
 
     def _restore_min_size(self) -> None:
         if self._detail_mode and not self._detail_collapsing:
@@ -750,7 +767,7 @@ class ChatWindow(QWidget):
                     card.mark_cancelled()
             self._tool_cards.clear()
             # busy(False) 先于 summary_done/failed 同步发出，推迟一拍让结论先落位
-            QTimer.singleShot(0, self._drain_queue)
+            self._defer(0, self._drain_queue)
 
     def _drain_queue(self) -> None:
         if self.ctrl.busy or self._engine_crashed or self._foreign_busy() or not self.client.alive:
@@ -771,7 +788,7 @@ class ChatWindow(QWidget):
 
     def _on_queue_changed(self) -> None:
         self._sync_queue_banners()
-        QTimer.singleShot(0, self._drain_queue)
+        self._defer(0, self._drain_queue)
 
     def _sync_queue_banners(self) -> None:
         for item in self.coordinator.queue:
@@ -871,7 +888,7 @@ class ChatWindow(QWidget):
         if self._stream_row is not None:
             # 流式内容先保持可见；brief 到达后再重排为“结论在前、详情在后”。
             self._stream_row.content.set_text(answer)
-        QTimer.singleShot(0, self._maybe_follow)
+        self._defer(0, self._maybe_follow)
 
     def _on_turn_aborted(self, _partial: str) -> None:
         self._turn_aborted = True
@@ -902,7 +919,7 @@ class ChatWindow(QWidget):
                 self._add_row(StatusBubble("已停止生成 · 上述内容未完成", "warn"), "left")
             self._pending_answer = ""
             self._turn_aborted = False
-            QTimer.singleShot(0, self._maybe_follow)
+            self._defer(0, self._maybe_follow)
             return
         if summary:
             bubble = AssistantBubble("summary")
@@ -913,7 +930,7 @@ class ChatWindow(QWidget):
             detail.set_text(self._pending_answer)
             self._add_row(detail, "left")
         self._pending_answer = ""
-        QTimer.singleShot(0, self._maybe_follow)
+        self._defer(0, self._maybe_follow)
 
     def _on_failed(self, err: str) -> None:
         self._drop_thinking()
@@ -1203,10 +1220,10 @@ class ChatWindow(QWidget):
                 self._add_row(card, "left")
         if self._detail_mode:
             self._follow_stream = False
-            QTimer.singleShot(0, self._scroll_top)
+            self._defer(0, self._scroll_top)
         else:
             self._follow_stream = True
-            QTimer.singleShot(0, self._scroll_bottom)
+            self._defer(0, self._scroll_bottom)
         self.jump_to_latest_button.hide()
 
     @staticmethod
@@ -1306,7 +1323,7 @@ class ChatWindow(QWidget):
             w = item.widget()
             if w:
                 w.deleteLater()
-        QTimer.singleShot(0, self._sync_queue_banners)
+        self._defer(0, self._sync_queue_banners)
 
     # ── P4：双入口镜像 / supervisor 重启联动 ─────────────────────
 
@@ -1317,7 +1334,7 @@ class ChatWindow(QWidget):
         if self.isVisible() and self.client.alive:
             self._rpc(self.client.get_state, self._on_state)      # 侧栏/会话同步
             self._rpc(self.client.get_messages, self._render_history)
-        QTimer.singleShot(0, self._drain_queue)
+        self._defer(0, self._drain_queue)
 
     def showEvent(self, ev) -> None:
         super().showEvent(ev)

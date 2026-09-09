@@ -1,0 +1,4 @@
+49056     1 /private/tmp/haochen-v031-r01-app.NA7HW6/haochen.app/Contents/MacOS/haochen
+49066 49056 /private/tmp/haochen-v031-r01-app.NA7HW6/haochen.app/Contents/Resources/engine/haochen-engine --mode rpc --no-extensions --session-dir /tmp/haochen-v031-r01-home.mnurDq/pi-sessions -e /private/tmp/haochen-v031-r01-app.NA7HW6/haochen.app/Contents/Resources/ext/index.ts
+49276 18479 /bin/zsh -lc assets='/Users/yangwz/Documents/workspace/haochen/docs/reviews/assets/v0.3.1-aesthetic-review-01'\012/usr/sbin/screencapture -x "$assets/01-valid-fresh-greeting-input-full.png"\012/usr/sbin/screencapture -x -R955,640,410,260 "$assets/02-valid-fresh-greeting-input-tight.png"\012ps -axo pid=,ppid=,command= | rg '/private/tmp/haochen-v031-r01-app\.NA7HW6/haochen\.app|haochen-engine' > "$assets/00-process-origin.txt"
+49296 49276 rg /private/tmp/haochen-v031-r01-app\.NA7HW6/haochen\.app|haochen-engine

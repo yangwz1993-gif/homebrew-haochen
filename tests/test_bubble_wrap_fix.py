@@ -6,6 +6,7 @@ import importlib
 import sys
 from pathlib import Path
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +95,94 @@ def test_input_state_drops_stale_result_height(qtbot, monkeypatch) -> None:
     assert metrics["height"] <= 100
     assert metrics["width"] == bubble_module.INPUT_WIDTH
     assert metrics["mode"] == "input"
+    assert metrics["input_top_inset"] >= 8
+    assert metrics["input_bottom_inset"] >= 6
+    assert metrics["input_bottom"] < metrics["body_bottom"]
+    assert win.input.placeholderText() == "问我点什么…"
+    assert win.btn_send.width() == 68
+    assert win.btn_send.height() == 36
+
+
+def test_input_composer_stays_inside_shell_when_tail_flips_top(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(bubble_module.a11y, "reduce_motion_enabled", lambda: True)
+    win = BubbleWindow()
+    qtbot.addWidget(win)
+    win.summon()
+    win.set_tail_anchor(win.x() + win.width() // 2, "top")
+    win._refresh_height()
+    qtbot.wait(20)
+
+    metrics = win.layout_metrics()
+    assert metrics["body_top"] == bubble_module.T.TAIL_SIZE
+    assert metrics["input_top_inset"] >= 8
+    assert metrics["input_bottom_inset"] >= 6
+    assert metrics["input_bottom"] < metrics["body_bottom"]
+
+
+def test_input_composer_keeps_body_padding_with_existing_result(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(bubble_module.a11y, "reduce_motion_enabled", lambda: True)
+    win = BubbleWindow()
+    qtbot.addWidget(win)
+    win.present_summary("结论。\n- 已修复输入区越过气泡边框的问题。")
+    win.set_input_visible(True)
+    win._refresh_height()
+    win.show()
+    qtbot.wait(20)
+
+    metrics = win.layout_metrics()
+    assert metrics["flow_content_height"] > 0
+    assert metrics["input_bottom_inset"] >= 8
+    assert metrics["input_bottom"] < metrics["body_bottom"]
+
+
+def test_input_grows_through_three_lines_before_scrolling(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(bubble_module.a11y, "reduce_motion_enabled", lambda: True)
+    win = BubbleWindow()
+    qtbot.addWidget(win)
+    win.summon()
+
+    win.input.setPlainText("line1\nline2")
+    qtbot.wait(20)
+    two_line_height = win.input.height()
+    metrics = win.layout_metrics()
+    assert 58 <= two_line_height <= 64
+    assert win.input.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert win.input.document().documentLayout().documentSize().height() <= (
+        win.input.viewport().height() + 1
+    )
+    assert metrics["input_bottom_inset"] >= 8
+
+    win.input.setPlainText("line1\nline2\nline3")
+    qtbot.wait(20)
+    assert 76 <= win.input.height() <= 82
+    assert win.input.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+    win.input.setPlainText("line1\nline2\nline3\nline4")
+    qtbot.wait(20)
+    assert win.input.height() == 82
+    assert win.input.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    assert win.input.verticalScrollBar().maximum() > 0
+
+
+def test_first_interaction_hint_uses_real_wrapped_height_without_blank_band(
+    qtbot, monkeypatch
+) -> None:
+    monkeypatch.setattr(bubble_module.a11y, "reduce_motion_enabled", lambda: True)
+    win = BubbleWindow()
+    qtbot.addWidget(win)
+    win.start_input()
+    win.add_greeting("直接在下方问我；右键人物可打开完整对话和设置。")
+    greet = win.findChildren(bubble_module.GreetBlock)[-1]
+    win.set_input_visible(True)
+    win.summon()
+    qtbot.wait(20)
+
+    metrics = win.layout_metrics()
+    available_width = win.width() - win._root.contentsMargins().left() - win._root.contentsMargins().right()
+    assert metrics["flow_content_height"] == greet.heightForWidth(available_width)
+    assert metrics["flow_to_input_gap"] <= 8
+    assert metrics["input_bottom_inset"] >= 8
+    assert metrics["height"] <= 156
 
 
 def test_work_and_result_use_distinct_compact_shells(qtbot, monkeypatch) -> None:

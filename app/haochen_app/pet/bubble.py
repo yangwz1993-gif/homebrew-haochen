@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import math
+
 from PyQt6.QtCore import (
     QEasingCurve,
     QPoint,
@@ -40,10 +42,14 @@ from ..chat.widgets import QueueIndicator
 from . import theme as T
 
 BUBBLE_WIDTH = 380          # 结果/错误卡；各状态按内容进一步收紧
-INPUT_WIDTH = 372
+INPUT_WIDTH = 344           # 输入态更像一句话气泡，避免遮挡桌面主工作区
 PROGRESS_WIDTH = 292
 ACTION_WIDTH = 392
 _MAX_H_RATIO = 0.70         # 最大高度 ~70% 屏
+_BODY_BOTTOM_PADDING = 8    # 内容与主体下描边保持呼吸感，尾巴槽另计
+_INPUT_MIN_HEIGHT = 42
+_INPUT_MAX_HEIGHT = 82      # 完整容纳三行；第四行起才在编辑区内滚动
+_INPUT_CHROME_HEIGHT = 14   # QTextEdit frame/padding 相对 document 的垂直占用
 _SLIDE_PX = 10              # 唤起上滑距离
 
 
@@ -410,10 +416,12 @@ class BubbleWindow(QWidget):
             QPushButton#closeBtn {{ border: none; color: {T.COLOR_INK_SOFT}; font-weight: bold;
                                     padding: 2px 8px; }}
             QPushButton#closeBtn:hover {{ color: {T.COLOR_DANGER}; }}
-            QTextEdit#input {{ border: none; border-radius: {T.RADIUS_INPUT}px;
-                               padding: 6px; background: {T.COLOR_SURFACE}; color: {T.COLOR_INK};
-                               font-size: {T.FONT_BODY}px; }}
-            QTextEdit#input:focus {{ border: 1px solid {T.COLOR_ACCENT}; }}
+            QTextEdit#input {{ border: none; border-bottom: 2px solid {T.COLOR_LINE_SOFT};
+                               border-radius: 0; padding: 6px 4px 5px 4px;
+                               background: transparent; color: {T.COLOR_INK};
+                               font-size: {T.FONT_BODY}px;
+                               placeholder-text-color: #8b887d; }}
+            QTextEdit#input:focus {{ border-bottom: 2px solid {T.COLOR_ACCENT}; }}
             QScrollArea {{ border: none; background: transparent; }}
             QScrollBar:vertical {{ width: 8px; background: transparent; }}
             QScrollBar::handle:vertical {{ background: {T.COLOR_LINE_SOFT}; border-radius: 4px;
@@ -423,7 +431,7 @@ class BubbleWindow(QWidget):
 
         root = QVBoxLayout(self)
         self._root = root
-        root.setContentsMargins(12, 10, 12, 0)  # 底部留给自绘尾巴
+        root.setContentsMargins(14, 10, 14, 0)  # 底部留给自绘尾巴
         root.setSpacing(6)
 
         # 旧窗口式标题只保留为兼容控件；轻量漫画气泡各状态默认隐藏它。
@@ -467,14 +475,18 @@ class BubbleWindow(QWidget):
         # 输入区（交互规范 §5：发送后收起，仅消息气泡流；需再输入时才出现）
         self._input_panel = QWidget()
         self._input_panel.setObjectName("inputPanel")
+        self._input_panel.setFixedHeight(_INPUT_MIN_HEIGHT)
         ip = QHBoxLayout(self._input_panel)
         ip.setContentsMargins(0, 0, 0, 0)
-        ip.setSpacing(8)
+        ip.setSpacing(10)
 
         self.input = ChatInput()
         self.input.setObjectName("input")
-        self.input.setPlaceholderText("问我点什么…  ↩ 发送 · ⌘↩ 换行")
-        self.input.setFixedHeight(54)
+        self.input.setPlaceholderText("问我点什么…")
+        self.input.setAccessibleDescription("按回车发送，Command 加回车换行，Esc 收起")
+        self.input.setFixedHeight(_INPUT_MIN_HEIGHT)
+        self.input.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.input.submit_pressed.connect(self._on_send)
         self.input.escape_pressed.connect(self.escape_requested.emit)
         ip.addWidget(self.input, 1)
@@ -501,18 +513,23 @@ class BubbleWindow(QWidget):
         self.btn_send = QPushButton("发送")
         self.btn_send.setObjectName("sendBtn")
         self.btn_send.setAccessibleName("发送")
+        self.btn_send.setToolTip("发送（回车）")
+        self.btn_send.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_send.setStyleSheet(f"""
             QPushButton {{
                 background: {T.COLOR_ACCENT};
                 color: #ffffff;
                 border: none;
-                border-radius: {T.RADIUS_BUTTON}px;
-                padding: 4px 12px;
+                border-radius: 14px;
+                padding: 4px 10px;
                 font-weight: bold;
                 font-size: {T.FONT_BODY_SM}px;
             }}
             QPushButton:hover {{
                 background: {T.COLOR_ACCENT_DEEP};
+            }}
+            QPushButton:pressed {{
+                background: {T.COLOR_INK};
             }}
             QPushButton:disabled {{
                 background: {T.COLOR_LINE_SOFT};
@@ -520,11 +537,14 @@ class BubbleWindow(QWidget):
             }}
         """)
         self.btn_send.clicked.connect(self._on_send)
-        self.btn_send.setFixedHeight(34)
+        self.btn_send.setFixedSize(68, 36)
         ip.addWidget(self.btn_send)
         root.addWidget(self._input_panel)
         self._tail_spacer = QSpacerItem(
-            0, T.TAIL_SIZE, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
+            0,
+            T.TAIL_SIZE + _BODY_BOTTOM_PADDING,
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Fixed,
         )
         root.addItem(self._tail_spacer)  # 下尾巴占位（paintEvent 自绘）
 
@@ -532,10 +552,15 @@ class BubbleWindow(QWidget):
         self._anims: list[QPropertyAnimation] = []
         self._shown = False
         self._mode = "input"
-        self._min_h = 76
+        self._min_h = 80
         self.setMinimumHeight(self._min_h)
         self._drag_pos: QPoint | None = None  # 拖动中（标题/空白区按下左键）
         self._dismiss_anim: QPropertyAnimation | None = None
+        self._resizing_input = False
+        self.input.textChanged.connect(self._sync_input_height)
+        self.input.document().documentLayout().documentSizeChanged.connect(
+            self._sync_input_height
+        )
 
     # ── 输入区收起/弹出（§5 动态对话流）＋ 窗口自适应高度 ────────
 
@@ -553,7 +578,7 @@ class BubbleWindow(QWidget):
             "error": BUBBLE_WIDTH,
         }
         minimums = {
-            "input": 76,
+            "input": 80,
             "progress": 64,
             "action": 82,
             "result": 82,
@@ -577,28 +602,79 @@ class BubbleWindow(QWidget):
 
     def _flow_content_height(self) -> int:
         """只计算真实内容，不让旧窗口高度或 layout stretch 污染新状态。"""
+        margins = self._root.contentsMargins()
+        available_width = max(1, self.width() - margins.left() - margins.right())
         heights = []
         for index in range(self.flow.count() - 1):  # 最后一项是 stretch
             item = self.flow.itemAt(index)
             widget = item.widget() if item is not None else None
             if widget is not None and not widget.isHidden():
-                heights.append(max(widget.sizeHint().height(), widget.minimumSizeHint().height()))
+                if widget.hasHeightForWidth():
+                    heights.append(max(1, widget.heightForWidth(available_width)))
+                else:
+                    heights.append(
+                        max(widget.sizeHint().height(), widget.minimumSizeHint().height())
+                    )
         if not heights:
             return 0
         return sum(heights) + self.flow.spacing() * (len(heights) - 1)
+
+    def _sync_input_height(self, *_args) -> None:
+        """输入区随内容长到三行，之后才滚动；每次增长都重算气泡锚点。"""
+        if self._resizing_input:
+            return
+        self._resizing_input = True
+        try:
+            document_h = math.ceil(
+                self.input.document().documentLayout().documentSize().height()
+            )
+            natural_h = document_h + _INPUT_CHROME_HEIGHT
+            desired_h = max(
+                _INPUT_MIN_HEIGHT,
+                min(natural_h, _INPUT_MAX_HEIGHT),
+            )
+            needs_scroll = natural_h > _INPUT_MAX_HEIGHT
+            policy = (
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+                if needs_scroll
+                else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
+            policy_changed = self.input.verticalScrollBarPolicy() != policy
+            if policy_changed:
+                self.input.setVerticalScrollBarPolicy(policy)
+            if self.input.height() != desired_h:
+                self.input.setFixedHeight(desired_h)
+                self._input_panel.setFixedHeight(desired_h)
+                self._refresh_height()
+            if policy_changed:
+                QTimer.singleShot(0, self._sync_input_height)
+        finally:
+            self._resizing_input = False
 
     def _refresh_height(self) -> None:
         """自适应高度：内容 + 输入区（若可见）+ 标题 + 尾巴，封顶 _max_h。"""
         self.flow.invalidate()
         self.flow.activate()
         flow_h = self._flow_content_height()
+        # QScrollArea 会采用子控件陈旧的 minimumSizeHint（折行前高度），导致短问候
+        # 被撑高后又自动滚到底，看起来像一整块空白。流容器以当前可用宽度算出的
+        # 真实高度为准；只有超过气泡上限时才由外层 scroll 截取。
+        self.flow_host.setFixedHeight(flow_h)
         panel_h = self._input_panel.sizeHint().height() if self._input_visible() else 0
-        flow_cap = max(0, self._max_h - 34 - panel_h - T.TAIL_SIZE - 8)
+        head_h = self._head_panel.sizeHint().height() if self._head_panel.isVisible() else 0
+        margins = self._root.contentsMargins()
+        tail_h = self._tail_spacer.sizeHint().height()
+        fixed_sections = int(head_h > 0) + int(panel_h > 0) + 1  # 尾巴槽始终占一段
+        section_count = fixed_sections + int(flow_h > 0)
+        reserved = (
+            margins.top() + margins.bottom() + head_h + panel_h + tail_h
+            + max(0, section_count - 1) * self._root.spacing()
+        )
+        flow_cap = max(0, self._max_h - reserved)
         shown_flow_h = min(flow_h, flow_cap)
         self.scroll.setVisible(shown_flow_h > 0)
         self.scroll.setFixedHeight(shown_flow_h)
-        head_h = 34 if self._head_panel.isVisible() else 0
-        want = head_h + shown_flow_h + panel_h + T.TAIL_SIZE + 8
+        want = reserved + shown_flow_h
         want = max(self._min_h, min(want, self._max_h))
         self.setFixedHeight(want)
 
@@ -609,6 +685,13 @@ class BubbleWindow(QWidget):
         input_gap = 0
         if self._input_visible():
             input_gap = max(0, input_rect.top() - title_bottom - self.layout().spacing())
+        flow_to_input_gap = 0
+        if self.scroll.isVisible() and self._input_visible():
+            flow_to_input_gap = max(
+                0, input_rect.top() - self.scroll.geometry().bottom() - 1
+            )
+        body_top = T.TAIL_SIZE if self._tail_side == "top" else 0
+        body_bottom = self.height() if self._tail_side == "top" else self.height() - T.TAIL_SIZE
         return {
             "width": self.width(),
             "height": self.height(),
@@ -616,6 +699,15 @@ class BubbleWindow(QWidget):
             "scroll_visible": self.scroll.isVisible(),
             "input_visible": self._input_visible(),
             "input_top_gap": input_gap,
+            "flow_to_input_gap": flow_to_input_gap,
+            "input_top": input_rect.top() if self._input_visible() else 0,
+            "input_bottom": input_rect.bottom() if self._input_visible() else 0,
+            "body_top": body_top,
+            "body_bottom": body_bottom,
+            "input_top_inset": input_rect.top() - body_top if self._input_visible() else 0,
+            "input_bottom_inset": (
+                body_bottom - input_rect.bottom() - 1 if self._input_visible() else 0
+            ),
             "mode": self._mode,
         }
 
@@ -891,14 +983,19 @@ class BubbleWindow(QWidget):
         if side != self._tail_side:
             self._tail_side = side
             if side == "top":
-                self._root.setContentsMargins(12, T.TAIL_SIZE + 10, 12, 0)
+                self._root.setContentsMargins(
+                    14, T.TAIL_SIZE + 10, 14, _BODY_BOTTOM_PADDING
+                )
                 self._tail_spacer.changeSize(
                     0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
                 )
             else:
-                self._root.setContentsMargins(12, 10, 12, 0)
+                self._root.setContentsMargins(14, 10, 14, 0)
                 self._tail_spacer.changeSize(
-                    0, T.TAIL_SIZE, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
+                    0,
+                    T.TAIL_SIZE + _BODY_BOTTOM_PADDING,
+                    QSizePolicy.Policy.Minimum,
+                    QSizePolicy.Policy.Fixed,
                 )
             self._root.invalidate()
         self.update()
