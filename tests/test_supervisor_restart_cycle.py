@@ -154,6 +154,29 @@ def test_initial_state_timeout_triggers_unresponsive_restart(qtbot, tmp_path: Pa
     supervisor.client.wait_stopped(timeout=2)
 
 
+def test_initial_state_restores_durable_session_before_overwriting_pointer(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    script = fake_engine(tmp_path, RESPONDING_ENGINE)
+    supervisor = make_supervisor(tmp_path, script)
+    previous = "mock-session://previous.jsonl"
+    supervisor.coordinator.set_current_session(previous)
+    switched: list[str] = []
+
+    def switch_session(path: str) -> str:
+        switched.append(path)
+        return "initial-switch"
+
+    monkeypatch.setattr(supervisor.client, "switch_session", switch_session)
+    supervisor._initial_state({
+        "success": True,
+        "data": {"sessionFile": "mock-session://fresh.jsonl"},
+    })
+
+    assert switched == [previous]
+    assert supervisor.coordinator.current_session == previous
+
+
 def test_heartbeat_result_paths(qtbot, tmp_path: Path) -> None:
     script = fake_engine(tmp_path, RESPONDING_ENGINE)
     supervisor = make_supervisor(tmp_path, script)

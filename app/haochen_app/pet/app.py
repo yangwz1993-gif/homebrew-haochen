@@ -248,6 +248,7 @@ class PetApp(QObject):
     # ── 唤起 / 收起 ───────────────────────────────────────────
 
     def _toggle_bubble(self) -> None:
+        self._mark_discovery_complete()
         if self._discovery_hint_active:
             self._discovery_hint_active = False
             self._discovery_timer.stop()
@@ -282,10 +283,6 @@ class PetApp(QObject):
             self._discovery_hint_retries += 1
             QTimer.singleShot(1000, self._maybe_show_discovery_hint)
             return
-        try:
-            atomic_write_private(marker, "seen\n")
-        except OSError:
-            pass
         self.bubble.clear_flow()
         self.bubble.set_input_visible(False)
         self.bubble.add_greeting("点一下我，随时开聊")
@@ -294,6 +291,13 @@ class PetApp(QObject):
         self.pet.raise_()
         self._discovery_hint_active = True
         self._discovery_timer.start(DISCOVERY_HINT_MS)
+
+    def _mark_discovery_complete(self) -> None:
+        """Only retire the first-action hint after the user actually interacts."""
+        try:
+            atomic_write_private(self.client.home / "interaction-hint-v1", "seen\n")
+        except OSError:
+            pass
 
     def _hide_discovery_hint(self) -> None:
         if not self._discovery_hint_active:

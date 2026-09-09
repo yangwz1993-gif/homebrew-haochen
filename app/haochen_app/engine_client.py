@@ -393,7 +393,7 @@ class EngineClient(QObject):
 # ── 壳侧会话列表/删除（契约 §2.8，引擎 RPC 不支持）────────────
 
 def list_sessions(home: Path | None = None) -> list[dict]:
-    """扫描 session-dir 下 *.jsonl，返回 [{path, id, timestamp, preview}]，按时间倒序。"""
+    """扫描 session-dir，返回持久会话的标题/预览，按时间倒序。"""
     home = home or haochen_home()
     out = []
     for p in (home / "pi-sessions").glob("*.jsonl"):
@@ -401,16 +401,21 @@ def list_sessions(home: Path | None = None) -> list[dict]:
             with p.open() as f:
                 first = json.loads(f.readline())
                 preview = ""
+                title = ""
                 for line in f:
                     msg = json.loads(line)
+                    if msg.get("type") == "session_info":
+                        name = msg.get("name")
+                        if isinstance(name, str) and name.strip():
+                            title = name.strip()
                     if msg.get("type") == "message" and msg.get("message", {}).get("role") == "user":
                         for c in msg["message"].get("content", []):
                             if c.get("type") == "text":
                                 preview = c["text"][:60]
                                 break
-                        break
             out.append({"path": str(p), "id": first.get("id", ""),
-                        "timestamp": first.get("timestamp", ""), "preview": preview})
+                        "timestamp": first.get("timestamp", ""), "preview": preview,
+                        "title": title})
         except Exception:
             continue
     out.sort(key=lambda s: s["timestamp"], reverse=True)

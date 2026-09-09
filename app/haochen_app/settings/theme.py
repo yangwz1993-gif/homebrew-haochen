@@ -33,7 +33,7 @@ QWidget {{
     background: {COLOR_BG};
     color: {COLOR_INK};
     font-family: -apple-system, "PingFang SC", "SF Pro", sans-serif;
-    font-size: {FONT_BODY}pt;
+    font-size: {FONT_BODY}px;
 }}
 QFrame#card {{
     background: {COLOR_SURFACE};
@@ -41,31 +41,31 @@ QFrame#card {{
     border-radius: {RADIUS_CARD}px;
 }}
 QLabel#cardTitle {{
-    font-size: {FONT_TITLE}pt;
+    font-size: {FONT_TITLE}px;
     font-weight: 600;
 }}
 QLabel#hint {{
     color: {COLOR_INK_SOFT};
-    font-size: {FONT_BODY_SM}pt;
+    font-size: {FONT_BODY_SM}px;
 }}
 QLabel#badgeOk {{
     color: {COLOR_ACCENT};
-    font-size: {FONT_BODY_SM}pt;
+    font-size: {FONT_BODY_SM}px;
     font-weight: 600;
 }}
 QLabel#badgeOff {{
     color: {COLOR_WARN};
-    font-size: {FONT_BODY_SM}pt;
+    font-size: {FONT_BODY_SM}px;
     font-weight: 600;
 }}
 QLabel#badgeErr {{
     color: {COLOR_DANGER};
-    font-size: {FONT_BODY_SM}pt;
+    font-size: {FONT_BODY_SM}px;
     font-weight: 600;
 }}
-QLabel#statusOk  {{ color: {COLOR_ACCENT}; font-size: {FONT_BODY_SM}pt; }}
-QLabel#statusWarn {{ color: {COLOR_WARN}; font-size: {FONT_BODY_SM}pt; }}
-QLabel#statusErr {{ color: {COLOR_DANGER}; font-size: {FONT_BODY_SM}pt; }}
+QLabel#statusOk  {{ color: {COLOR_ACCENT}; font-size: {FONT_BODY_SM}px; }}
+QLabel#statusWarn {{ color: {COLOR_WARN}; font-size: {FONT_BODY_SM}px; }}
+QLabel#statusErr {{ color: {COLOR_DANGER}; font-size: {FONT_BODY_SM}px; }}
 QLineEdit {{
     background: {COLOR_BG};
     border: {BORDER_MAIN};
@@ -99,12 +99,12 @@ QPushButton {{
 }}
 QPushButton:hover {{ background: {COLOR_BG}; }}
 QPushButton:pressed {{ background: {COLOR_LINE_SOFT}; }}
-QPushButton#primary {{
+QPushButton#primary, QPushButton#primaryBtn {{
     background: {COLOR_ACCENT};
     color: {COLOR_SURFACE};
     font-weight: 600;
 }}
-QPushButton#primary:hover {{ background: #2f6b4d; }}
+QPushButton#primary:hover, QPushButton#primaryBtn:hover {{ background: #2f6b4d; }}
 QPushButton#danger {{
     color: {COLOR_DANGER};
     border-color: {COLOR_DANGER};
@@ -113,7 +113,7 @@ QToolButton {{
     background: transparent;
     border: none;
     color: {COLOR_INK_SOFT};
-    font-size: {FONT_BODY_SM}pt;
+    font-size: {FONT_BODY_SM}px;
 }}
 QToolButton:hover {{ color: {COLOR_INK}; }}
 QScrollArea {{ border: none; }}

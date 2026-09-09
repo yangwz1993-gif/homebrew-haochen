@@ -86,8 +86,8 @@ class SettingsWindow(QWidget):
         self._runtime_key_validation: dict[str, tuple[bool, str]] = {}
         self.keyValidationFinished.connect(self._on_key_validation_finished)
         self.setWindowTitle("haochen 设置")
-        self.setMinimumWidth(520)
-        self.resize(560, 640)
+        self.setMinimumWidth(580)
+        self.resize(640, 720)
         self.setStyleSheet(theme.APP_QSS)
 
         root = QVBoxLayout(self)
@@ -108,6 +108,13 @@ class SettingsWindow(QWidget):
 
         self.store.ensure_initialized()
         self._build()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt virtual method
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt virtual method
         """通知壳层设置已关闭；窗口本身仍沿用 Qt 默认的隐藏语义。"""

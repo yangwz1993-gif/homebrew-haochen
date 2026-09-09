@@ -189,6 +189,7 @@ class EngineSupervisor(QObject):
             log.info("restoring session %s", restore_path)
             self._rpc(self.client.switch_session, self._restore_session_done, restore_path)
         else:
+            self._stash_state(resp)
             self._finish_restart()
 
     def _restore_session_done(self, resp: dict) -> None:
@@ -220,9 +221,35 @@ class EngineSupervisor(QObject):
 
     def _initial_state(self, resp: dict) -> None:
         if resp.get("success"):
-            self._stash_state(resp)
+            data = resp.get("data") or {}
+            current = data.get("sessionFile") or ""
+            restore_path = self.coordinator.current_session
+            restore_ok = (
+                restore_path
+                and current != restore_path
+                and ("://" in restore_path or Path(restore_path).is_file())
+            )
+            if restore_ok:
+                # Engine startup creates a fresh empty session. Restore the last
+                # durable user session before _stash_state can overwrite its path.
+                self._rpc(
+                    self.client.switch_session,
+                    self._initial_restore_done,
+                    restore_path,
+                )
+            else:
+                self._stash_state(resp)
         elif resp.get("errorCode") == "timeout":
             self._handle_unresponsive()
+
+    def _initial_restore_done(self, resp: dict) -> None:
+        if resp.get("success") and not (resp.get("data") or {}).get("cancelled"):
+            self._ask_state(self._stash_state)
+            return
+        # A stale/missing session pointer must not block startup. Ask for the
+        # engine's actual fresh state and continue with the remaining history.
+        log.warning("initial session restore failed; continuing with engine state")
+        self._ask_state(self._stash_state)
 
     def _heartbeat(self) -> None:
         if self._stopping or self._restarting or self._heartbeat_pending or not self.client.alive:

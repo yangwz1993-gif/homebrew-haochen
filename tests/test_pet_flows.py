@@ -432,11 +432,12 @@ def test_first_use_hint_turns_first_click_into_input(qtbot, tmp_path: Path) -> N
     assert pet._discovery_hint_active
     assert pet.bubble.summoned
     assert not pet.bubble._input_visible()
-    assert (tmp_path / "interaction-hint-v1").exists()
+    assert not (tmp_path / "interaction-hint-v1").exists()
 
     pet._toggle_bubble()
 
     assert not pet._discovery_hint_active
+    assert (tmp_path / "interaction-hint-v1").exists()
     assert pet.bubble.summoned
     assert pet_module.DISCOVERY_HINT_MS >= 6_000
     assert "点击开始对话" in pet.pet.accessibleName()

@@ -6,6 +6,8 @@ import importlib
 import sys
 from pathlib import Path
 
+from PyQt6.QtCore import Qt
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
@@ -33,6 +35,17 @@ def test_window_builds_all_cards(qtbot, tmp_path: Path) -> None:
     joined = " ".join(labels)
     assert "API Key" in joined
     assert "签名与权限" in joined
+
+
+def test_escape_closes_settings_and_default_viewport_is_roomy(qtbot, tmp_path: Path) -> None:
+    window, _store, _cred = make_window(qtbot, tmp_path)
+    window.show()
+
+    assert window.width() >= 600
+    assert window.height() >= 700
+    qtbot.keyClick(window, Qt.Key.Key_Escape)
+
+    assert not window.isVisible()
 
 
 def test_provider_key_badge_and_readonly_reference(qtbot, tmp_path: Path) -> None:

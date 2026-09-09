@@ -46,7 +46,7 @@ from ..conversation import (
     strip_tags,
     visible_user_text,
 )
-from ..engine_client import EngineClient, delete_session, restore_session
+from ..engine_client import EngineClient, delete_session, list_sessions, restore_session
 from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
 from .sidebar import SessionSidebar
@@ -142,6 +142,7 @@ class ChatWindow(QWidget):
         self._pending_rpc: dict[str, callable] = {}
         self._sessions: list[dict] = []        # [{path, title}]，新→旧
         self._current_path: str | None = None
+        self._accept_pending_empty_session = False
         self.coordinator = (
             supervisor.coordinator if supervisor is not None else SessionCoordinator(self.client.home, parent=self)
         )
@@ -170,6 +171,7 @@ class ChatWindow(QWidget):
         self._geom_anim: QPropertyAnimation | None = None
 
         self._build_ui()
+        self._reload_persisted_sessions()
         self._wire()
         self._sync_queue_banners()
         self._restore_geometry()
@@ -236,12 +238,12 @@ class ChatWindow(QWidget):
         detail_header_layout = QHBoxLayout(self.detail_header)
         detail_header_layout.setContentsMargins(18, 14, 18, 8)
         detail_header_layout.setSpacing(8)
-        detail_title = QLabel("当前会话详情")
-        detail_title.setAccessibleName("当前会话详情")
-        detail_title.setStyleSheet(
+        self.detail_title = QLabel("会话详情")
+        self.detail_title.setAccessibleName("会话详情")
+        self.detail_title.setStyleSheet(
             f"font-size: {FONT['title']}px; font-weight: bold; color: {C['ink']};"
         )
-        detail_header_layout.addWidget(detail_title)
+        detail_header_layout.addWidget(self.detail_title)
         detail_header_layout.addStretch(1)
         self.detail_close_button = QPushButton("收起  Esc")
         self.detail_close_button.setAccessibleName("收起会话详情")
@@ -262,6 +264,9 @@ class ChatWindow(QWidget):
         self.flow = QVBoxLayout(self.flow_host)
         self.flow.setContentsMargins(0, 12, 0, 12)
         self.flow.setSpacing(6)
+        # Short conversations sit next to the composer instead of floating at
+        # the top above a conspicuous empty field. The spacer collapses once
+        # history becomes taller than the viewport.
         self.flow.addStretch(1)
         self.scroll.setWidget(self.flow_host)
         rlay.addWidget(self.scroll, 1)
@@ -284,9 +289,9 @@ class ChatWindow(QWidget):
         input_bar.setSpacing(8)
         self.input = _InputBox(self._on_send)
         input_bar.addWidget(self.input, 1)
-        self.btn_send = QPushButton("➤")
+        self.btn_send = QPushButton("发送  ➤")
         self.btn_send.setAccessibleName("发送")
-        self.btn_send.setFixedWidth(56)
+        self.btn_send.setFixedWidth(92)
         self.btn_send.setStyleSheet(button_solid())
         self.btn_send.clicked.connect(self._on_send)
         input_bar.addWidget(self.btn_send)
@@ -369,10 +374,14 @@ class ChatWindow(QWidget):
         path = data.get("sessionFile") or ""
         model = (data.get("model") or {}).get("id", "")
         self.sidebar.set_model(model)
+        name = data.get("sessionName") or "新会话"
+        if self._is_transient_startup_session(path, name):
+            return
+        if path:
+            self._accept_pending_empty_session = False
         if path:
             self.coordinator.set_current_session(path)
         if path:
-            name = data.get("sessionName") or "新会话"
             record = next((s for s in self._sessions if s["path"] == path), None)
             if record is None:
                 self._sessions.insert(0, {"path": path, "title": name})
@@ -381,8 +390,39 @@ class ChatWindow(QWidget):
             changed_session = path != self._current_path
             self._current_path = path
             self._refresh_sidebar()
+            self._update_detail_title()
             if changed_session:
                 self._rpc(self.client.get_messages, self._render_history)
+
+    def _is_transient_startup_session(self, path: str, name: str) -> bool:
+        """Ignore the engine's prospective empty file while restoring durable history."""
+        if self._mock or self._accept_pending_empty_session or not path or name != "新会话":
+            return False
+        saved = self.coordinator.current_session
+        return bool(
+            saved
+            and saved != path
+            and Path(saved).is_file()
+            and not Path(path).exists()
+        )
+
+    def _reload_persisted_sessions(self) -> None:
+        """Rebuild the sidebar from durable JSONL files after app/engine restart."""
+        if self._mock:
+            return
+        records = []
+        for session in list_sessions(self.client.home):
+            preview = str(session.get("preview") or "").strip()
+            title = str(session.get("title") or "").strip()
+            if not title and preview:
+                title = make_session_title(preview)
+            records.append({
+                "path": str(session["path"]),
+                "title": title or "新会话",
+            })
+        self._sessions = records
+        if hasattr(self, "sidebar"):
+            self._refresh_sidebar()
 
     def _on_supervisor_state(self, data: dict) -> None:
         """Keep hidden-window session titles in sync with pet-originated turns."""
@@ -404,8 +444,10 @@ class ChatWindow(QWidget):
     def _add_row(self, content: QWidget, align: str, before: QWidget | None = None) -> BubbleRow:
         row = BubbleRow(content, align)
         row.set_max_content_width(self._bubble_max_w())
-        idx = self.flow.count() - 1 if before is None else self.flow.indexOf(before)
-        self.flow.insertWidget(idx, row)
+        if before is None:
+            self.flow.addWidget(row)
+        else:
+            self.flow.insertWidget(self.flow.indexOf(before), row)
         QTimer.singleShot(0, self._scroll_bottom)
         return row
 
@@ -665,8 +707,22 @@ class ChatWindow(QWidget):
                 title = make_session_title(text)
                 s["title"] = title
                 self.sidebar.update_title(s["path"], title)
+                self._update_detail_title()
                 self._rpc(self.client.set_session_name, lambda r: None, title)
                 return
+
+    def _update_detail_title(self) -> None:
+        title = next(
+            (
+                str(session.get("title") or "")
+                for session in self._sessions
+                if session.get("path") == self._current_path
+            ),
+            "",
+        )
+        text = title if title and title != "新会话" else "会话详情"
+        self.detail_title.setText(text)
+        self.detail_title.setAccessibleName(f"当前会话：{text}")
 
     # ── ConversationController 信号（单回合分层结果）────────────
 
@@ -985,6 +1041,7 @@ class ChatWindow(QWidget):
     def _new_session(self) -> None:
         if self.ctrl.busy:
             return
+        self._accept_pending_empty_session = True
         self._rpc(self.client.new_session, lambda r: self._rpc(self.client.get_state, self._on_state))
 
     def _switch_session(self, path: str) -> None:
@@ -1229,7 +1286,7 @@ class ChatWindow(QWidget):
         self._queue_banners.clear()
         self._queue_indicators.clear()
         while self.flow.count() > 1:
-            item = self.flow.takeAt(0)
+            item = self.flow.takeAt(1)
             w = item.widget()
             if w:
                 w.deleteLater()
@@ -1259,7 +1316,7 @@ class ChatWindow(QWidget):
     def _on_sup_restarted(self) -> None:
         self._engine_crashed = False
         self._make_controller()     # 旧 controller 可能卡在中途相位，重建并重注册
-        self._sessions.clear()
+        self._reload_persisted_sessions()
         self._current_path = None
         self._clear_flow()
         self._add_row(StatusBubble("引擎已自动重启 ✓ 会话已恢复", "notice"), "left")
@@ -1298,7 +1355,7 @@ class ChatWindow(QWidget):
             return
         self._engine_crashed = False
         self._make_controller()     # 旧 controller 可能卡在中途相位，重建
-        self._sessions.clear()
+        self._reload_persisted_sessions()
         self._current_path = None
         self._clear_flow()
         self._add_row(StatusBubble("引擎已重启，新会话已就绪", "notice"), "left")

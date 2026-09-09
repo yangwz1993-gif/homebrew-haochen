@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ widgets_module = importlib.import_module("haochen_app.chat.widgets")
 UserBubble = widgets_module.UserBubble
 AssistantBubble = widgets_module.AssistantBubble
 ToolCard = widgets_module.ToolCard
+BubbleRow = widgets_module.BubbleRow
 ErrorBanner = window_module.ErrorBanner
 widgets_module = importlib.import_module("haochen_app.chat.widgets")
 ChatWindow = harness.ChatWindow
@@ -33,6 +35,61 @@ def make_window(qtbot, tmp_path: Path):
     qtbot.addWidget(window)
     window.show()
     return window, client
+
+
+def test_real_chat_reloads_persisted_sessions_for_sidebar(qtbot, tmp_path: Path) -> None:
+    sessions = tmp_path / "pi-sessions"
+    sessions.mkdir()
+    path = sessions / "saved.jsonl"
+    path.write_text(
+        json.dumps({"type": "session", "id": "saved", "timestamp": "2026-09-09"})
+        + "\n"
+        + json.dumps({"type": "message", "message": {"role": "user", "content": [
+            {"type": "text", "text": "重新打开后还在吗"},
+        ]}})
+        + "\n"
+        + json.dumps({"type": "session_info", "name": "重启后的会话"})
+        + "\n",
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    client.home = tmp_path
+    client._mock = False
+
+    window = ChatWindow(client)
+    qtbot.addWidget(window)
+
+    assert window._sessions == [{"path": str(path), "title": "重启后的会话"}]
+    assert window.sidebar.list.item(0).text() == "重启后的会话"
+
+
+def test_startup_ignores_prospective_empty_session_while_restoring_history(
+    qtbot, tmp_path: Path
+) -> None:
+    sessions = tmp_path / "pi-sessions"
+    sessions.mkdir()
+    saved = sessions / "saved.jsonl"
+    saved.write_text(
+        json.dumps({"type": "session", "id": "saved", "timestamp": "2026-09-09"})
+        + "\n",
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    client.home = tmp_path
+    client._mock = False
+    window = ChatWindow(client)
+    qtbot.addWidget(window)
+    window.coordinator.set_current_session(str(saved))
+    fresh = sessions / "not-created-yet.jsonl"
+
+    window._on_state({"success": True, "data": {
+        "sessionFile": str(fresh),
+        "sessionName": "新会话",
+        "model": {"id": "deepseek-v4-flash-vision-exp"},
+    }})
+
+    assert all(session["path"] != str(fresh) for session in window._sessions)
+    assert window.coordinator.current_session == str(saved)
 
 
 def test_render_history_draws_users_answers_tools_and_errors(qtbot, tmp_path: Path) -> None:
@@ -332,6 +389,28 @@ def test_detail_bubbles_have_distinct_section_labels(qtbot, tmp_path: Path) -> N
 
     assert summary.tag is not None and summary.tag.text() == "结论"
     assert detail.tag is not None and detail.tag.text() == "依据与细节"
+
+
+def test_detail_header_uses_current_topic_and_send_action_is_legible(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    window._sessions = [{"path": "/s/topic.jsonl", "title": "东京夜游建议"}]
+    window._current_path = "/s/topic.jsonl"
+
+    window._update_detail_title()
+
+    assert window.detail_title.text() == "东京夜游建议"
+    assert "发送" in window.btn_send.text()
+    assert window.btn_send.width() >= 80
+
+
+def test_short_history_is_anchored_near_composer(qtbot, tmp_path: Path) -> None:
+    window, _client = make_window(qtbot, tmp_path)
+    window._render_history({"success": True, "data": {"messages": [
+        {"role": "assistant", "content": [{"type": "text", "text": "简短回答"}]},
+    ]}})
+
+    assert window.flow.itemAt(0).spacerItem() is not None
+    assert isinstance(window.flow.itemAt(1).widget(), BubbleRow)
 
 
 def test_sidebar_uses_readable_model_alias(qtbot, tmp_path: Path) -> None:
