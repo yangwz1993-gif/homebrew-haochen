@@ -19,6 +19,7 @@ P4 集成接口（给对话窗口/集成负责人）：
 from __future__ import annotations
 
 import logging
+import time
 
 from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication
@@ -116,6 +117,8 @@ class PetApp(QObject):
         self._result_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._result_timer.setInterval(RESULT_AUTO_DISMISS_MS)
         self._result_timer.timeout.connect(self._dismiss_result_if_idle)
+        self._result_remaining_ms = RESULT_AUTO_DISMISS_MS
+        self._result_timer_started_at = 0.0
         self._ack_timer = QTimer(self)
         self._ack_timer.setSingleShot(True)
         self._ack_timer.setInterval(ACK_MIN_VISIBLE_MS)
@@ -141,6 +144,9 @@ class PetApp(QObject):
         self.bubble.escape_requested.connect(self._on_escape)
         self.bubble.dismissed.connect(self._on_dismissed)
         self.bubble.expand_detail.connect(self._on_expand_detail)
+        self.bubble.open_chat_requested.connect(self.chat_requested.emit)
+        self.bubble.interaction_started.connect(self._pause_result_dismiss)
+        self.bubble.interaction_ended.connect(self._resume_result_dismiss)
         self.bubble.continue_requested.connect(self._on_continue)
         self.bubble.retry_requested.connect(self._on_retry)
         self.bubble.settings_requested.connect(self._on_settings)
@@ -327,7 +333,7 @@ class PetApp(QObject):
 
     def _maybe_ask_name(self) -> None:
         """首次使用（无 user-profile.json）→ 气泡里问一次称呼；问过/跳过落盘后不再问。"""
-        if self._name_greeted or not should_ask_name():
+        if self._name_greeted or not should_ask_name(self.client.home):
             return
         self._name_greeted = True
         self._awaiting_name = True
@@ -348,10 +354,10 @@ class PetApp(QObject):
         self.bubble.add_user_message(text)
         name = text.strip()
         if name in _NAME_SKIP_WORDS:
-            save_user_name("")   # 明确跳过：落盘标记已问过
+            save_user_name("", source="pet", home=self.client.home)   # 明确跳过：落盘标记已问过
             self.bubble.add_greeting("好，那就不问啦～想告诉我的时候随时说。")
         else:
-            save_user_name(name)
+            save_user_name(name, source="pet", home=self.client.home)
             self.bubble.add_greeting(f"好嘞，{name}！我记住啦～")
         self.bubble.set_input_visible(True)
 
@@ -636,7 +642,7 @@ class PetApp(QObject):
             self._place_bubble()
         self.pet.show()
         self.pet.raise_()
-        self._result_timer.start()
+        self._start_result_dismiss()
         self._retry_attempt = 0
         self._set_state(PetState.CANCELLED if self._aborted else PetState.PRESENTING)
 
@@ -646,6 +652,30 @@ class PetApp(QObject):
         self.bubble.start_input()
         self._place_bubble()
         self._set_state(PetState.LISTENING)
+
+    def _start_result_dismiss(self) -> None:
+        # Keep test and accessibility overrides meaningful while the production
+        # interval remains RESULT_AUTO_DISMISS_MS.
+        self._result_remaining_ms = self._result_timer.interval()
+        self._result_timer_started_at = time.monotonic()
+        self._result_timer.start(self._result_remaining_ms)
+
+    def _pause_result_dismiss(self) -> None:
+        """Keep a result readable while the pointer is inside the compact bubble."""
+        if not self._result_timer.isActive():
+            return
+        elapsed = int((time.monotonic() - self._result_timer_started_at) * 1000)
+        self._result_remaining_ms = max(1_000, self._result_remaining_ms - elapsed)
+        self._result_timer.stop()
+
+    def _resume_result_dismiss(self) -> None:
+        if (self._state not in (PetState.PRESENTING, PetState.CANCELLED)
+                or self.ctrl.busy or self._confirm_id is not None
+                or self._detail_open or self._settings_open
+                or self.bubble._input_visible() or not self.bubble.summoned):
+            return
+        self._result_timer_started_at = time.monotonic()
+        self._result_timer.start(max(1_000, self._result_remaining_ms))
 
     def _dismiss_result_if_idle(self) -> None:
         """结果卡无交互后退场；工作、确认和详情阶段绝不误收起。"""

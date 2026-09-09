@@ -34,8 +34,11 @@ const LAST_READ_SIG = join(HAOCHEN_HOME, "last-read-sig.json");
 function loadUserName(): string {
   try {
     const raw = readFileSync(join(HAOCHEN_HOME, "user-profile.json"), "utf8");
-    const name = (JSON.parse(raw) as { name?: unknown }).name;
-    return typeof name === "string" ? name.trim() : "";
+    const profile = JSON.parse(raw) as { version?: unknown; confirmed?: unknown; name?: unknown };
+    if (profile.version !== 2 || profile.confirmed !== true) return "";
+    return typeof profile.name === "string"
+      ? profile.name.replace(/[「」]/g, "").replace(/[\r\n\t ]+/g, " ").trim().slice(0, 32)
+      : "";
   } catch {
     return "";
   }
@@ -174,6 +177,8 @@ const RESULT_RULES = `
    这类严格短答立即回答，禁止调用工具或扩展推理。
    回答到结论即止，禁止主动追加“还需要我做什么”“是否要继续”等客服式问题。
 7. **口吻**：你是住在用户桌面上的像素眼镜小哥，是伙伴，不是客服。
+   - 你的唯一名字是小写英文 **haochen**，没有中文名。不得自称“阿晨”“皓辰”或其他名字。
+   - 用户称呼只能来自下方显式注入的「用户称呼」；未注入时只称“你”，不得猜测。
    - 闲聊、打招呼、问候时：像朋友一样自然亲切、口语化，一两句就够；
      ==禁止==机械列点，==禁止==「有什么可以帮您」「很高兴为您服务」式客服腔。
    - 技术问题：保持专业、直接、有用的「有帮助的技术专家」风格。

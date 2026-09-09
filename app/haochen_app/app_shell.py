@@ -99,6 +99,11 @@ class AppShell:
 
     def show_chat(self) -> None:
         self.pet._result_timer.stop()
+        # The compact composer is an alternate view of the same conversation.
+        # Preserve an unsent draft when the user taps its expand icon.
+        draft = self.pet.bubble.input.toPlainText()
+        if draft and not self.chat.input.toPlainText():
+            self.chat.input.setPlainText(draft)
         if self.pet.bubble.summoned:
             self.pet.bubble.dismiss()
         self.pet.pet.hide()
@@ -155,16 +160,27 @@ class AppShell:
         created = self.store.ensure_initialized()
         if created:
             log.info("config initialized: %s", [path.name for path in created])
-        from .onboarding import KEY_PAGE, OnboardingState, OnboardingWizard
+        from .onboarding import KEY_PAGE, PROFILE_PAGE, OnboardingState, OnboardingWizard
+        from .pet.profile import profile_needs_confirmation
 
         state = OnboardingState(self.store.home)
         if os.environ.get("HAOCHEN_SKIP_ONBOARDING") == "1":
             return
-        if state.completed and self.any_key_configured():
+        needs_profile = profile_needs_confirmation(self.store.home)
+        has_key = self.any_key_configured()
+        if state.completed and has_key and not needs_profile:
             return
-        if state.completed:
+        if state.completed and needs_profile:
+            state.completed = False
+            state.page = PROFILE_PAGE
+            state.save()
+        elif state.completed and not has_key:
             state.completed = False
             state.page = KEY_PAGE
+            state.save()
+        elif not state.completed and needs_profile and state.page > PROFILE_PAGE:
+            # An interrupted/migrated wizard must not jump over explicit identity consent.
+            state.page = PROFILE_PAGE
             state.save()
         self.onboarding = OnboardingWizard(self.store, parent=parent)
         self.onboarding.permission_requested.connect(self._request_onboarding_permission)

@@ -78,6 +78,7 @@ def test_interrupted_wizard_resumes_and_completion_persists(qtbot, tmp_path: Pat
     wizard.show()
     wizard.next()
     wizard.next()
+    wizard.next()
     assert wizard.currentId() == onboarding.PERMISSIONS_PAGE
     wizard.close()
 
@@ -95,7 +96,7 @@ def test_interrupted_wizard_resumes_and_completion_persists(qtbot, tmp_path: Pat
     assert prompts == ["你好，请用一句话介绍你能帮我做什么"]
 
 
-def test_resume_cannot_skip_missing_key(tmp_path: Path) -> None:
+def test_resume_cannot_skip_profile_or_missing_key(tmp_path: Path) -> None:
     store, _credentials = make_store(tmp_path)
     state = onboarding.OnboardingState(store.home)
     state.page = onboarding.TRIAL_PAGE
@@ -103,4 +104,5 @@ def test_resume_cannot_skip_missing_key(tmp_path: Path) -> None:
 
     wizard = onboarding.OnboardingWizard(store)
 
-    assert wizard.startId() == onboarding.KEY_PAGE
+    assert wizard.startId() == onboarding.PROFILE_PAGE
+    assert not wizard.key_page.isComplete()

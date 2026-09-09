@@ -92,15 +92,21 @@ def test_input_state_drops_stale_result_height(qtbot, monkeypatch) -> None:
     assert metrics["scroll_visible"] is False
     assert metrics["flow_content_height"] == 0
     assert metrics["input_top_gap"] <= 24
-    assert metrics["height"] <= 100
+    assert metrics["height"] <= 108
     assert metrics["width"] == bubble_module.INPUT_WIDTH
     assert metrics["mode"] == "input"
     assert metrics["input_top_inset"] >= 8
     assert metrics["input_bottom_inset"] >= 6
     assert metrics["input_bottom"] < metrics["body_bottom"]
     assert win.input.placeholderText() == "问我点什么…"
-    assert win.btn_send.width() == 68
-    assert win.btn_send.height() == 36
+    assert win.btn_send.width() == 38
+    assert win.btn_send.height() == 34
+    assert not win.btn_send.icon().isNull()
+    assert win.btn_send.accessibleName() == "发送"
+    assert not win.btn_open_chat.icon().isNull()
+    assert win.btn_open_chat.accessibleName() == "展开完整会话"
+    assert win.btn_close.isVisible()
+    assert win.btn_close.accessibleName() == "关闭短气泡"
 
 
 def test_input_composer_stays_inside_shell_when_tail_flips_top(qtbot, monkeypatch) -> None:
@@ -182,7 +188,7 @@ def test_first_interaction_hint_uses_real_wrapped_height_without_blank_band(
     assert metrics["flow_content_height"] == greet.heightForWidth(available_width)
     assert metrics["flow_to_input_gap"] <= 8
     assert metrics["input_bottom_inset"] >= 8
-    assert metrics["height"] <= 156
+    assert metrics["height"] <= 178
 
 
 def test_work_and_result_use_distinct_compact_shells(qtbot, monkeypatch) -> None:
@@ -195,7 +201,7 @@ def test_work_and_result_use_distinct_compact_shells(qtbot, monkeypatch) -> None
     progress = win.layout_metrics()
     assert progress["mode"] == "progress"
     assert progress["width"] == bubble_module.PROGRESS_WIDTH
-    assert progress["height"] <= 90
+    assert progress["height"] <= 92
     assert progress["input_visible"] is False
 
     win.present_summary("直接说结论：已经处理好了。")

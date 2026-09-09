@@ -22,7 +22,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (
     QApplication,
     QGraphicsOpacityEffect,
@@ -51,6 +51,37 @@ _INPUT_MIN_HEIGHT = 42
 _INPUT_MAX_HEIGHT = 82      # 完整容纳三行；第四行起才在编辑区内滚动
 _INPUT_CHROME_HEIGHT = 14   # QTextEdit frame/padding 相对 document 的垂直占用
 _SLIDE_PX = 10              # 唤起上滑距离
+
+
+def _action_icon(kind: str, color: str, size: int = 18) -> QIcon:
+    """Draw restrained vector icons so the compact bubble never depends on emoji glyphs."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(QColor(color), 1.8)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    if kind == "send":
+        path = QPainterPath()
+        path.moveTo(2.5, 3.0)
+        path.lineTo(size - 2.5, size / 2)
+        path.lineTo(2.5, size - 3.0)
+        path.closeSubpath()
+        painter.drawPath(path)
+        painter.drawLine(QPointF(3.7, size / 2), QPointF(size - 3.5, size / 2))
+    elif kind == "expand":
+        painter.drawRoundedRect(QRectF(2.5, 5.5, size - 8.0, size - 8.0), 2.0, 2.0)
+        painter.drawLine(QPointF(size * 0.48, size * 0.52), QPointF(size - 2.5, 2.5))
+        painter.drawLine(QPointF(size * 0.62, 2.5), QPointF(size - 2.5, 2.5))
+        painter.drawLine(QPointF(size - 2.5, 2.5), QPointF(size - 2.5, size * 0.38))
+    elif kind == "close":
+        painter.drawLine(QPointF(4.5, 4.5), QPointF(size - 4.5, size - 4.5))
+        painter.drawLine(QPointF(size - 4.5, 4.5), QPointF(4.5, size - 4.5))
+    painter.end()
+    return QIcon(pixmap)
 
 
 # ── 输入框 ────────────────────────────────────────────────────
@@ -383,6 +414,9 @@ class BubbleWindow(QWidget):
     moved = pyqtSignal(int, int)        # v0.1.6：气泡拖动中（外层联动桌宠跟随）
     drag_finished = pyqtSignal()        # v0.1.6：拖动结束（外层持久化位置）
     resized = pyqtSignal()              # v0.1.6：高度自适应变化（外层重新锚定防压住桌宠）
+    open_chat_requested = pyqtSignal()   # 输入态也可随时展开完整会话
+    interaction_started = pyqtSignal()   # 悬停/操作期间暂停结果自动退场
+    interaction_ended = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -434,22 +468,30 @@ class BubbleWindow(QWidget):
         root.setContentsMargins(14, 10, 14, 0)  # 底部留给自绘尾巴
         root.setSpacing(6)
 
-        # 旧窗口式标题只保留为兼容控件；轻量漫画气泡各状态默认隐藏它。
+        # 轻量顶栏只承载关闭动作；不显示窗口标题，避免把漫画气泡做成传统对话框。
         self._head_panel = QWidget()
+        self._head_panel.setFixedHeight(20)
         head = QHBoxLayout(self._head_panel)
         head.setContentsMargins(0, 0, 0, 0)
         title = QLabel("👓 haochen")
         title.setObjectName("title")
         self.title_label = title
         head.addWidget(title)
+        title.hide()
         head.addStretch(1)
-        btn_close = QPushButton("✕")
+        btn_close = QPushButton()
         btn_close.setObjectName("closeBtn")
+        btn_close.setIcon(_action_icon("close", T.COLOR_INK_SOFT, 14))
+        btn_close.setIconSize(QSize(14, 14))
+        btn_close.setFixedSize(24, 20)
+        btn_close.setAccessibleName("关闭短气泡")
         btn_close.setToolTip("收起（Esc）")
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_close.clicked.connect(self.dismiss)
+        self.btn_close = btn_close
         head.addWidget(btn_close)
         root.addWidget(self._head_panel)
-        self._head_panel.hide()
+        self._head_panel.show()
 
         # 动态对话流（滚动区）
         # v0.1.4 hotfix 问题2：viewport / flow_host 默认会填系统灰底，必须显式透明，
@@ -510,8 +552,32 @@ class BubbleWindow(QWidget):
         self.btn_stop.clicked.connect(self.abort_requested.emit)
         self.btn_stop.hide()
         ip.addWidget(self.btn_stop)
-        self.btn_send = QPushButton("发送")
+
+        self.btn_open_chat = QPushButton()
+        self.btn_open_chat.setObjectName("expandBtn")
+        self.btn_open_chat.setIcon(_action_icon("expand", T.COLOR_INK_SOFT))
+        self.btn_open_chat.setIconSize(QSize(18, 18))
+        self.btn_open_chat.setAccessibleName("展开完整会话")
+        self.btn_open_chat.setToolTip("展开完整会话（⌘1）")
+        self.btn_open_chat.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_open_chat.setFixedSize(34, 34)
+        self.btn_open_chat.setStyleSheet(f"""
+            QPushButton {{
+                background: {T.COLOR_SURFACE};
+                border: 1px solid {T.COLOR_LINE_SOFT};
+                border-radius: 12px;
+                padding: 0;
+            }}
+            QPushButton:hover {{ background: {T.COLOR_BG}; border-color: {T.COLOR_ACCENT}; }}
+            QPushButton:pressed {{ background: {T.COLOR_ACCENT_TINT}; }}
+        """)
+        self.btn_open_chat.clicked.connect(self.open_chat_requested.emit)
+        ip.addWidget(self.btn_open_chat)
+
+        self.btn_send = QPushButton()
         self.btn_send.setObjectName("sendBtn")
+        self.btn_send.setIcon(_action_icon("send", "#ffffff"))
+        self.btn_send.setIconSize(QSize(18, 18))
         self.btn_send.setAccessibleName("发送")
         self.btn_send.setToolTip("发送（回车）")
         self.btn_send.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -521,7 +587,7 @@ class BubbleWindow(QWidget):
                 color: #ffffff;
                 border: none;
                 border-radius: 14px;
-                padding: 4px 10px;
+                padding: 0;
                 font-weight: bold;
                 font-size: {T.FONT_BODY_SM}px;
             }}
@@ -537,7 +603,7 @@ class BubbleWindow(QWidget):
             }}
         """)
         self.btn_send.clicked.connect(self._on_send)
-        self.btn_send.setFixedSize(68, 36)
+        self.btn_send.setFixedSize(38, 34)
         ip.addWidget(self.btn_send)
         root.addWidget(self._input_panel)
         self._tail_spacer = QSpacerItem(
@@ -585,7 +651,7 @@ class BubbleWindow(QWidget):
             "error": 82,
         }
         self._mode = mode
-        self._head_panel.hide()
+        self._head_panel.show()
         self._min_h = minimums[mode]
         self.setMinimumHeight(self._min_h)
         self.setFixedWidth(widths[mode])
@@ -879,6 +945,14 @@ class BubbleWindow(QWidget):
         self.raise_()
         self.activateWindow()
         self.input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - Qt virtual method
+        self.interaction_started.emit()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt virtual method
+        self.interaction_ended.emit()
+        super().leaveEvent(event)
 
     # ── 唤起 / 收起 ───────────────────────────────────────────
 
