@@ -4,7 +4,6 @@ import importlib
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -16,21 +15,23 @@ config_module = importlib.import_module("haochen_app.settings.config_store")
 engine_module = importlib.import_module("haochen_app.engine_client")
 
 
-def test_keychain_write_passes_secret_on_stdin_not_argv(monkeypatch) -> None:
+def test_keychain_write_uses_native_backend_without_process_arguments() -> None:
     calls = []
 
-    def run(command, **kwargs):
-        calls.append((command, kwargs))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    class Backend:
+        def set(self, service, provider, secret):
+            calls.append((service, provider, secret))
 
-    monkeypatch.setattr(keychain.subprocess, "run", run)
+        def get(self, _service, _provider):
+            return None
+
+        def delete(self, _service, _provider):
+            pass
+
     secret = "private-test-credential"
-    keychain.KeychainStore().set("deepseek", secret)
+    keychain.KeychainStore("test-service", backend=Backend()).set("deepseek", secret)
 
-    command, kwargs = calls[0]
-    assert secret not in command
-    assert command[-1] == "-w"
-    assert kwargs["input"] == f"{secret}\n{secret}\n"
+    assert calls == [("test-service", "deepseek", secret)]
 
 
 def test_keychain_service_can_be_isolated_for_development(monkeypatch) -> None:
@@ -40,14 +41,13 @@ def test_keychain_service_can_be_isolated_for_development(monkeypatch) -> None:
     assert keychain.KeychainStore("explicit.service").service == "explicit.service"
 
 
-def test_keychain_errors_never_include_secret(monkeypatch) -> None:
-    monkeypatch.setattr(
-        keychain.subprocess,
-        "run",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="", stderr="private-test-credential"),
-    )
+def test_keychain_errors_never_include_secret() -> None:
+    class Backend:
+        def set(self, _service, _provider, _secret):
+            raise keychain.KeychainError("无法写入 macOS Keychain")
+
     with pytest.raises(keychain.KeychainError) as error:
-        keychain.KeychainStore().set("deepseek", "private-test-credential")
+        keychain.KeychainStore(backend=Backend()).set("deepseek", "private-test-credential")
     assert "private-test-credential" not in str(error.value)
 
 

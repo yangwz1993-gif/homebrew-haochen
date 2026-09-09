@@ -126,6 +126,21 @@ def test_fresh_install_starts_before_profile_and_does_not_skip_it(qtbot, tmp_pat
     assert shell.onboarding.currentId() == onboarding_module.PROFILE_PAGE
 
 
+def test_fresh_install_keeps_onboarding_in_front_after_pet_starts(qtbot, tmp_path: Path) -> None:
+    shell = app_shell_module.AppShell(mock=True, home=tmp_path)
+    qtbot.addWidget(shell.chat)
+    shell.first_run_setup()
+
+    shell.start()
+    qtbot.waitUntil(lambda: not shell.pet.pet.isVisible(), timeout=1000)
+
+    assert shell.onboarding.isVisible()
+    assert not shell.pet.pet.isVisible()
+    shell.onboarding.reject()
+    assert shell.pet.pet.isVisible()
+    shell.stop()
+
+
 def test_custom_mode_never_reuses_deepseek_verification(qtbot, tmp_path: Path) -> None:
     store, _credentials = make_store(tmp_path)
     store.set_key("deepseek", "deepseek-secret")

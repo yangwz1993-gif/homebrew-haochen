@@ -23,6 +23,7 @@ import logging
 import os
 from pathlib import Path
 
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from .chat import ChatWindow
@@ -185,7 +186,22 @@ class AppShell:
         self.onboarding = OnboardingWizard(self.store, parent=parent)
         self.onboarding.permission_requested.connect(self._request_onboarding_permission)
         self.onboarding.trial_requested.connect(self._send_onboarding_trial)
+        self.onboarding.finished.connect(self._on_onboarding_finished)
+        self.onboarding.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self._present_onboarding()
+
+    def _present_onboarding(self) -> None:
+        """Keep the first-run wizard in front of the always-on-top desktop pet."""
+        if not hasattr(self, "onboarding") or self.onboarding.state.completed:
+            return
+        self.pet.pet.hide()
         self.onboarding.show()
+        self.onboarding.raise_()
+        self.onboarding.activateWindow()
+
+    def _on_onboarding_finished(self, _result: int) -> None:
+        self.pet.pet.show()
+        self.pet.pet.raise_()
 
     def any_key_configured(self) -> bool:
         try:
@@ -214,6 +230,10 @@ class AppShell:
         self.chat.start()         # 拉 get_state 就绪（窗口默认不显示）
         self._install_app_tracker()
         self._reconcile_tcc()
+        if hasattr(self, "onboarding") and not self.onboarding.state.completed:
+            # pet.start() shows its always-on-top window after first_run_setup().
+            # Re-present once the event loop starts so the wizard cannot end up behind it.
+            QTimer.singleShot(0, self._present_onboarding)
 
     def _reconcile_tcc(self) -> None:
         """构建指纹检查（v0.1.4 hotfix）：版本/签名变更 → 清历史 TCC 记录，强制重新授权。

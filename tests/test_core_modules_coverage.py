@@ -6,7 +6,6 @@ import importlib
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -161,44 +160,44 @@ def test_set_key_rejects_keychain_readback_failure(tmp_path: Path) -> None:
 
 # ── keychain ─────────────────────────────────────────────────
 
-def test_keychain_get_missing_returns_none(monkeypatch) -> None:
-    monkeypatch.setattr(
-        keychain.subprocess,
-        "run",
-        lambda *_a, **_k: SimpleNamespace(returncode=44, stdout="", stderr=""),
-    )
-    assert keychain.KeychainStore().get("p") is None
+class FakeNativeKeychain:
+    def __init__(self, *, value=None, error=None):
+        self.value = value
+        self.error = error
+        self.deleted = []
+
+    def get(self, _service, _provider):
+        if self.error:
+            raise self.error
+        return self.value
+
+    def set(self, _service, _provider, secret):
+        self.value = secret
+
+    def delete(self, service, provider):
+        self.deleted.append((service, provider))
 
 
-def test_keychain_get_empty_output_returns_none(monkeypatch) -> None:
-    monkeypatch.setattr(
-        keychain.subprocess,
-        "run",
-        lambda *_a, **_k: SimpleNamespace(returncode=0, stdout="\n", stderr=""),
-    )
-    assert keychain.KeychainStore().get("p") is None
+def test_keychain_get_missing_returns_none() -> None:
+    assert keychain.KeychainStore(backend=FakeNativeKeychain()).get("p") is None
 
 
-def test_keychain_get_other_error_raises(monkeypatch) -> None:
-    monkeypatch.setattr(
-        keychain.subprocess,
-        "run",
-        lambda *_a, **_k: SimpleNamespace(returncode=51, stdout="", stderr=""),
-    )
+def test_keychain_get_empty_output_returns_none() -> None:
+    assert keychain.KeychainStore(backend=FakeNativeKeychain(value=None)).get("p") is None
+
+
+def test_keychain_get_other_error_raises() -> None:
     with pytest.raises(keychain.KeychainError):
-        keychain.KeychainStore().get("p")
+        keychain.KeychainStore(
+            backend=FakeNativeKeychain(error=keychain.KeychainError("无法读取 macOS Keychain"))
+        ).get("p")
 
 
-def test_keychain_delete_tolerates_missing(monkeypatch) -> None:
-    calls = []
-
-    def run(command, **kwargs):
-        calls.append(command)
-        return SimpleNamespace(returncode=44, stdout="", stderr="")
-
-    monkeypatch.setattr(keychain.subprocess, "run", run)
-    keychain.KeychainStore().delete("p")
-    assert calls[0][1] == "delete-generic-password"
+def test_keychain_delete_tolerates_missing() -> None:
+    backend = FakeNativeKeychain()
+    store = keychain.KeychainStore("test-service", backend=backend)
+    store.delete("p")
+    assert backend.deleted == [("test-service", "p")]
 
 
 def test_keychain_set_empty_secret_rejected(monkeypatch) -> None:

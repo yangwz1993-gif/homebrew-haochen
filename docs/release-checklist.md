@@ -8,13 +8,13 @@
 
 | 门禁 | 证据 | 状态 |
 |---|---|---|
-| 独立用户验收 | v0.3.2 唯一候选正在由独立高审美用户 agent 黑盒验收 | 进行中 |
-| 代码质量 | `make check`：354 tests，coverage 83% | PASS |
+| 独立用户验收 | 第 1 轮发现 2 个 P1 并已修复；新候选等待同一独立 agent 复验 | 进行中 |
+| 代码质量 | `make check`：355 tests，coverage 83% | PASS |
 | 分层回归 | `make regressions`：6/6 | PASS |
-| PR | v0.3.2 修复分支和远端 macOS quality gate | 待提交复核 |
+| PR | [#8](https://github.com/yangwz1993-gif/homebrew-haochen/pull/8)；首轮 CI PASS，新修复提交后重跑 | 进行中 |
 | 发布模式 | 所有者 2026-09-09 明确选择 legacy | 已授权 |
 | 签名 | `haochen Local Signing`，门禁确认不是 ad-hoc | PASS |
-| DMG / Cask | `haochen-0.3.2.dmg`；最终 SHA-256 在封板重建后写入；legacy preflight | 进行中 |
+| DMG / Cask | 第 2 轮候选 `35cf7a2c…f4e22`；legacy preflight PASS，独立复验后封板 | 进行中 |
 | Homebrew 安装 | 从线上 Release 安装、启动、升级与卸载 | 待发布复核 |
 
 ## 风险边界
