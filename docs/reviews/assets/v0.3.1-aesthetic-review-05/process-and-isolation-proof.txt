@@ -1,0 +1,25 @@
+haochen v0.3.1 aesthetic review 05
+Read-only provenance snapshot
+
+Process tree
+92379 18479 /Users/yangwz/Documents/workspace/haochen/packaging/dist/haochen.app/Contents/MacOS/haochen
+92416 92379 /Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/Resources/engine/haochen-engine --mode rpc --no-extensions --session-dir /private/tmp/haochen-v031-r05-home.DvQHUn/pi-sessions -e /Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/Resources/ext/index.ts
+
+Candidate identity
+dist main inode:          13413798
+dist.noindex main inode:  13413798
+main SHA-256:             a19f2f47f593a245efd02080c833ec0f1c45cecc9c48e2f88d6a13d846084759
+
+dist engine inode:          13413797
+dist.noindex engine inode:  13413797
+engine SHA-256:             22e8a4dba3cf5df12d1fe130a67bac80d07ac08b69c136b9bd4f56f280195fc5
+
+DMG
+Path: /Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen-0.3.1.dmg
+SHA-256: 7ad032c0d43be1852222692cdec8bcae14fa1a9772b0b00f6944f9030931545e
+
+Conclusion
+PID 92416 was a direct child of PID 92379 and used the required Round 05 isolated session directory. The requested dist and canonical dist.noindex paths resolved to the same files by inode. The final DMG SHA-256 exactly matched the supplied sealing digest.
+
+Cleanup
+SIGTERM was sent to main PID 92379 after acceptance. The subsequent exact PID check returned no row for either 92379 or 92416, confirming that the child engine exited with the main process. The Round 05 isolation and evidence directories were preserved.

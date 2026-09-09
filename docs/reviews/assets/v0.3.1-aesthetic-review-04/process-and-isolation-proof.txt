@@ -1,0 +1,21 @@
+haochen v0.3.1 aesthetic review 04
+Read-only provenance snapshot taken during the run
+
+Process tree
+86202 86179 /Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/Resources/engine/haochen-engine --mode rpc --no-extensions --session-dir /private/tmp/haochen-v031-r04-home.jZ8tAo/pi-sessions -e /Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/Resources/ext/index.ts
+86179 18479 /Users/yangwz/Documents/workspace/haochen/packaging/dist/haochen.app/Contents/MacOS/haochen
+
+Candidate identity
+dist main inode:          13407477
+dist.noindex main inode:  13407477
+main SHA-256:             4d5490bd28a0e1d198dbc41b8e058394a2dbcc1c3cad12b9d687a56062367691
+
+dist engine inode:          13407476
+dist.noindex engine inode:  13407476
+engine SHA-256:             a45017e614f10cdf415a3ea1f9c6a307c8f485d98443ec713be36ed9ec55e7e8
+
+Conclusion
+The requested dist and canonical dist.noindex paths resolve to the same on-disk main and engine files (same inode and SHA-256). PID 86202 was a direct child of PID 86179 and used the required isolated session directory.
+
+Cleanup
+SIGTERM was sent to main PID 86179 after acceptance completed. A subsequent exact PID check returned no row for either 86179 or 86202, confirming that the engine exited with the main process. The isolation and evidence directories were preserved.

@@ -78,9 +78,10 @@ def test_release_preflight_independently_checks_public_distribution_gates() -> N
     assert "com.apple.quarantine" in source
 
 
-def test_v030_release_checklist_authorizes_only_explicit_legacy_distribution() -> None:
+def test_current_release_checklist_authorizes_only_explicit_legacy_distribution() -> None:
     checklist = read("docs/release-checklist.md")
-    assert checklist.startswith("# v0.3.0 正式发布清单")
+    version = read("VERSION").strip()
+    assert checklist.startswith(f"# v{version} 正式发布清单")
     assert "所有者明确选择" in checklist
     assert "未经 Apple 公证" in checklist
     assert "scripts/release_preflight.sh legacy-artifacts" in checklist

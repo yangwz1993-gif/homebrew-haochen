@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QPoint, QPointF, Qt
-from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtGui import QImage, QMouseEvent
 from PyQt6.QtWidgets import QApplication, QMenu
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -131,6 +131,42 @@ def test_pet_uses_retina_physical_pixels_without_changing_logical_size(
     assert pixmap.width() == pet_window_module.PET_SIZE * 2
     assert pixmap.devicePixelRatio() == 2.0
     assert round(pixmap.deviceIndependentSize().width()) == pet_window_module.PET_SIZE
+
+
+def test_all_runtime_poses_use_complete_transparent_fullbody_assets() -> None:
+    assert set(pet_window_module.POSE_ASSETS) == {"idle", "thinking", "angry"}
+    for filename in pet_window_module.POSE_ASSETS.values():
+        assert filename.endswith("-fullbody.png")
+        image = QImage(str(pet_window_module.ASSETS_DIR / filename))
+        assert not image.isNull()
+        assert image.width() == image.height() == 1254
+        assert image.hasAlphaChannel()
+        # 透明边缘保证桌宠没有白底或生成器画进去的棋盘格。
+        assert image.pixelColor(0, 0).alpha() == 0
+        assert image.pixelColor(image.width() - 1, image.height() - 1).alpha() == 0
+
+
+def test_pose_transition_never_fades_skin_into_desktop_color(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(pet_window_module.a11y, "reduce_motion_enabled", lambda: False)
+    window = make_pet_window(qtbot, tmp_path, monkeypatch)
+    window.show()
+    qtbot.wait(20)
+
+    window.set_pose("thinking")
+    effect = window.label.graphicsEffect()
+    assert effect is not None
+    assert effect.opacity() >= 0.94
+
+    # 快速状态切换也不能遗留旧的低透明度 effect。
+    window.set_pose("idle")
+    effect = window.label.graphicsEffect()
+    assert effect is not None
+    assert effect.opacity() >= 0.94
+    qtbot.wait(pet_window_module.ANIM_POSE_MS + 40)
+    assert window.label.graphicsEffect() is None
+    assert window.pose == "idle"
 
 
 def test_pet_window_drag_persists_position(qtbot, tmp_path: Path, monkeypatch) -> None:

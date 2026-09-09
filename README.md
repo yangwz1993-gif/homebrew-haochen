@@ -3,16 +3,16 @@
 haochen 是一款面向 macOS 的独立桌面 AI 伙伴：常驻桌面、按需读取当前窗口、调用本机工具，并用轻量气泡或完整工作台返回结果。
 
 [![CI](https://github.com/yangwz1993-gif/homebrew-haochen/actions/workflows/ci.yml/badge.svg)](https://github.com/yangwz1993-gif/homebrew-haochen/actions/workflows/ci.yml)
-[![version](https://img.shields.io/badge/version-0.3.0-3a7d5c)](https://github.com/yangwz1993-gif/homebrew-haochen/releases/tag/v0.3.0)
+[![version](https://img.shields.io/badge/version-0.3.1-3a7d5c)](https://github.com/yangwz1993-gif/homebrew-haochen/releases/tag/v0.3.1)
 [![platform](https://img.shields.io/badge/platform-macOS-2b2b22)](#系统要求)
 
 ## 当前状态
 
-- 稳定版本：`0.3.0`
-- 自动化测试：336 项，整体覆盖率 85%
+- 稳定版本：`0.3.1`
+- 自动化测试：342 项，整体覆盖率 85%
 - 分发：GitHub Release + Homebrew Cask
 
-0.3.0 经所有者明确选择继续使用发布者自签名；Homebrew Cask 会移除该 App 的
+0.3.1 经所有者明确选择继续使用发布者自签名；Homebrew Cask 会移除该 App 的
 quarantine 属性。它没有经过 Apple Developer ID 签名或 Apple 公证，直接下载 DMG
 可能被 Gatekeeper 拦截，建议只使用下面的 Homebrew 安装方式。
 
@@ -64,7 +64,9 @@ HAOCHEN_MOCK=1 HAOCHEN_SKIP_ONBOARDING=1 \
 
 本仓库同时承载应用源码和 Homebrew Tap，根目录 `Casks/haochen.rb` 是 Homebrew 的发布入口。版本以根目录 `VERSION` 为唯一来源，采用 SemVer；发布流程见 [版本与发布规范](docs/versioning-and-release.md)，协作方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-v0.3.0 的交互升级方案见 [桌宠交互全面升级方案](docs/roadmap/v0.3.0-experience-redesign.md)。
+v0.3.0 的交互升级方案见 [桌宠交互全面升级方案](docs/roadmap/v0.3.0-experience-redesign.md)；
+v0.3.1 进一步修复并收敛了桌宠输入气泡的尺寸、留白和视觉层级，补齐了
+待机、思考和警示三态的全身角色动作，并保持既有像素形象与肤色风格。
 
 ## 安全与隐私
 

@@ -1,0 +1,27 @@
+2026-09-09 18:07:49,513 haochen.main INFO frozen=True resources=/Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/Resources
+2026-09-09 18:07:49,513 haochen.main INFO engine=/Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/Resources/engine/haochen-engine exists=True
+2026-09-09 18:07:49,513 haochen.main INFO ext=/Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/Resources/ext/index.ts exists=True
+2026-09-09 18:07:49,513 haochen.main INFO assets=/Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/Resources/assets/pet files=['angry-fullbody.png', 'angry.png', 'idle-fullbody.png', 'idle.png', 'thinking-fullbody.png', 'thinking.png']
+2026-09-09 18:07:49,513 haochen.main INFO reader=/Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/Resources/haochen-reader
+2026-09-09 18:07:49,757 haochen.supervisor ERROR engine start failed: [Errno 2] No such file or directory: '/Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/mock-engine'
+qt.qpa.fonts: Populating font family aliases took 35 ms. Replace uses of missing font family "-apple-system" with one that exists to avoid this cost.
+Traceback (most recent call last):
+  File "run_app.py", line 77, in <module>
+  File "run_app.py", line 72, in main
+  File "haochen_app/app_shell.py", line 197, in start
+  File "haochen_app/pet/app.py", line 176, in start
+  File "haochen_app/engine_client.py", line 131, in start
+  File "subprocess.py", line 1026, in __init__
+  File "subprocess.py", line 1955, in _execute_child
+FileNotFoundError: [Errno 2] No such file or directory: '/Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/mock-engine'
+[PYI-85254:ERROR] Failed to execute script 'run_app' due to unhandled exception: [Errno 2] No such file or directory: '/Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/mock-engine'
+[PYI-85254:ERROR] Traceback:
+Traceback (most recent call last):
+  File "run_app.py", line 77, in <module>
+  File "run_app.py", line 72, in main
+  File "haochen_app/app_shell.py", line 197, in start
+  File "haochen_app/pet/app.py", line 176, in start
+  File "haochen_app/engine_client.py", line 131, in start
+  File "subprocess.py", line 1026, in __init__
+  File "subprocess.py", line 1955, in _execute_child
+FileNotFoundError: [Errno 2] No such file or directory: '/Users/yangwz/Documents/workspace/haochen/packaging/dist.noindex/haochen.app/Contents/mock-engine'
