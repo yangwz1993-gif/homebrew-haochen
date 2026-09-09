@@ -59,6 +59,28 @@ def test_main_cask_template_stays_notarized_only() -> None:
     assert "xattr" not in source
 
 
+def test_release_preflight_independently_checks_public_distribution_gates() -> None:
+    source = read("scripts/release_preflight.sh")
+    assert "Developer ID Application:" in source
+    assert "notarytool history" in source
+    assert "codesign --verify --deep --strict" in source
+    assert "CFBundleShortVersionString" in source
+    assert "Contents/Resources/VERSION" in source
+    assert "stapler validate" in source
+    assert source.count("spctl --assess") == 2
+    assert "TeamIdentifier" in source
+    assert "shasum -a 256" in source
+    assert "legacy" not in source
+
+
+def test_v030_release_checklist_does_not_authorize_ad_hoc_distribution() -> None:
+    checklist = read("docs/release-checklist.md")
+    assert checklist.startswith("# v0.3.0 正式发布清单")
+    assert "禁止上传 GitHub Release" in checklist
+    assert "v0.3.0 不沿用" in checklist
+    assert "scripts/release_preflight.sh artifacts" in checklist
+
+
 def test_legacy_cask_template_documents_quarantine_removal() -> None:
     source = read("cask/Casks/haochen.rb.legacy.template")
     assert "postflight" in source

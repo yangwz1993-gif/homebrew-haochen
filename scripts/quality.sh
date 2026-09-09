@@ -33,6 +33,7 @@ uv run shellcheck \
   packaging/notarize.sh \
   tests/run_all_regressions.sh \
   scripts/bootstrap.sh \
+  scripts/release_preflight.sh \
   scripts/quality.sh
 
 printf '\n==> unit tests + coverage report\n'
