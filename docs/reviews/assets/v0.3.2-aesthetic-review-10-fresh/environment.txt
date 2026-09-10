@@ -1,0 +1,13 @@
+artifact: packaging/dist/haochen-0.3.2.dmg
+sha256: 08437178386fa42506e7241c55addbd76a1d1f8fa2ef3b18b7be3389e0edc445
+mount: /private/tmp/haochen-aesthetic-r10-fresh-valid/mnt (read-only, nobrowse)
+HOME: /Users/yangwz
+HAOCHEN_HOME: /private/tmp/haochen-aesthetic-r10-fresh-valid/data
+HAOCHEN_KEYCHAIN_SERVICE: com.haochen.qa.v032.r10.fresh.Z7kP2m
+HAOCHEN_SKIP_ONBOARDING: unset
+HAOCHEN_SKIP_PERMISSION_GUIDE: unset
+HAOCHEN_MOCK: unset
+fixture: http://127.0.0.1:18432/v1
+fixture_model_id: haochen-r10-local
+fixture_display_name: R10 本地暖橙模型
+fixture_api_key: synthetic local-only key (redacted)

@@ -187,6 +187,32 @@ def test_application_deactivate_resumes_despite_stale_under_mouse(
     qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
 
 
+def test_new_result_resets_full_dwell_after_a_partially_elapsed_resume(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    client = harness.FakeClient()
+    client.home = tmp_path
+    pet = pet_module.PetApp(client=client, supervisor=None)
+    qtbot.addWidget(pet.bubble)
+    qtbot.addWidget(pet.pet)
+    pet._result_timer.setInterval(2_200)
+    pet.bubble.summon()
+    pet._on_summary_done("第一条结果。")
+    qtbot.wait(70)
+    pet._pause_result_dismiss()
+    first_remaining = pet._result_remaining_ms
+    assert first_remaining < 2_200
+
+    pet._resume_result_dismiss(force=True)
+    assert pet._result_timer.interval() == max(1_000, first_remaining)
+    pet.bubble.dismiss()
+    pet.bubble.summon()
+    pet._on_summary_done("第二条结果。")
+
+    assert pet._result_remaining_ms == 2_200
+    assert pet._result_timer.interval() == 2_200
+
+
 def test_child_widget_mouse_events_pause_and_resume_result(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:

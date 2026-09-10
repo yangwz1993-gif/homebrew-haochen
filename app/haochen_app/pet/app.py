@@ -122,6 +122,8 @@ class PetApp(QObject):
         self._result_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._result_timer.setInterval(RESULT_AUTO_DISMISS_MS)
         self._result_timer.timeout.connect(self._dismiss_result_if_idle)
+        self._result_dwell_ms = RESULT_AUTO_DISMISS_MS
+        self._result_timer_programmed_ms = RESULT_AUTO_DISMISS_MS
         self._result_remaining_ms = RESULT_AUTO_DISMISS_MS
         self._result_timer_started_at = 0.0
         self._result_hovering = False
@@ -710,9 +712,16 @@ class PetApp(QObject):
         # Qt may recreate the native Tool window between hidden/input/result
         # states, so capture its current stable number only after result layout.
         self._bubble_native_window_number = self._resolve_native_window_number()
-        self._result_remaining_ms = self._result_timer.interval()
+        current_interval = self._result_timer.interval()
+        if current_interval != self._result_timer_programmed_ms:
+            # Tests and accessibility tooling may intentionally override the
+            # dwell.  Internal resume calls are tracked separately so a prior
+            # turn's remaining time can never become the next turn's default.
+            self._result_dwell_ms = current_interval
+        self._result_remaining_ms = self._result_dwell_ms
         self._result_timer_started_at = time.monotonic()
         self._result_hovering = False
+        self._result_timer_programmed_ms = self._result_remaining_ms
         self._result_timer.start(self._result_remaining_ms)
         self._result_hover_watch.start()
 
@@ -747,7 +756,9 @@ class PetApp(QObject):
             return
         self._result_hovering = False
         self._result_timer_started_at = time.monotonic()
-        self._result_timer.start(max(1_000, self._result_remaining_ms))
+        resume_ms = max(1_000, self._result_remaining_ms)
+        self._result_timer_programmed_ms = resume_ms
+        self._result_timer.start(resume_ms)
         if force:
             # Do not let a stale underMouse bit immediately pause the timer
             # again after another application became active.  A real re-entry
