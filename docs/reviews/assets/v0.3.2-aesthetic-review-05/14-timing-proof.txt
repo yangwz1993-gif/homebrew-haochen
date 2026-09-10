@@ -1,0 +1,23 @@
+Round 05 monotonic evidence
+
+Onboarding gate:
+- elapsed observation: 36,088 ms
+- shortcuts at 627 ms: Welcome=true, discovery hint=false
+- Preferences menu at 1,641 ms: Welcome=true, discovery hint=false
+- Open Dialog menu at 2,648 ms: Welcome=true, discovery hint=false
+- New Session menu at 3,615 ms: Welcome=true, discovery hint=false
+- samples through 36,020 ms: Welcome always true, discovery hint always false
+- sawHint=false; sawOther=false
+
+Segmented result lifecycle:
+- result ran before hover: 8,498 ms
+- result visible before hover: true
+- deliberate pointer hover in result: 8,431 ms
+- result visible at end of hover: true
+- pointer moved across app to TextEdit
+- result dismissed 3,196 ms after leave
+- total result wall-clock lifetime: 20,125 ms
+- expected for a real pause: about 11,500 ms remaining after leave and about
+  28,500 ms total wall-clock lifetime
+- conclusion: hover duration was still counted by the 20-second timer
+

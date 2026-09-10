@@ -81,7 +81,7 @@ def test_result_auto_dismiss_pauses_while_user_is_interacting(
     monkeypatch.setattr(
         pet_module.QCursor,
         "pos",
-        lambda: pet.bubble.geometry().center(),
+        lambda: pet.bubble.mapToGlobal(pet.bubble.rect().center()),
     )
 
     pet.bubble.interaction_started.emit()
@@ -92,7 +92,7 @@ def test_result_auto_dismiss_pauses_while_user_is_interacting(
     monkeypatch.setattr(
         pet_module.QCursor,
         "pos",
-        lambda: pet.bubble.geometry().bottomRight() + QPoint(50, 50),
+        lambda: pet.bubble.mapToGlobal(pet.bubble.rect().bottomRight() + QPoint(50, 50)),
     )
     pet.bubble.interaction_ended.emit()
     qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
@@ -112,7 +112,7 @@ def test_hover_watch_detects_enter_and_leave_when_native_events_are_missing(
     monkeypatch.setattr(
         pet_module.QCursor,
         "pos",
-        lambda: pet.bubble.geometry().center(),
+        lambda: pet.bubble.mapToGlobal(pet.bubble.rect().center()),
     )
 
     pet._sync_result_hover_state()
@@ -122,7 +122,7 @@ def test_hover_watch_detects_enter_and_leave_when_native_events_are_missing(
     monkeypatch.setattr(
         pet_module.QCursor,
         "pos",
-        lambda: pet.bubble.geometry().bottomRight() + QPoint(50, 50),
+        lambda: pet.bubble.mapToGlobal(pet.bubble.rect().bottomRight() + QPoint(50, 50)),
     )
 
     pet._sync_result_hover_state()

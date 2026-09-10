@@ -704,8 +704,7 @@ class PetApp(QObject):
         # Native leave events can also arrive spuriously while the animated
         # frameless window is moving/resizing.  The global cursor position is
         # the source of truth while the hover watchdog owns the pause.
-        if (self._result_hover_watch.isActive()
-                and self.bubble.geometry().contains(QCursor.pos())):
+        if self._result_hover_watch.isActive() and self._pointer_inside_bubble():
             self._result_hovering = True
             return
         if (self._state not in (PetState.PRESENTING, PetState.CANCELLED)
@@ -729,10 +728,20 @@ class PetApp(QObject):
             self._result_hover_watch.stop()
             self._result_hovering = False
             return
-        if self.bubble.geometry().contains(QCursor.pos()):
+        if self._pointer_inside_bubble():
             self._pause_result_dismiss()
         elif self._result_hovering:
             self._resume_result_dismiss()
+
+    def _pointer_inside_bubble(self) -> bool:
+        """Map native global coordinates through Qt before testing the window rect.
+
+        Comparing ``QCursor.pos()`` with a top-level widget's ``geometry()`` is
+        unreliable on macOS when screens have different origins/scales.  Qt's
+        global-to-local mapping handles those native coordinate transforms.
+        """
+        local_pos = self.bubble.mapFromGlobal(QCursor.pos())
+        return self.bubble.rect().contains(local_pos)
 
     def _dismiss_result_if_idle(self) -> None:
         """结果卡无交互后退场；工作、确认和详情阶段绝不误收起。"""
