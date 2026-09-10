@@ -1,0 +1,55 @@
+v0.3.2 aesthetic review round 02 — environment proof
+Date: 2026-09-09 (Asia/Shanghai)
+
+Candidate DMG:
+/Users/yangwz/Documents/workspace/haochen/packaging/dist/haochen-0.3.2.dmg
+
+SHA-256:
+35cf7a2c76835919c654a8622bdcb9f56a8cc6f11dde38a67914dc9b1f9f4e22
+
+Mounted read-only app:
+/private/tmp/haochen-v032-r02-mount.AGxB3N/haochen.app
+
+Bundle version:
+CFBundleShortVersionString = 0.3.2
+CFBundleVersion = 2
+
+Fresh isolated home:
+/private/tmp/haochen-v032-r02-home.HFmTjL
+
+Fresh Keychain service:
+com.haochen.qa.v032.r02.HFmTjL
+
+Before launch, shell and launchctl values were absent for:
+- HAOCHEN_SKIP_ONBOARDING
+- HAOCHEN_SKIP_PERMISSION_GUIDE
+- HAOCHEN_HOME
+- HAOCHEN_KEYCHAIN_SERVICE
+
+Launch command (secret-free):
+env -u HAOCHEN_SKIP_ONBOARDING -u HAOCHEN_SKIP_PERMISSION_GUIDE \
+  HAOCHEN_HOME=/private/tmp/haochen-v032-r02-home.HFmTjL \
+  HAOCHEN_KEYCHAIN_SERVICE=com.haochen.qa.v032.r02.HFmTjL \
+  NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost \
+  /private/tmp/haochen-v032-r02-mount.AGxB3N/haochen.app/Contents/MacOS/haochen
+
+Observed process proof before cleanup:
+- main PID 62806, PPID 18479
+- engine PID 62829, PPID 62806
+- engine --session-dir /private/tmp/haochen-v032-r02-home.HFmTjL/pi-sessions
+- main/engine environments contained the isolated HAOCHEN_HOME and
+  HAOCHEN_KEYCHAIN_SERVICE and did not contain either skip variable.
+
+Keychain proof (secret was never printed):
+- security class: genp
+- service: com.haochen.qa.v032.r02.HFmTjL
+- account: custom-3f7046909c
+- validation target: http://127.0.0.1:18766/v1
+- model: qa-local-r02 / QA Local Round 02
+
+Cleanup proof:
+- SIGTERM sent to main PID 62806; main and engine PID 62829 both exited.
+- local model fixture and screenshot receiver stopped with KeyboardInterrupt.
+- fake Keychain item deleted; subsequent lookup exit status = 44 (not found).
+- disk8 /private/tmp/haochen-v032-r02-mount.AGxB3N detached successfully.
+- isolated Home remains present for audit.

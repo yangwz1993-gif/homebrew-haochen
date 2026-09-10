@@ -47,16 +47,16 @@ def test_profile_roundtrip_and_corruption(tmp_path: Path) -> None:
         profile.haochen_home = original
 
 
-def test_profile_save_failure_is_logged_not_raised(tmp_path: Path) -> None:
+def test_profile_save_failure_is_logged_not_raised(tmp_path: Path, monkeypatch) -> None:
     original = profile.haochen_home
     profile.haochen_home = lambda: tmp_path
 
     def boom(_path, _content):
         raise OSError("disk full")
 
-    profile.atomic_write_private = boom
+    monkeypatch.setattr(profile, "atomic_write_private", boom)
     try:
-        profile.save_user_name("名字")  # 不抛
+        assert profile.save_user_name("名字") is False  # 不抛，且调用方可显示失败
     finally:
         profile.haochen_home = original
 

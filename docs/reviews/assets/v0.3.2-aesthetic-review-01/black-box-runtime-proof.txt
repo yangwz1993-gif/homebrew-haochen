@@ -1,0 +1,31 @@
+haochen v0.3.2 frozen candidate black-box proof
+
+DMG
+path=/Users/yangwz/Documents/workspace/haochen/packaging/dist/haochen-0.3.2.dmg
+sha256=51750d8600c45531e9230fc611e391ffb23c89b6a3e37c7d2fbb7a243709d677
+bundle_version=0.3.2 (build 2)
+
+isolated launch
+HAOCHEN_HOME=/private/tmp/haochen-v032-r01-frozen-home.S6ZOFH
+keychain_service=com.haochen.qa.v032.r01.frozen.S6ZOFH
+mount=/private/tmp/haochen-v032-r01-frozen-mount.Jb3EXE
+
+process tree used for the final observations
+49973 18479 /private/tmp/haochen-v032-r01-frozen-mount.Jb3EXE/haochen.app/Contents/MacOS/haochen
+49995 49973 /private/tmp/haochen-v032-r01-frozen-mount.Jb3EXE/haochen.app/Contents/Resources/engine/haochen-engine --mode rpc --no-extensions --session-dir /private/tmp/haochen-v032-r01-frozen-home.S6ZOFH/pi-sessions -e /private/tmp/haochen-v032-r01-frozen-mount.Jb3EXE/haochen.app/Contents/Resources/ext/index.ts
+
+bundle binary hashes
+main=97443bc458a33b9459ebe7423efaf92f428e2403ee772ad5bc22c96a7b907626
+engine=07733b0bd8787447e009b7f5f959bafb8fb9c66cb360b3559dc1e9000b8be789
+
+first-run runtime state after the app bypassed onboarding
+onboarding_state={"version":2,"page":0,"completed":false}
+
+Keychain control measurement
+The app's visible custom-model save failed after exactly 10 seconds with a `/usr/bin/security add-generic-password ... -w` timeout and rolled back. Running `security add-generic-password -U` against the same isolated service/account and the same dummy QA key completed successfully in 0.02 seconds. No real credential was read or transmitted.
+
+character stability measurement
+The central 92x100 character crop in the initial and post-test idle captures measured 53.81 dB PSNR. Visual inspection found the same warm-orange face, ears, and hands, with no stable gray-purple tint or whole-body translucency.
+
+cleanup
+SIGTERM was sent to main PID 49973. The subsequent exact PID check returned no row for either 49973 or engine PID 49995. The temporary local model/screenshot fixtures were stopped, the dummy Keychain item was deleted, the DMG was detached, and the isolated Home plus review evidence were preserved.

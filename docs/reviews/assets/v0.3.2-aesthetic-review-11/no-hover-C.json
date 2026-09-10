@@ -1,0 +1,56 @@
+[
+  {
+    "event": "appeared",
+    "monotonic": 261338.766711541,
+    "mouse": [
+      900.0,
+      100.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1115.0,
+        "Y": 620.0,
+        "Width": 292.0,
+        "Height": 91.0
+      }
+    },
+    "inside": false,
+    "case": "C"
+  },
+  {
+    "event": "outside_no_hover",
+    "monotonic": 261338.771980083,
+    "mouse": [
+      900.0,
+      100.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1115.0,
+        "Y": 620.0,
+        "Width": 292.0,
+        "Height": 91.0
+      }
+    },
+    "inside": false
+  },
+  {
+    "event": "gone",
+    "monotonic": 261359.14923575,
+    "mouse": [
+      900.0,
+      100.0
+    ],
+    "window": null
+  }
+]

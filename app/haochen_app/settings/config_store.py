@@ -23,7 +23,9 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from haochen_app import paths
 from haochen_app.engine_client import haochen_home
@@ -53,6 +55,10 @@ THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 _PLACEHOLDER_KEY = "sk-在此填入你的-DeepSeek-Key"
 
 
+def urllib_host_label(url: str) -> str:
+    return urlsplit(url).hostname or "自定义模型"
+
+
 class ConfigCorruptError(Exception):
     """配置文件 JSON 损坏。``path`` 指给出问题的文件，``reset()`` 可恢复。"""
 
@@ -70,6 +76,8 @@ class ProviderInfo:
     name: str          # 显示名（缺省用 id）
     builtin: bool      # 无 baseUrl/api 定义 = 内建 provider
     models: list[dict] # [{id, name, reasoning, input, ...}]
+    base_url: str = ""
+    api: str = ""
 
 
 class ConfigStore:
@@ -192,8 +200,135 @@ class ConfigStore:
                 name=p.get("name") or pid,
                 builtin=not (p.get("baseUrl") or p.get("api")),
                 models=[m for m in p.get("models", []) if isinstance(m, dict) and m.get("id")],
+                base_url=p.get("baseUrl") or "",
+                api=p.get("api") or "",
             ))
         return out
+
+    def upsert_custom_model(
+        self,
+        *,
+        base_url: str,
+        model_id: str,
+        model_name: str = "",
+        provider_name: str = "",
+        key: str | None = None,
+        api: str = "openai-completions",
+        provider_id: str | None = None,
+        original_model_id: str | None = None,
+    ) -> tuple[str, str]:
+        """Atomically add/update one user-owned endpoint and select it as default."""
+        from ..key_validation import normalize_model_base_url
+
+        self.ensure_initialized()
+        normalized_url = normalize_model_base_url(base_url)
+        model_id = model_id.strip()
+        if not model_id:
+            raise ValueError("模型 ID 不能为空")
+        if len(model_id) > 128 or any(character.isspace() for character in model_id):
+            raise ValueError("模型 ID 不能超过 128 个字符或包含空白")
+        if len(model_name.strip()) > 64:
+            raise ValueError("显示名称不能超过 64 个字符")
+        if api not in {"openai-completions", "openai-responses"}:
+            raise ValueError("当前界面仅支持 OpenAI 兼容协议")
+        provider_id = provider_id or (
+            "custom-" + sha256(f"{api}\n{normalized_url}".encode()).hexdigest()[:10]
+        )
+        if not provider_id.startswith("custom-"):
+            raise ValueError("自定义模型不能覆盖内建供应商")
+        snapshots = {
+            name: (self.agent_dir / name).read_text(encoding="utf-8")
+            for name in (MODELS_FILE, SETTINGS_FILE, AUTH_FILE)
+        }
+        previous_key = self.keychain.get(provider_id)
+        try:
+            catalog = self._load(MODELS_FILE)
+            providers = catalog.setdefault("providers", {})
+            existing = providers.get(provider_id)
+            models = list(existing.get("models", [])) if isinstance(existing, dict) else []
+            if original_model_id and original_model_id != model_id:
+                models = [
+                    item for item in models
+                    if not (isinstance(item, dict) and item.get("id") == original_model_id)
+                ]
+            definition = {
+                "id": model_id,
+                "name": model_name.strip() or model_id,
+                "reasoning": False,
+                "input": ["text", "image"],
+                "contextWindow": 128000,
+                "maxTokens": 16384,
+            }
+            replaced = False
+            for index, model in enumerate(models):
+                if isinstance(model, dict) and model.get("id") == model_id:
+                    models[index] = {**model, **definition}
+                    replaced = True
+                    break
+            if not replaced:
+                models.append(definition)
+            providers[provider_id] = {
+                **(existing if isinstance(existing, dict) else {}),
+                "name": provider_name.strip() or urllib_host_label(normalized_url),
+                "baseUrl": normalized_url,
+                "api": api,
+                "models": models,
+            }
+            self._save(MODELS_FILE, catalog)
+            if key is not None:
+                self.set_key(provider_id, key)
+            self.set_default_model(provider_id, model_id)
+        except Exception:
+            for name, payload in snapshots.items():
+                atomic_write_private(self.agent_dir / name, payload)
+            if previous_key is None:
+                self.keychain.delete(provider_id)
+            else:
+                self.keychain.set(provider_id, previous_key)
+            raise
+        return provider_id, EFFECT_RESTART
+
+    def remove_custom_model(self, provider_id: str, model_id: str) -> str:
+        """Remove an exact custom model and repair the default selection transactionally."""
+        self.ensure_initialized()
+        catalog = self._load(MODELS_FILE)
+        providers = catalog.get("providers", {})
+        provider = providers.get(provider_id)
+        if not isinstance(provider, dict) or not (provider.get("baseUrl") or provider.get("api")):
+            raise ValueError("只能删除用户添加的模型")
+        snapshots = {
+            name: (self.agent_dir / name).read_text(encoding="utf-8")
+            for name in (MODELS_FILE, SETTINGS_FILE, AUTH_FILE)
+        }
+        previous_key = self.keychain.get(provider_id)
+        try:
+            remaining = [
+                item for item in provider.get("models", [])
+                if not (isinstance(item, dict) and item.get("id") == model_id)
+            ]
+            if remaining:
+                provider["models"] = remaining
+            else:
+                providers.pop(provider_id, None)
+                self.set_key(provider_id, "")
+            self._save(MODELS_FILE, catalog)
+            current_provider, current_model = self.default_model()
+            if current_provider == provider_id and current_model == model_id:
+                candidates = self.providers()
+                replacement = next(
+                    ((p.id, m["id"]) for p in candidates for m in p.models),
+                    ("", ""),
+                )
+                self.set_default_model(*replacement)
+        except Exception:
+            for name, payload in snapshots.items():
+                atomic_write_private(self.agent_dir / name, payload)
+            if previous_key is None:
+                self.keychain.delete(provider_id)
+            else:
+                self.keychain.set(provider_id, previous_key)
+            raise
+        return EFFECT_RESTART
 
     # ── settings.json ─────────────────────────────────────────
 
@@ -271,18 +406,28 @@ class ConfigStore:
         """Store a pre-validated key in Keychain and persist only an environment reference."""
         key = key.strip()
         auth = self._load(AUTH_FILE)
-        if key and is_indirect_reference(key):
-            self.keychain.delete(provider)
-            auth[provider] = {"type": "api_key", "key": key}
-        elif key:
-            self.keychain.set(provider, key)
-            if self.keychain.get(provider) != key:
-                raise RuntimeError("Keychain read-back verification failed")
-            auth[provider] = {"type": "api_key", "key": f"${credential_env_name(provider)}"}
-        else:
-            self.keychain.delete(provider)
-            auth.pop(provider, None)
-        self._save(AUTH_FILE, auth)
+        auth_snapshot = (self.agent_dir / AUTH_FILE).read_text(encoding="utf-8")
+        previous_key = self.keychain.get(provider)
+        try:
+            if key and is_indirect_reference(key):
+                self.keychain.delete(provider)
+                auth[provider] = {"type": "api_key", "key": key}
+            elif key:
+                self.keychain.set(provider, key)
+                if self.keychain.get(provider) != key:
+                    raise RuntimeError("Keychain read-back verification failed")
+                auth[provider] = {"type": "api_key", "key": f"${credential_env_name(provider)}"}
+            else:
+                self.keychain.delete(provider)
+                auth.pop(provider, None)
+            self._save(AUTH_FILE, auth)
+        except Exception:
+            atomic_write_private(self.agent_dir / AUTH_FILE, auth_snapshot)
+            if previous_key is None:
+                self.keychain.delete(provider)
+            else:
+                self.keychain.set(provider, previous_key)
+            raise
         return EFFECT_RESTART
 
 

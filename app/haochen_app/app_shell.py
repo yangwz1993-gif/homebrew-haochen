@@ -23,6 +23,7 @@ import logging
 import os
 from pathlib import Path
 
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from .chat import ChatWindow
@@ -45,6 +46,8 @@ class AppShell:
         self.chat.setStyleSheet(app_stylesheet())
         self.pet = PetApp(client=self.supervisor.client, supervisor=self.supervisor)
         self.settings = SettingsWindow(home=home, store=self.store)
+        self._apply_default_model_after_restart = False
+        self._pending_onboarding_trial: str | None = None
         self._wire()
 
     # ── 接线 ──────────────────────────────────────────────────
@@ -55,6 +58,7 @@ class AppShell:
         # 双入口联动：气泡「展开详细」→ 对话窗口从气泡 rect 动画展开（v0.1.4 hotfix）
         self.pet.detail_opener = self.chat.open_from_bubble
         self.pet.new_session_opener = self.chat._new_session
+        self.pet.interaction_guard = self._interaction_allowed
         self.pet.chat_requested.connect(self.show_chat)
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
         self.chat.normal_closed.connect(self._restore_pet_after_chat)
@@ -62,11 +66,8 @@ class AppShell:
         self.pet.credential_validation.connect(self._on_credential_validation)
         self.pet.read_permission_requested.connect(self._request_read_permission)
         self.chat.read_permission_requested.connect(self._request_read_permission)
-        sup.restart_failed.connect(
-            lambda: self._on_credential_validation(
-                False, "当前模型连接失败，请检查凭据或模型设置"
-            )
-        )
+        sup.restarted.connect(self._on_config_restart_completed)
+        sup.restart_failed.connect(self._on_config_restart_failed)
         self.settings.closed.connect(self.pet.restore_after_settings)
 
         # 配置 → 引擎生效链（M-D 预留信号，P4 接线）
@@ -98,7 +99,14 @@ class AppShell:
     # ── 双入口动作 ─────────────────────────────────────────────
 
     def show_chat(self) -> None:
+        if not self._interaction_allowed():
+            return
         self.pet._result_timer.stop()
+        # The compact composer is an alternate view of the same conversation.
+        # Preserve an unsent draft when the user taps its expand icon.
+        draft = self.pet.bubble.input.toPlainText()
+        if draft and not self.chat.input.toPlainText():
+            self.chat.input.setPlainText(draft)
         if self.pet.bubble.summoned:
             self.pet.bubble.dismiss()
         self.pet.pet.hide()
@@ -106,6 +114,8 @@ class AppShell:
 
     def new_session(self) -> None:
         """Create through the pet state reset and the chat session tracker exactly once."""
+        if not self._interaction_allowed():
+            return
         self.pet.new_session()
 
     def _restore_pet_after_chat(self) -> None:
@@ -113,6 +123,8 @@ class AppShell:
         self.pet.pet.raise_()
 
     def show_settings(self) -> None:
+        if not self._interaction_allowed():
+            return
         self.pet.suspend_for_settings()
         self.settings.show()
         self.settings.raise_()
@@ -137,6 +149,7 @@ class AppShell:
         if not self.supervisor.running:
             return  # 引擎还没起：下次启动即生效，无需打扰
         if os.environ.get("HAOCHEN_AUTO_RESTART") == "1":
+            self._apply_default_model_after_restart = True
             self.supervisor.restart_now()
             return
         box = QMessageBox(self.settings)
@@ -146,7 +159,26 @@ class AppShell:
         box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         box.setDefaultButton(QMessageBox.StandardButton.Yes)
         if box.exec() == QMessageBox.StandardButton.Yes:
+            self._apply_default_model_after_restart = True
             self.supervisor.restart_now()
+
+    def _on_config_restart_completed(self) -> None:
+        """Apply the configured default after Supervisor restores the old session."""
+        if self._apply_default_model_after_restart:
+            provider, model_id = self.store.default_model()
+            if provider and model_id:
+                self.supervisor.client.set_model(provider, model_id)
+            self._apply_default_model_after_restart = False
+        prompt, self._pending_onboarding_trial = self._pending_onboarding_trial, None
+        if prompt:
+            self._dispatch_onboarding_trial(prompt)
+
+    def _on_config_restart_failed(self) -> None:
+        self._apply_default_model_after_restart = False
+        self._pending_onboarding_trial = None
+        self._on_credential_validation(
+            False, "当前模型连接失败，请检查凭据或模型设置"
+        )
 
     # ── 首启引导 ───────────────────────────────────────────────
 
@@ -155,21 +187,57 @@ class AppShell:
         created = self.store.ensure_initialized()
         if created:
             log.info("config initialized: %s", [path.name for path in created])
-        from .onboarding import KEY_PAGE, OnboardingState, OnboardingWizard
+        from .onboarding import KEY_PAGE, PROFILE_PAGE, OnboardingState, OnboardingWizard
+        from .pet.profile import profile_needs_confirmation
 
         state = OnboardingState(self.store.home)
         if os.environ.get("HAOCHEN_SKIP_ONBOARDING") == "1":
             return
-        if state.completed and self.any_key_configured():
+        needs_profile = profile_needs_confirmation(self.store.home)
+        has_key = self.any_key_configured()
+        if state.completed and has_key and not needs_profile:
             return
-        if state.completed:
+        if state.completed and needs_profile:
+            state.completed = False
+            state.page = PROFILE_PAGE
+            state.save()
+        elif state.completed and not has_key:
             state.completed = False
             state.page = KEY_PAGE
+            state.save()
+        elif not state.completed and needs_profile and state.page > PROFILE_PAGE:
+            # An interrupted/migrated wizard must not jump over explicit identity consent.
+            state.page = PROFILE_PAGE
             state.save()
         self.onboarding = OnboardingWizard(self.store, parent=parent)
         self.onboarding.permission_requested.connect(self._request_onboarding_permission)
         self.onboarding.trial_requested.connect(self._send_onboarding_trial)
+        self.onboarding.finished.connect(self._on_onboarding_finished)
+        self.onboarding.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self._present_onboarding()
+
+    def _present_onboarding(self) -> None:
+        """Keep the first-run wizard in front of the always-on-top desktop pet."""
+        if not hasattr(self, "onboarding") or self.onboarding.state.completed:
+            return
+        self.pet.pet.hide()
         self.onboarding.show()
+        self.onboarding.raise_()
+        self.onboarding.activateWindow()
+
+    def _interaction_allowed(self) -> bool:
+        """Do not let global shortcuts or the pet route around a visible wizard."""
+        if hasattr(self, "onboarding") and self.onboarding.isVisible():
+            self._present_onboarding()
+            return False
+        return True
+
+    def _on_onboarding_finished(self, _result: int) -> None:
+        self.pet.pet.show()
+        self.pet.pet.raise_()
+        # Discovery help is intentionally suppressed while onboarding is
+        # visible; give it a fresh chance only after that surface is gone.
+        QTimer.singleShot(900, self.pet._maybe_show_discovery_hint)
 
     def any_key_configured(self) -> bool:
         try:
@@ -186,6 +254,20 @@ class AppShell:
             request_screen_recording()
 
     def _send_onboarding_trial(self, prompt: str) -> None:
+        provider, model_id = self.store.default_model()
+        if self.supervisor.running and provider.startswith("custom-"):
+            # The custom provider was written after the engine started. Restart
+            # to reload its catalog, then override the restored session's old
+            # model before sending the first trial prompt.
+            self._pending_onboarding_trial = prompt
+            self._apply_default_model_after_restart = True
+            self.supervisor.restart_now()
+            return
+        if self.supervisor.running and provider and model_id:
+            self.supervisor.client.set_model(provider, model_id)
+        self._dispatch_onboarding_trial(prompt)
+
+    def _dispatch_onboarding_trial(self, prompt: str) -> None:
         if not self.pet.bubble.summoned:
             self.pet._toggle_bubble()
         self.pet.send(prompt)
@@ -198,6 +280,10 @@ class AppShell:
         self.chat.start()         # 拉 get_state 就绪（窗口默认不显示）
         self._install_app_tracker()
         self._reconcile_tcc()
+        if hasattr(self, "onboarding") and not self.onboarding.state.completed:
+            # pet.start() shows its always-on-top window after first_run_setup().
+            # Re-present once the event loop starts so the wizard cannot end up behind it.
+            QTimer.singleShot(0, self._present_onboarding)
 
     def _reconcile_tcc(self) -> None:
         """构建指纹检查（v0.1.4 hotfix）：版本/签名变更 → 清历史 TCC 记录，强制重新授权。

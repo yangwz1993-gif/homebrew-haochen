@@ -1,0 +1,16 @@
+{
+  "base": 310438.39075,
+  "appearedAt": 310841.507625,
+  "enteredAt": 311109.492833,
+  "leftAt": null,
+  "goneAt": 321693.743291,
+  "appearedRelMs": 403.116875000007,
+  "enteredRelMs": 671.1020830000052,
+  "leftRelMs": null,
+  "goneRelMs": 11255.352541,
+  "hoverObservedMs": 10584.251582999947,
+  "held22s": false,
+  "disappearedDuringHover": true,
+  "afterLeaveMs": null,
+  "totalWallMs": 10852.235665999993
+}

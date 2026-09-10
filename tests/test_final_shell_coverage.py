@@ -73,9 +73,11 @@ def test_first_run_setup_shows_wizard_when_incomplete(qtbot, tmp_path: Path) -> 
 
 def test_first_run_setup_reopens_at_key_page_when_key_missing(qtbot, tmp_path: Path) -> None:
     from haochen_app.onboarding import KEY_PAGE, OnboardingState
+    from haochen_app.pet.profile import save_user_name
 
     shell = AppShell(mock=True, home=tmp_path)
     qtbot.addWidget(shell.chat)
+    save_user_name("", source="onboarding", home=shell.store.home)
 
     # 模拟"完成过向导但 Keychain 后来被清空"
     state = OnboardingState(shell.store.home)
@@ -93,10 +95,12 @@ def test_first_run_setup_reopens_at_key_page_when_key_missing(qtbot, tmp_path: P
 
 def test_completed_onboarding_with_key_skips(qtbot, tmp_path: Path) -> None:
     from haochen_app.onboarding import OnboardingState
+    from haochen_app.pet.profile import save_user_name
 
     shell = AppShell(mock=True, home=tmp_path)
     qtbot.addWidget(shell.chat)
     shell.store.set_key("deepseek", "configured-secret")
+    save_user_name("", source="onboarding", home=shell.store.home)
     state = OnboardingState(shell.store.home)
     state.completed = True
     state.save()

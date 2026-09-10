@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
@@ -42,3 +44,73 @@ def validate_api_key(provider: str, key: str, *, timeout: float = 10.0) -> Valid
     if 200 <= status < 300:
         return ValidationResult(True, "连接验证成功")
     return ValidationResult(False, f"服务返回 HTTP {status}")
+
+
+def normalize_model_base_url(value: str) -> str:
+    """Validate and normalize a user-owned model endpoint without accepting embedded secrets."""
+    raw = value.strip().rstrip("/")
+    parsed = urllib.parse.urlsplit(raw)
+    host = (parsed.hostname or "").lower()
+    is_local = host in {"localhost", "127.0.0.1", "::1"}
+    if parsed.scheme not in ({"http", "https"} if is_local else {"https"}):
+        raise ValueError("公网模型地址必须使用 HTTPS；本机 localhost 可使用 HTTP")
+    if not host:
+        raise ValueError("请输入完整的模型 API 地址")
+    if parsed.username or parsed.password:
+        raise ValueError("URL 中不能携带账号或密钥")
+    if parsed.query or parsed.fragment:
+        raise ValueError("模型 API 地址不能带查询参数或锚点")
+    return raw
+
+
+def validate_custom_model(
+    base_url: str,
+    model_id: str,
+    key: str,
+    *,
+    timeout: float = 10.0,
+) -> ValidationResult:
+    """Probe an OpenAI-compatible endpoint before committing any local configuration."""
+    try:
+        normalized = normalize_model_base_url(base_url)
+    except ValueError as exc:
+        return ValidationResult(False, str(exc))
+    if not model_id.strip():
+        return ValidationResult(False, "请输入模型 ID")
+    if not key.strip():
+        return ValidationResult(False, "请输入 API Key")
+    headers = {"User-Agent": "haochen/0.3.2", "Accept": "application/json"}
+    if key.strip():
+        headers["Authorization"] = f"Bearer {key.strip()}"
+    request = urllib.request.Request(f"{normalized}/models", headers=headers)
+    payload: bytes = b""
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", 200))
+            if callable(reader := getattr(response, "read", None)):
+                raw_payload = reader(1_000_001)
+                if isinstance(raw_payload, bytes):
+                    payload = raw_payload
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return ValidationResult(False, "Key 无效或没有访问权限")
+        return ValidationResult(False, f"模型服务返回 HTTP {exc.code}")
+    except (OSError, urllib.error.URLError, ValueError):
+        return ValidationResult(False, "无法连接该模型地址")
+    if 200 <= status < 300:
+        if len(payload) > 1_000_000:
+            return ValidationResult(False, "模型列表响应过大，无法安全验证")
+        try:
+            data = json.loads(payload) if payload else None
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            data = None
+        entries = data.get("data") if isinstance(data, dict) else None
+        ids = {
+            item.get("id")
+            for item in entries or []
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if ids and model_id.strip() not in ids:
+            return ValidationResult(False, f"服务可连接，但没有找到模型 {model_id.strip()}")
+        return ValidationResult(True, "连接验证成功")
+    return ValidationResult(False, f"模型服务返回 HTTP {status}")

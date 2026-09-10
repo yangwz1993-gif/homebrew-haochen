@@ -1,0 +1,10 @@
+candidate app/engine processes: none
+fixture process: none
+tcp port 18433 listener: none
+keychain service com.haochen.qa.v032.r11.fresh.P4mN8x: absent
+DMG mount /private/tmp/haochen-aesthetic-r11-valid/mnt: absent
+isolated root /private/tmp/haochen-aesthetic-r11-valid: absent (moved to Trash)
+default keychain: /Users/yangwz/Library/Keychains/login.keychain-db
+keychain search list:
+  /Users/yangwz/Library/Keychains/haochen-signing.keychain-db
+  /Users/yangwz/Library/Keychains/login.keychain-db

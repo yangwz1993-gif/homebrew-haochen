@@ -1,0 +1,23 @@
+haochen v0.3.2 aesthetic review round 07 — monotonic timing proof
+Date: 2026-09-10 Asia/Shanghai
+Polling granularity: approximately 100 ms; UI screenshots add sub-second overhead.
+
+Group A:
+- result outside-hover runtime before entering card: 8507.391 ms
+- result-visible to hover entry including screenshot overhead: 8907.397 ms
+- continuous hover in result text/card region: 8000.577 ms
+- present at end of hover: yes
+- cross-app leave proof: TextEdit text area clicked and TextEdit active screenshot captured
+- still present 58884.594 ms after the confirmed TextEdit-area click
+- expected leave-to-dismiss: about 11-12 s
+- outcome: FAIL; pause worked, but countdown did not resume after cross-app pointer leave
+
+Group B:
+- result-visible to hover entry: 255.627 ms
+- continuous hover in result text/card region: 22000.853 ms
+- present at end of hover: yes
+- cross-app leave proof: TextEdit text area clicked and TextEdit active screenshot captured
+- still present 22977.551 ms after leave
+- expected leave-to-dismiss: about 20 s (allowing about 1 s observation error)
+- outcome: FAIL; pause worked, but countdown did not resume after cross-app pointer leave
+

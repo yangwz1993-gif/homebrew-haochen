@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "app"))
 keychain = importlib.import_module("haochen_app.keychain")
 config_module = importlib.import_module("haochen_app.settings.config_store")
 onboarding = importlib.import_module("haochen_app.onboarding")
+profile = importlib.import_module("haochen_app.pet.profile")
 validation = importlib.import_module("haochen_app.key_validation")
 
 
@@ -78,12 +79,17 @@ def test_interrupted_wizard_resumes_and_completion_persists(qtbot, tmp_path: Pat
     wizard.show()
     wizard.next()
     wizard.next()
+    wizard.next()
     assert wizard.currentId() == onboarding.PERMISSIONS_PAGE
     wizard.close()
 
     resumed = onboarding.OnboardingWizard(store)
     qtbot.addWidget(resumed)
     resumed.show()
+    assert resumed.currentId() == onboarding.PERMISSIONS_PAGE
+    resumed.back()
+    assert resumed.currentId() == onboarding.KEY_PAGE
+    resumed.next()
     assert resumed.currentId() == onboarding.PERMISSIONS_PAGE
     resumed.next()
     prompts: list[str] = []
@@ -95,12 +101,89 @@ def test_interrupted_wizard_resumes_and_completion_persists(qtbot, tmp_path: Pat
     assert prompts == ["你好，请用一句话介绍你能帮我做什么"]
 
 
-def test_resume_cannot_skip_missing_key(tmp_path: Path) -> None:
+def test_resume_cannot_skip_profile_or_missing_key(qtbot, tmp_path: Path) -> None:
     store, _credentials = make_store(tmp_path)
     state = onboarding.OnboardingState(store.home)
     state.page = onboarding.TRIAL_PAGE
     state.save()
 
     wizard = onboarding.OnboardingWizard(store)
+    qtbot.addWidget(wizard)
+    wizard.show()
 
-    assert wizard.startId() == onboarding.KEY_PAGE
+    assert wizard.startId() == onboarding.WELCOME_PAGE
+    assert wizard.currentId() == onboarding.PROFILE_PAGE
+    assert not wizard.key_page.isComplete()
+
+
+def test_custom_model_resume_keeps_verified_page_and_prefills_fields(qtbot, tmp_path: Path) -> None:
+    store, _credentials = make_store(tmp_path)
+    profile.save_user_name("", source="onboarding", home=store.home)
+    store.upsert_custom_model(
+        base_url="http://127.0.0.1:18766/v1",
+        model_id="qa-local-r02",
+        model_name="QA Local",
+        key="non-sensitive-test-key",
+    )
+    state = onboarding.OnboardingState(store.home)
+    state.page = onboarding.PERMISSIONS_PAGE
+    state.save()
+
+    wizard = onboarding.OnboardingWizard(store)
+    qtbot.addWidget(wizard)
+    wizard.show()
+
+    assert wizard.startId() == onboarding.WELCOME_PAGE
+    assert wizard.currentId() == onboarding.PERMISSIONS_PAGE
+    assert wizard.key_page.mode_combo.currentData() == "custom"
+    assert wizard.key_page.url_edit.text() == "http://127.0.0.1:18766/v1"
+    assert wizard.key_page.model_id_edit.text() == "qa-local-r02"
+    assert wizard.key_page.isComplete()
+
+
+def test_resumed_trial_can_go_back_to_hydrated_custom_model(qtbot, tmp_path: Path) -> None:
+    store, _credentials = make_store(tmp_path)
+    profile.save_user_name("", source="onboarding", home=store.home)
+    store.upsert_custom_model(
+        base_url="http://127.0.0.1:18766/v1",
+        model_id="qa-local-r03",
+        model_name="QA Local Round 03",
+        key="non-sensitive-test-key",
+    )
+    state = onboarding.OnboardingState(store.home)
+    state.page = onboarding.TRIAL_PAGE
+    state.save()
+
+    wizard = onboarding.OnboardingWizard(store)
+    qtbot.addWidget(wizard)
+    wizard.show()
+
+    assert wizard.currentId() == onboarding.TRIAL_PAGE
+    assert wizard.button(onboarding.QWizard.WizardButton.BackButton).isEnabled()
+    wizard.back()
+    wizard.back()
+    assert wizard.currentId() == onboarding.KEY_PAGE
+    assert wizard.key_page.mode_combo.currentData() == "custom"
+    assert wizard.key_page.url_edit.text() == "http://127.0.0.1:18766/v1"
+    assert wizard.key_page.model_id_edit.text() == "qa-local-r03"
+    assert wizard.key_page.model_name_edit.text() == "QA Local Round 03"
+    assert wizard.key_page.isComplete()
+
+
+def test_editing_prefilled_custom_model_requires_revalidation(qtbot, tmp_path: Path) -> None:
+    store, _credentials = make_store(tmp_path)
+    store.upsert_custom_model(
+        base_url="http://127.0.0.1:18766/v1",
+        model_id="qa-local-r02",
+        model_name="QA Local",
+        key="non-sensitive-test-key",
+    )
+    page = onboarding.KeyPage(store, lambda *_args: validation.ValidationResult(True, "ok"))
+    qtbot.addWidget(page)
+    assert page.isComplete()
+
+    page.model_id_edit.setFocus()
+    qtbot.keyClicks(page.model_id_edit, "-changed")
+
+    assert not page.isComplete()
+    assert "重新验证" in page.status.text()

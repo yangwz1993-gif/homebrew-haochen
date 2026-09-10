@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QToolButton,
@@ -33,7 +34,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..key_validation import validate_api_key
+from ..key_validation import validate_api_key, validate_custom_model
+from ..pet.profile import load_name_candidate, profile_needs_confirmation, save_user_name
 from . import theme
 from .config_store import (
     EFFECT_IMMEDIATE,
@@ -72,6 +74,7 @@ class SettingsWindow(QWidget):
     thinkingLevelChanged = pyqtSignal(str)   # 默认思考档变化
     restartRequired = pyqtSignal(str)        # 改动需重启引擎生效（原因描述）
     keyValidationFinished = pyqtSignal(str, str, bool, str)
+    customModelValidationFinished = pyqtSignal(object, bool, str)
     closed = pyqtSignal()                    # 壳层用于恢复打开设置前的临时气泡上下文
 
     def __init__(
@@ -83,8 +86,11 @@ class SettingsWindow(QWidget):
         super().__init__(parent)
         self.store = store or ConfigStore(home)
         self._pending_key_validations: dict[str, tuple[str, QLineEdit, QLabel, QPushButton]] = {}
+        self._pending_custom_model: dict | None = None
+        self._editing_custom: tuple[str, str] | None = None
         self._runtime_key_validation: dict[str, tuple[bool, str]] = {}
         self.keyValidationFinished.connect(self._on_key_validation_finished)
+        self.customModelValidationFinished.connect(self._on_custom_model_validation_finished)
         self.setWindowTitle("haochen 设置")
         self.setMinimumWidth(580)
         self.resize(640, 720)
@@ -138,10 +144,40 @@ class SettingsWindow(QWidget):
         self._providers = providers
         self._body.addWidget(self._model_card(providers, settings))
         self._body.addWidget(self._keys_card(providers))
+        self._body.addWidget(self._custom_model_card(providers))
+        self._body.addWidget(self._profile_card())
         self._body.addWidget(self._behavior_card(settings))
         self._body.addWidget(self._signature_card())
         self._body.addWidget(self._theme_card())
         self._body.addStretch(1)
+
+    def _profile_card(self) -> QFrame:
+        card, lay = _card(
+            "称呼",
+            "桌宠的名字固定是 haochen；这里只设置它如何称呼你。留空则自然称“你”。",
+        )
+        row = QHBoxLayout()
+        self._profile_name_edit = QLineEdit(load_name_candidate(self.store.home))
+        self._profile_name_edit.setMaxLength(32)
+        self._profile_name_edit.setPlaceholderText("例如：小杨（可选）")
+        row.addWidget(self._profile_name_edit, 1)
+        save = QPushButton("保存称呼")
+        save.setObjectName("primaryBtn")
+        save.clicked.connect(self._save_profile_name)
+        row.addWidget(save)
+        lay.addLayout(row)
+        if profile_needs_confirmation(self.store.home) and load_name_candidate(self.store.home):
+            warning = QLabel("这是旧版本留下的未确认称呼；保存前不会注入对话。", objectName="statusWarn")
+            warning.setWordWrap(True)
+            lay.addWidget(warning)
+        return card
+
+    def _save_profile_name(self) -> None:
+        value = self._profile_name_edit.text().strip()
+        if not save_user_name(value, source="settings", home=self.store.home):
+            self._set_status("称呼保存失败，请检查磁盘权限后重试", ok=False)
+            return
+        self._set_status("称呼已清除，haochen 会自然称“你”" if not value else f"已保存称呼：{value}", ok=True)
 
     def _corrupt_card(self, err: ConfigCorruptError) -> QFrame:
         card, lay = _card("配置文件损坏")
@@ -234,12 +270,216 @@ class SettingsWindow(QWidget):
 
     # ── API Key ───────────────────────────────────────────────
 
+    def _custom_model_card(self, providers) -> QFrame:
+        card, lay = _card(
+            "自定义模型",
+            "适用于 OpenAI 兼容服务。连接测试通过后才保存并切换；Key 只进入 macOS Keychain。",
+        )
+        self._custom_form_toggle = QPushButton("＋ 添加自定义模型")
+        self._custom_form_toggle.setAccessibleName("展开自定义模型配置")
+        self._custom_form_toggle.clicked.connect(self._toggle_custom_form)
+        lay.addWidget(self._custom_form_toggle, alignment=Qt.AlignmentFlag.AlignLeft)
+        self._custom_form = QWidget()
+        form = QVBoxLayout(self._custom_form)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(10)
+        self._custom_url_edit = QLineEdit()
+        self._custom_url_edit.setMaxLength(2048)
+        self._custom_url_edit.setPlaceholderText("API 根地址，例如 https://example.com/v1")
+        self._custom_model_id_edit = QLineEdit()
+        self._custom_model_id_edit.setMaxLength(128)
+        self._custom_model_id_edit.setPlaceholderText("模型 ID，例如 gpt-4.1-mini")
+        self._custom_model_name_edit = QLineEdit()
+        self._custom_model_name_edit.setMaxLength(64)
+        self._custom_model_name_edit.setPlaceholderText("显示名称（可选）")
+        self._custom_key_edit = QLineEdit()
+        self._custom_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._custom_key_edit.setPlaceholderText("API Key（编辑时留空表示不替换）")
+        self._custom_api_combo = QComboBox()
+        self._custom_api_combo.addItem("OpenAI Chat Completions", "openai-completions")
+        self._custom_api_combo.addItem("OpenAI Responses", "openai-responses")
+        for label, widget in (
+            ("API URL", self._custom_url_edit),
+            ("模型 ID", self._custom_model_id_edit),
+            ("显示名称", self._custom_model_name_edit),
+            ("协议", self._custom_api_combo),
+            ("API Key", self._custom_key_edit),
+        ):
+            row = QHBoxLayout()
+            field_label = QLabel(label)
+            field_label.setMinimumWidth(82)
+            row.addWidget(field_label)
+            row.addWidget(widget, 1)
+            form.addLayout(row)
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self._custom_cancel_button = QPushButton("取消编辑")
+        self._custom_cancel_button.clicked.connect(self._clear_custom_form)
+        self._custom_cancel_button.hide()
+        actions.addWidget(self._custom_cancel_button)
+        self._custom_save_button = QPushButton("测试并保存")
+        self._custom_save_button.setObjectName("primaryBtn")
+        self._custom_save_button.clicked.connect(self._save_custom_model)
+        actions.addWidget(self._custom_save_button)
+        form.addLayout(actions)
+        lay.addWidget(self._custom_form)
+        self._custom_form.hide()
+        custom = [p for p in providers if not p.builtin]
+        if custom:
+            lay.addWidget(QLabel("已添加", objectName="cardTitle"))
+        for provider in custom:
+            for model in provider.models:
+                row = QHBoxLayout()
+                summary = QLabel(
+                    f"{model.get('name') or model['id']}  ·  {provider.name}\n{provider.base_url}",
+                    objectName="hint",
+                    wordWrap=True,
+                )
+                row.addWidget(summary, 1)
+                edit = QPushButton("编辑")
+                edit.clicked.connect(
+                    lambda _checked=False, p=provider, m=model: self._edit_custom_model(p, m)
+                )
+                row.addWidget(edit)
+                remove = QPushButton("删除", objectName="danger")
+                remove.clicked.connect(
+                    lambda _checked=False, pid=provider.id, mid=model["id"]: self._confirm_remove_custom_model(pid, mid)
+                )
+                row.addWidget(remove)
+                lay.addLayout(row)
+        return card
+
+    def _toggle_custom_form(self) -> None:
+        show = self._custom_form.isHidden()
+        self._custom_form.setVisible(show)
+        self._custom_form_toggle.setText("收起配置" if show else "＋ 添加自定义模型")
+        self._custom_form_toggle.setAccessibleName(
+            "收起自定义模型配置" if show else "展开自定义模型配置"
+        )
+        if show:
+            self._custom_url_edit.setFocus()
+
+    def _edit_custom_model(self, provider, model: dict) -> None:
+        self._editing_custom = (provider.id, model["id"])
+        self._custom_url_edit.setText(provider.base_url)
+        self._custom_model_id_edit.setText(model["id"])
+        self._custom_model_name_edit.setText(model.get("name") or "")
+        if (index := self._custom_api_combo.findData(provider.api or "openai-completions")) >= 0:
+            self._custom_api_combo.setCurrentIndex(index)
+        self._custom_key_edit.clear()
+        self._custom_cancel_button.show()
+        self._custom_save_button.setText("测试并更新")
+        self._custom_form.show()
+        self._custom_form_toggle.setText("收起编辑")
+        self._custom_form_toggle.setAccessibleName("收起自定义模型编辑")
+        self._custom_url_edit.setFocus()
+
+    def _clear_custom_form(self) -> None:
+        self._editing_custom = None
+        for edit in (
+            self._custom_url_edit,
+            self._custom_model_id_edit,
+            self._custom_model_name_edit,
+            self._custom_key_edit,
+        ):
+            edit.clear()
+        self._custom_cancel_button.hide()
+        self._custom_save_button.setText("测试并保存")
+        self._custom_form.hide()
+        self._custom_form_toggle.setText("＋ 添加自定义模型")
+        self._custom_form_toggle.setAccessibleName("展开自定义模型配置")
+
+    def _confirm_remove_custom_model(self, provider_id: str, model_id: str) -> None:
+        answer = QMessageBox.question(
+            self,
+            "删除自定义模型",
+            f"确定删除「{model_id}」吗？如果这是该服务的最后一个模型，对应 Key 也会从 Keychain 删除。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._remove_custom_model(provider_id, model_id)
+
+    def _save_custom_model(self) -> None:
+        editing_provider, editing_model = self._editing_custom or (None, None)
+        candidate = {
+            "base_url": self._custom_url_edit.text().strip(),
+            "model_id": self._custom_model_id_edit.text().strip(),
+            "model_name": self._custom_model_name_edit.text().strip(),
+            "api": self._custom_api_combo.currentData(),
+            "key": self._custom_key_edit.text().strip(),
+            "provider_id": editing_provider,
+            "original_model_id": editing_model,
+        }
+        if not candidate["base_url"] or not candidate["model_id"]:
+            self._set_status("请填写 API URL 和模型 ID", ok=False)
+            return
+        effective_key = candidate["key"]
+        if editing_provider and not effective_key:
+            effective_key = self.store.keychain.get(editing_provider) or ""
+        self._pending_custom_model = candidate
+        self._custom_save_button.setEnabled(False)
+        self._custom_form_toggle.setEnabled(False)
+        self._custom_cancel_button.setEnabled(False)
+        self._custom_save_button.setText("测试中…")
+
+        def validate() -> None:
+            result = validate_custom_model(
+                candidate["base_url"], candidate["model_id"], effective_key
+            )
+            self.customModelValidationFinished.emit(candidate, result.ok, result.message)
+
+        threading.Thread(target=validate, name="haochen-custom-model-check", daemon=True).start()
+
+    def _on_custom_model_validation_finished(self, candidate: dict, ok: bool, message: str) -> None:
+        if self._pending_custom_model is not candidate:
+            return
+        self._pending_custom_model = None
+        self._custom_save_button.setEnabled(True)
+        self._custom_form_toggle.setEnabled(True)
+        self._custom_cancel_button.setEnabled(True)
+        self._custom_save_button.setText("测试并更新" if self._editing_custom else "测试并保存")
+        if not ok:
+            self._set_status(f"连接失败：{message}；原配置未更改", ok=False)
+            return
+        key = candidate["key"] if candidate["key"] else None
+        try:
+            provider, _effect = self.store.upsert_custom_model(
+                base_url=candidate["base_url"],
+                model_id=candidate["model_id"],
+                model_name=candidate["model_name"],
+                key=key,
+                api=candidate["api"],
+                provider_id=candidate["provider_id"],
+                original_model_id=candidate["original_model_id"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(f"保存失败：{exc}；已恢复原配置", ok=False)
+            return
+        self._editing_custom = None
+        self._runtime_key_validation[provider] = (True, message)
+        self._set_status(f"已安全保存并切换到 {candidate['model_id']}", ok=True)
+        self.restartRequired.emit("自定义模型配置已更新")
+        self._build()
+
+    def _remove_custom_model(self, provider_id: str, model_id: str) -> None:
+        try:
+            self.store.remove_custom_model(provider_id, model_id)
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(f"删除失败：{exc}", ok=False)
+            return
+        self._set_status(f"已删除自定义模型 {model_id}", ok=True)
+        self.restartRequired.emit("自定义模型已删除")
+        self._build()
+
     def _keys_card(self, providers) -> QFrame:
         card, lay = _card(
             "API Key",
             "新 Key 会先验证连接，成功后才保存到 macOS Keychain；失败不会覆盖当前 Key。",
         )
         for p in providers:
+            if not p.builtin:
+                continue  # 自定义端点的 Key 与 URL/模型作为一个事务管理
             configured, status = self.store.key_status(p.id)
             key = self.store.get_key(p.id)
             runtime = self._runtime_key_validation.get(p.id)

@@ -1,6 +1,6 @@
-# v0.3.1 正式发布清单
+# v0.3.2 正式发布清单
 
-> 更新：2026-09-09。所有者明确选择 v0.3.1 延续上一版 legacy DMG + Homebrew
+> 更新：2026-09-10。所有者明确选择 v0.3.2 延续上一版 legacy DMG + Homebrew
 > Cask 分发：App 使用稳定的发布者自签身份，不经过 Apple 公证；Cask 安装后移除
 > quarantine。不得把该产物描述为 Developer ID、Notarized 或 Gatekeeper 认证版本。
 
@@ -8,13 +8,13 @@
 
 | 门禁 | 证据 | 状态 |
 |---|---|---|
-| 独立用户验收 | 第 1、2 轮问题均已修复；第 3 轮因隔离失效作废；第 4 轮与最终封板第 5 轮均通过 | PASS |
-| 代码质量 | `make check`：342 tests，coverage 85% | PASS |
+| 独立用户验收 | 第 11 轮黑盒验收 PASS；连续结果、系统级 hover 与完整产品路径均通过，P0/P1/P2 均为 0 | PASS |
+| 代码质量 | `make check`：367 tests，coverage 83% | PASS |
 | 分层回归 | `make regressions`：6/6 | PASS |
-| PR | v0.3.1 修复分支和远端 macOS quality gate | 待提交复核 |
+| PR | [#8](https://github.com/yangwz1993-gif/homebrew-haochen/pull/8)；首轮 CI PASS，新修复提交后重跑 | 进行中 |
 | 发布模式 | 所有者 2026-09-09 明确选择 legacy | 已授权 |
 | 签名 | `haochen Local Signing`，门禁确认不是 ad-hoc | PASS |
-| DMG / Cask | `haochen-0.3.1.dmg`；SHA-256 `7ad032c0d43be1852222692cdec8bcae14fa1a9772b0b00f6944f9030931545e`；legacy preflight | PASS |
+| DMG / Cask | 唯一候选 `90baf661…a693a`；legacy preflight 与第 11 轮独立验收均 PASS | PASS |
 | Homebrew 安装 | 从线上 Release 安装、启动、升级与卸载 | 待发布复核 |
 
 ## 风险边界
@@ -27,7 +27,7 @@
 
 ## 发布步骤
 
-1. 将版本稳定为 `0.3.1`，同步 Python、引擎与锁文件，完成 CHANGELOG/README。
+1. 将版本稳定为 `0.3.2`，同步 Python、引擎与锁文件，完成 CHANGELOG/README。
 2. 执行完整验证并确认 PR CI 通过：
 
    ```bash
@@ -45,7 +45,7 @@
 
    ```bash
    uv run python scripts/version.py render-cask --legacy \
-     packaging/dist/haochen-0.3.1.dmg
+     packaging/dist/haochen-0.3.2.dmg
    ```
 
 5. 运行 legacy 产物门禁；它会验证 App/内嵌版本、稳定自签身份、拒绝 ad-hoc、DMG
@@ -54,13 +54,13 @@
    ```bash
    bash scripts/release_preflight.sh legacy-artifacts \
      packaging/dist/haochen.app \
-     packaging/dist/haochen-0.3.1.dmg \
+     packaging/dist/haochen-0.3.2.dmg \
      Casks/haochen.rb
    ```
 
-6. 提交稳定版本与 Cask，复跑 `make check` 并等待远端 CI 通过；将 v0.3.1 PR 合并到
+6. 提交稳定版本与 Cask，复跑 `make check` 并等待远端 CI 通过；将 v0.3.2 PR 合并到
    `main`。标签必须指向包含完整源码和最终 Cask 的 `main` 提交。
-7. 创建不可变标签 `v0.3.1` 和 GitHub Release，上传门禁验证过的同一个 DMG；Release
+7. 创建不可变标签 `v0.3.2` 和 GitHub Release，上传门禁验证过的同一个 DMG；Release
    Notes 明确“未经 Apple 公证，建议使用 Homebrew 安装”。
 8. 从线上渠道复核：
 
@@ -75,12 +75,12 @@
 
 ## 放行定义
 
-只有以下条件同时成立，才能称为“v0.3.1 legacy Homebrew 版已交付”：
+只有以下条件同时成立，才能称为“v0.3.2 legacy Homebrew 版已交付”：
 
-- v0.3.1 修复后最终 legacy 包独立用户验收 PASS；
+- v0.3.2 修复后最终 legacy 包独立用户验收 PASS；
 - `main` 稳定版本源码、本地检查、回归和远端 CI 全绿；
 - App 使用 `haochen Local Signing`，不是 ad-hoc；
-- DMG、App、内嵌版本、Cask、标签和 Release 全为 `0.3.1`；
+- DMG、App、内嵌版本、Cask、标签和 Release 全为 `0.3.2`；
 - 本地与线上 DMG SHA-256 等同 Cask；
 - Homebrew 安装、首次启动、升级与卸载复核通过；
 - README、Cask、Release Notes 均清楚披露未经 Apple 公证。

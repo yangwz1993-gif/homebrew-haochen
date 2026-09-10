@@ -1,0 +1,122 @@
+[
+  {
+    "event": "appeared",
+    "monotonic": 261137.988110958,
+    "mouse": [
+      900.0,
+      100.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1115.0,
+        "Y": 618.0,
+        "Width": 292.0,
+        "Height": 91.0
+      }
+    },
+    "inside": false,
+    "case": "A"
+  },
+  {
+    "event": "outside_8s",
+    "monotonic": 261145.999223083,
+    "mouse": [
+      900.0,
+      100.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1027.0,
+        "Y": 516.0,
+        "Width": 380.0,
+        "Height": 193.0
+      }
+    },
+    "inside": false
+  },
+  {
+    "event": "entered",
+    "monotonic": 261146.00414025,
+    "mouse": [
+      1217.0,
+      602.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1027.0,
+        "Y": 516.0,
+        "Width": 380.0,
+        "Height": 193.0
+      }
+    },
+    "inside": true
+  },
+  {
+    "event": "held_8s",
+    "monotonic": 261154.008872208,
+    "mouse": [
+      1217.0,
+      602.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1027.0,
+        "Y": 516.0,
+        "Width": 380.0,
+        "Height": 193.0
+      }
+    },
+    "inside": true
+  },
+  {
+    "event": "left",
+    "monotonic": 261154.01891025,
+    "mouse": [
+      900.0,
+      100.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1027.0,
+        "Y": 516.0,
+        "Width": 380.0,
+        "Height": 193.0
+      }
+    },
+    "inside": false
+  },
+  {
+    "event": "gone",
+    "monotonic": 261166.389568125,
+    "mouse": [
+      900.0,
+      100.0
+    ],
+    "window": null
+  }
+]

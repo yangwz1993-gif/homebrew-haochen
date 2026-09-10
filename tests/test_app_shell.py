@@ -144,6 +144,55 @@ def test_onboarding_trial_sends_via_pet(qtbot, tmp_path: Path) -> None:
     assert sent == ["你好"]
 
 
+def test_custom_onboarding_trial_restarts_then_applies_model(
+    qtbot, tmp_path: Path
+) -> None:
+    shell = make_shell(tmp_path)
+    qtbot.addWidget(shell.chat)
+    start_engine(shell)
+    provider, _effect = shell.store.upsert_custom_model(
+        base_url="http://127.0.0.1:18770/v1",
+        model_id="qa-local",
+        model_name="QA Local",
+    )
+    restarted: list[bool] = []
+    selected: list[tuple[str, str]] = []
+    sent: list[str] = []
+    shell.supervisor.restart_now = lambda: restarted.append(True)
+    shell.supervisor.client.set_model = lambda p, m: selected.append((p, m)) or "m-1"
+    shell.pet.send = sent.append
+
+    shell._send_onboarding_trial("你好")
+
+    assert restarted == [True]
+    assert sent == []
+    shell.supervisor.restarted.emit()
+    assert selected == [(provider, "qa-local")]
+    assert sent == ["你好"]
+    shell.stop()
+
+
+def test_settings_restart_applies_default_after_session_restore(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    shell = make_shell(tmp_path)
+    qtbot.addWidget(shell.chat)
+    start_engine(shell)
+    shell.store.set_default_model("deepseek", "m2")
+    selected: list[tuple[str, str]] = []
+    restarted: list[bool] = []
+    shell.supervisor.client.set_model = lambda p, m: selected.append((p, m)) or "m-1"
+    shell.supervisor.restart_now = lambda: restarted.append(True)
+    monkeypatch.setenv("HAOCHEN_AUTO_RESTART", "1")
+
+    shell._on_restart_required("测试")
+    shell.supervisor.restarted.emit()
+
+    assert restarted == [True]
+    assert selected == [("deepseek", "m2")]
+    shell.stop()
+
+
 def test_restart_failure_marks_current_connection_invalid_in_settings(qtbot, tmp_path: Path) -> None:
     shell = make_shell(tmp_path)
     qtbot.addWidget(shell.chat)

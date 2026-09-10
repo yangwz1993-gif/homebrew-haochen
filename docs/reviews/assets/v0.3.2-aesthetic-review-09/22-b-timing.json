@@ -1,0 +1,15 @@
+{
+  "base": 392902.105625,
+  "appearedAt": 393347.0015,
+  "enteredAt": 393613.297875,
+  "leftAt": 416222.94225,
+  "goneAt": 436761.115583,
+  "appearedRelMs": 444.8958749999874,
+  "enteredRelMs": 711.1922499999637,
+  "leftRelMs": 23320.836624999996,
+  "goneRelMs": 43859.00995799998,
+  "hoverMs": 22408.300832999987,
+  "held22s": true,
+  "afterLeaveMs": 20538.173332999984,
+  "stillPresentAfterLeaveMs": null
+}

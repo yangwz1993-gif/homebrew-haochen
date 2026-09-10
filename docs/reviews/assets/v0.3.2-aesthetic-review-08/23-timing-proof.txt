@@ -1,0 +1,31 @@
+haochen v0.3.2 aesthetic review round 08 — monotonic timing proof
+Date: 2026-09-10 Asia/Shanghai
+Polling granularity: about 100 ms; timestamps use performance.now().
+
+Group A timestamps (same monotonic origin):
+- result appeared: 196607.569 ms
+- hover entered: 205361.760 ms
+- cross-app entity click / pointer left: 213928.450 ms
+- result disappeared: 216667.689 ms
+
+Derived A intervals:
+- pointer outside before hover: 8527.152 ms
+- hover observation: 8406.218 ms; result present at hover end
+- leave -> disappear: 2739.239 ms
+- appeared -> disappear: 20060.120 ms
+- expected if hover paused: leave -> disappear about 11-12 s; total about 28 s
+- outcome: FAIL; hover time was counted in the roughly 20 s lifetime
+
+Group B timestamps (same monotonic origin):
+- result appeared: 310841.508 ms
+- hover entered: 311109.493 ms
+- result disappeared: 321693.743 ms
+- cross-app leave: not reached because result vanished during required hover
+
+Derived B intervals:
+- appeared -> hover entered: 267.985 ms
+- hover entered -> disappear: 10584.252 ms
+- appeared -> disappear: 10852.236 ms
+- expected: remain visible throughout at least 22 s hover
+- outcome: FAIL; result disappeared during hover before the leave step
+
