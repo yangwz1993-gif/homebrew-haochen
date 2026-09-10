@@ -41,6 +41,30 @@ def test_keychain_service_can_be_isolated_for_development(monkeypatch) -> None:
     assert keychain.KeychainStore("explicit.service").service == "explicit.service"
 
 
+def test_default_keychain_service_uses_stable_signature_namespace(monkeypatch) -> None:
+    monkeypatch.delenv("HAOCHEN_KEYCHAIN_SERVICE", raising=False)
+
+    assert keychain.LEGACY_SERVICE == "com.haochen.app.api-key"
+    assert keychain.KeychainStore().service == "com.haochen.app.api-key.v2"
+
+
+def test_keychain_noninteractive_read_uses_backend_capability() -> None:
+    calls = []
+
+    class Backend:
+        def get(self, _service, _provider):
+            raise AssertionError("interactive read must not run")
+
+        def get_without_ui(self, service, provider):
+            calls.append((service, provider))
+            return "stored-secret"
+
+    store = keychain.KeychainStore("test-service", backend=Backend())
+
+    assert store.get_without_ui("deepseek") == "stored-secret"
+    assert calls == [("test-service", "deepseek")]
+
+
 def test_keychain_errors_never_include_secret() -> None:
     class Backend:
         def set(self, _service, _provider, _secret):
@@ -70,6 +94,58 @@ def test_export_resolves_only_expected_haochen_reference(tmp_path: Path) -> None
     keychain.export_keychain_credentials(auth, env, store)
 
     assert env == {"HAOCHEN_DEEPSEEK_API_KEY": "secret-one"}
+
+
+def test_export_never_opens_authorization_ui_during_startup(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    auth.write_text(
+        json.dumps(
+            {"deepseek": {"type": "api_key", "key": "$HAOCHEN_DEEPSEEK_API_KEY"}}
+        ),
+        encoding="utf-8",
+    )
+
+    class Store:
+        def get(self, _provider):
+            raise AssertionError("interactive credential read must not run during startup")
+
+        def get_without_ui(self, _provider):
+            raise keychain.KeychainInteractionRequired("authorization required")
+
+    env: dict[str, str] = {}
+    keychain.export_keychain_credentials(auth, env, Store())
+
+    assert env == {}
+
+
+def test_key_status_turns_blocked_acl_into_in_app_reentry_message(tmp_path: Path) -> None:
+    class Store:
+        def get(self, _provider):
+            raise AssertionError("interactive credential read must not run for status")
+
+        def get_without_ui(self, _provider):
+            raise keychain.KeychainInteractionRequired("authorization required")
+
+        def set(self, _provider, _secret):
+            pass
+
+        def delete(self, _provider):
+            pass
+
+    store = config_module.ConfigStore(tmp_path / "home", keychain=Store())
+    store.ensure_initialized()
+    auth = store.agent_dir / "auth.json"
+    auth.write_text(
+        json.dumps(
+            {"deepseek": {"type": "api_key", "key": "$HAOCHEN_DEEPSEEK_API_KEY"}}
+        ),
+        encoding="utf-8",
+    )
+
+    assert store.key_status("deepseek") == (
+        False,
+        "应用安全身份已更新，请重新输入 API Key",
+    )
 
 
 def test_config_migrates_plaintext_only_after_keychain_readback(tmp_path: Path) -> None:

@@ -29,7 +29,14 @@ from urllib.parse import urlsplit
 
 from haochen_app import paths
 from haochen_app.engine_client import haochen_home
-from haochen_app.keychain import CredentialStore, KeychainStore, credential_env_name
+from haochen_app.keychain import (
+    CredentialStore,
+    KeychainError,
+    KeychainInteractionRequired,
+    KeychainStore,
+    credential_env_name,
+    read_credential_without_ui,
+)
 from haochen_app.secure_storage import atomic_write_private, ensure_private_directory, ensure_private_file
 
 TEMPLATE_DIR = paths.config_templates()
@@ -395,7 +402,13 @@ class ConfigStore:
             return False, "未配置"
         expected = f"${credential_env_name(provider)}"
         if key == expected:
-            return (True, "已安全存储在 Keychain") if self.keychain.get(provider) else (False, "Keychain 中缺少凭据")
+            try:
+                stored = read_credential_without_ui(self.keychain, provider)
+            except KeychainInteractionRequired:
+                return False, "应用安全身份已更新，请重新输入 API Key"
+            except KeychainError:
+                return False, "Keychain 暂时不可用"
+            return (True, "已安全存储在 Keychain") if stored else (False, "Keychain 中缺少凭据")
         if key.startswith("$"):
             return True, f"已配置（环境变量 {key}）"
         if key.startswith("!"):

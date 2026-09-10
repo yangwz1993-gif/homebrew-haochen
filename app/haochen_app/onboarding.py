@@ -109,6 +109,7 @@ class KeyPage(QWizardPage):
         store: ConfigStore,
         verifier: Callable[[str, str], ValidationResult],
         custom_verifier: Callable[[str, str, str], ValidationResult] = validate_custom_model,
+        requires_key_reentry: bool = False,
         parent=None,
     ):
         super().__init__(parent)
@@ -116,6 +117,7 @@ class KeyPage(QWizardPage):
         self.verifier = verifier
         self.custom_verifier = custom_verifier
         self.provider = "deepseek"
+        self.requires_key_reentry = requires_key_reentry
         self._verified = store.key_status(self.provider)[0]
         self._configured_custom_signature: tuple[str, str, str] | None = None
         self._pending_custom: dict | None = None
@@ -156,7 +158,7 @@ class KeyPage(QWizardPage):
         self.verify_button.setObjectName("primaryBtn")
         self.verify_button.clicked.connect(self._verify)
         layout.addWidget(self.verify_button)
-        self.status = QLabel("已配置，可继续" if self._verified else "尚未验证")
+        self.status = QLabel(self._connection_status())
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.validation_finished.connect(self._finish_validation)
@@ -174,7 +176,7 @@ class KeyPage(QWizardPage):
             (item for item in self.store.providers() if item.id == provider_id and not item.builtin),
             None,
         )
-        if provider is None or not self.store.key_status(provider_id)[0]:
+        if provider is None:
             return
         model = next(
             (item for item in provider.models if item.get("id") == model_id),
@@ -186,8 +188,16 @@ class KeyPage(QWizardPage):
         self.url_edit.setText(provider.base_url)
         self.model_id_edit.setText(model_id)
         self.model_name_edit.setText(model_name)
-        self._configured_custom_signature = (provider.base_url, model_id, model_name)
+        if self.store.key_status(provider_id)[0]:
+            self._configured_custom_signature = (provider.base_url, model_id, model_name)
         self.mode_combo.setCurrentIndex(self.mode_combo.findData("custom"))
+
+    def _connection_status(self) -> str:
+        if self._verified:
+            return "已配置，可继续"
+        if self.requires_key_reentry:
+            return "为避免旧版钥匙串弹窗，请在这里重新输入一次 API Key 并验证。"
+        return "尚未验证"
 
     def _custom_signature(self) -> tuple[str, str, str]:
         return (
@@ -285,7 +295,7 @@ class KeyPage(QWizardPage):
             if custom
             else self.store.key_status(self.provider)[0]
         )
-        self.status.setText("尚未验证" if not self._verified else "已配置，可继续")
+        self.status.setText(self._connection_status())
         self.completeChanged.emit()
 
 
@@ -326,6 +336,7 @@ class OnboardingWizard(QWizard):
         self,
         store: ConfigStore,
         verifier: Callable[[str, str], ValidationResult] = validate_api_key,
+        requires_key_reentry: bool = False,
         parent=None,
     ):
         super().__init__(parent)
@@ -351,7 +362,11 @@ class OnboardingWizard(QWizard):
         welcome_layout.addWidget(intro)
 
         self.profile_page = ProfilePage(store.home)
-        self.key_page = KeyPage(store, verifier)
+        self.key_page = KeyPage(
+            store,
+            verifier,
+            requires_key_reentry=requires_key_reentry,
+        )
         if self.state.page > PROFILE_PAGE and profile_needs_confirmation(store.home):
             self.state.page = PROFILE_PAGE
             self.state.save()

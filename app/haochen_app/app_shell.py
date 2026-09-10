@@ -195,6 +195,7 @@ class AppShell:
             return
         needs_profile = profile_needs_confirmation(self.store.home)
         has_key = self.any_key_configured()
+        requires_key_reentry = state.completed and not has_key
         if state.completed and has_key and not needs_profile:
             return
         if state.completed and needs_profile:
@@ -209,7 +210,11 @@ class AppShell:
             # An interrupted/migrated wizard must not jump over explicit identity consent.
             state.page = PROFILE_PAGE
             state.save()
-        self.onboarding = OnboardingWizard(self.store, parent=parent)
+        self.onboarding = OnboardingWizard(
+            self.store,
+            requires_key_reentry=requires_key_reentry,
+            parent=parent,
+        )
         self.onboarding.permission_requested.connect(self._request_onboarding_permission)
         self.onboarding.trial_requested.connect(self._send_onboarding_trial)
         self.onboarding.finished.connect(self._on_onboarding_finished)

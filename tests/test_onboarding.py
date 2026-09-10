@@ -141,6 +141,30 @@ def test_custom_model_resume_keeps_verified_page_and_prefills_fields(qtbot, tmp_
     assert wizard.key_page.isComplete()
 
 
+def test_upgrade_with_missing_custom_key_keeps_model_fields_and_explains_reentry(
+    qtbot, tmp_path: Path
+) -> None:
+    store, credentials = make_store(tmp_path)
+    store.upsert_custom_model(
+        base_url="http://127.0.0.1:18766/v1",
+        model_id="qa-local-upgrade",
+        model_name="QA Local Upgrade",
+        key="non-sensitive-test-key",
+    )
+    provider_id, _model_id = store.default_model()
+    credentials.delete(provider_id)
+
+    wizard = onboarding.OnboardingWizard(store, requires_key_reentry=True)
+    qtbot.addWidget(wizard)
+
+    assert wizard.key_page.mode_combo.currentData() == "custom"
+    assert wizard.key_page.url_edit.text() == "http://127.0.0.1:18766/v1"
+    assert wizard.key_page.model_id_edit.text() == "qa-local-upgrade"
+    assert wizard.key_page.model_name_edit.text() == "QA Local Upgrade"
+    assert not wizard.key_page.isComplete()
+    assert "为避免旧版钥匙串弹窗" in wizard.key_page.status.text()
+
+
 def test_resumed_trial_can_go_back_to_hydrated_custom_model(qtbot, tmp_path: Path) -> None:
     store, _credentials = make_store(tmp_path)
     profile.save_user_name("", source="onboarding", home=store.home)
