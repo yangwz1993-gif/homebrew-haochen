@@ -40,7 +40,7 @@ env PI_CODING_AGENT_DIR="$HAOCHEN_HOME/agent" \
 壳的职责（P4 实现，此处冻结约定）：
 
 1. `HAOCHEN_HOME/agent/` 不存在 → 用本目录三个模板初始化。
-2. **key 存储**：只存于 macOS Keychain（service `com.haochen.app.api-key`）。`auth.json` 中仅写 `"$HAOCHEN_<PROVIDER>_API_KEY"` 环境引用，壳 spawn 引擎时通过 `export_keychain_credentials` 把实际值注入子进程环境。写入前先经固定安全端点验证，失败不覆盖旧 Key。**不读取也不导入全局 `~/.pi` 凭据。**
+2. **key 存储**：只存于 macOS Keychain（service `com.haochen.app.api-key.v2`）。`auth.json` 中仅写 `"$HAOCHEN_<PROVIDER>_API_KEY"` 环境引用，壳 spawn 引擎时通过 `export_keychain_credentials` 把实际值注入子进程环境。启动和状态检查使用禁止系统授权 UI 的读取路径；旧签名或锁定条目只会引导用户在 haochen 内重新填写，不会弹出阻塞的 `SecurityAgent`。写入前先经固定安全端点验证，失败不覆盖旧 Key。**不读取也不导入全局 `~/.pi` 凭据。**
 3. `models.json` 直接用本目录模板（已含 deepseek 三个模型定义，含默认的 `deepseek-v4-flash-vision-exp`）。
 4. 首次启动由单一可续办向导（`app/haochen_app/onboarding.py`）依次完成欢迎→Key 验证→按需权限→试问；向导状态存 `HAOCHEN_HOME/onboarding-state.json`（0600）。
 

@@ -171,6 +171,11 @@ class FakeNativeKeychain:
             raise self.error
         return self.value
 
+    def get_without_ui(self, _service, _provider):
+        if self.error:
+            raise self.error
+        return self.value
+
     def set(self, _service, _provider, secret):
         self.value = secret
 

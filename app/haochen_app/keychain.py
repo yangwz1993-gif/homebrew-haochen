@@ -6,11 +6,19 @@ import ctypes
 import json
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Protocol
 
-SERVICE = "com.haochen.app.api-key"
+# 0.3.1 created items while the app was ad-hoc signed.  Their ACL therefore
+# trusts that exact build hash and macOS displays a blocking SecurityAgent
+# prompt when a later, stably signed build reads them.  Never probe that legacy
+# namespace during normal startup.  The versioned namespace starts with the
+# stable signing identity used by 0.3.2+ and can persist across later upgrades.
+LEGACY_SERVICE = "com.haochen.app.api-key"
+SERVICE = "com.haochen.app.api-key.v2"
 SERVICE_ENV = "HAOCHEN_KEYCHAIN_SERVICE"
+_INTERACTION_LOCK = threading.RLock()
 
 
 class CredentialStore(Protocol):
@@ -23,10 +31,17 @@ class KeychainError(RuntimeError):
     pass
 
 
+class KeychainInteractionRequired(KeychainError):
+    """The item exists but macOS would need to show authentication UI."""
+
+
 class _NativeKeychainBackend:
     """Small Security.framework adapter that never puts secrets in argv or files."""
 
     ITEM_NOT_FOUND = -25300
+    INTERACTION_NOT_ALLOWED = -25308
+    AUTH_FAILED = -25293
+    USER_CANCELED = -128
 
     def __init__(self) -> None:
         security = ctypes.CDLL(
@@ -57,6 +72,12 @@ class _NativeKeychainBackend:
         security.SecKeychainItemDelete.restype = int32
         security.SecKeychainItemFreeContent.argtypes = [void_p, void_p]
         security.SecKeychainItemFreeContent.restype = int32
+        security.SecKeychainGetUserInteractionAllowed.argtypes = [
+            ctypes.POINTER(ctypes.c_ubyte)
+        ]
+        security.SecKeychainGetUserInteractionAllowed.restype = int32
+        security.SecKeychainSetUserInteractionAllowed.argtypes = [ctypes.c_ubyte]
+        security.SecKeychainSetUserInteractionAllowed.restype = int32
         core_foundation.CFRelease.argtypes = [void_p]
         core_foundation.CFRelease.restype = None
         self.security = security
@@ -100,6 +121,46 @@ class _NativeKeychainBackend:
                 self.security.SecKeychainItemFreeContent(None, ctypes.c_void_p(data))
             if item:
                 self.core_foundation.CFRelease(ctypes.c_void_p(item))
+
+    def get_without_ui(self, service: str, account: str) -> str | None:
+        """Read without allowing SecurityAgent to display an authorization dialog."""
+        with _INTERACTION_LOCK:
+            previous = ctypes.c_ubyte()
+            status = self.security.SecKeychainGetUserInteractionAllowed(
+                ctypes.byref(previous)
+            )
+            if status != 0:
+                raise KeychainError("无法读取 macOS Keychain 交互状态")
+            status = self.security.SecKeychainSetUserInteractionAllowed(False)
+            if status != 0:
+                raise KeychainError("无法关闭 macOS Keychain 授权弹窗")
+            try:
+                status, length, data, item = self._find(service, account)
+                if status == self.ITEM_NOT_FOUND:
+                    return None
+                if status in (
+                    self.INTERACTION_NOT_ALLOWED,
+                    self.AUTH_FAILED,
+                    self.USER_CANCELED,
+                ):
+                    raise KeychainInteractionRequired(
+                        "Keychain 凭据需要在设置中重新授权或填写"
+                    )
+                if status != 0:
+                    raise KeychainError("无法读取 macOS Keychain")
+                try:
+                    return ctypes.string_at(data, length).decode("utf-8") or None
+                except UnicodeDecodeError as exc:
+                    raise KeychainError("macOS Keychain 中的凭据格式无效") from exc
+                finally:
+                    if data:
+                        self.security.SecKeychainItemFreeContent(
+                            None, ctypes.c_void_p(data)
+                        )
+                    if item:
+                        self.core_foundation.CFRelease(ctypes.c_void_p(item))
+            finally:
+                self.security.SecKeychainSetUserInteractionAllowed(previous.value)
 
     def set(self, service: str, account: str, secret: str) -> None:
         status, _length, data, item = self._find(service, account)
@@ -164,6 +225,12 @@ class KeychainStore:
     def get(self, provider: str) -> str | None:
         return self._backend.get(self.service, provider)
 
+    def get_without_ui(self, provider: str) -> str | None:
+        getter = getattr(self._backend, "get_without_ui", None)
+        if getter is None:
+            return self._backend.get(self.service, provider)
+        return getter(self.service, provider)
+
     def set(self, provider: str, secret: str) -> None:
         if not secret:
             raise ValueError("secret must not be empty")
@@ -182,6 +249,9 @@ class MemoryCredentialStore:
     def get(self, provider: str) -> str | None:
         return self.values.get(provider)
 
+    def get_without_ui(self, provider: str) -> str | None:
+        return self.get(provider)
+
     def set(self, provider: str, secret: str) -> None:
         if not secret:
             raise ValueError("secret must not be empty")
@@ -196,6 +266,12 @@ def credential_env_name(provider: str) -> str:
     if not normalized:
         raise ValueError("provider cannot produce an environment name")
     return f"HAOCHEN_{normalized}_API_KEY"
+
+
+def read_credential_without_ui(store: CredentialStore, provider: str) -> str | None:
+    """Read a credential while guaranteeing native stores cannot open system UI."""
+    getter = getattr(store, "get_without_ui", None)
+    return getter(provider) if getter is not None else store.get(provider)
 
 
 def export_keychain_credentials(
@@ -217,6 +293,12 @@ def export_keychain_credentials(
         expected = f"${credential_env_name(provider)}"
         if reference != expected:
             continue
-        secret = store.get(provider)
+        try:
+            secret = read_credential_without_ui(store, provider)
+        except KeychainError:
+            # Startup must remain usable even when an older item's ACL no
+            # longer trusts this build.  Settings/onboarding can collect a new
+            # key without leaving an orphaned SecurityAgent dialog behind.
+            continue
         if secret:
             env[expected[1:]] = secret
