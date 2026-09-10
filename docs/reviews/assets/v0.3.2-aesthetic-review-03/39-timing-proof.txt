@@ -1,0 +1,43 @@
+haochen v0.3.2 round 03 — monotonic UI lifecycle evidence
+
+Default result lifecycle, local OpenAI-compatible provider:
+- result observed, pointer not held over result
+- samples (ms, result visible):
+  1202 true
+  3259 true
+  5289 true
+  7340 true
+  9401 true
+  11482 true
+  13518 true
+  15566 true
+  17631 true
+  19768 true
+  19978 false
+- measured dismissal: 19,978 ms
+
+Hover lifecycle:
+- pointer placed over result summary
+- held for 7,212 ms; result remained visible
+- pointer then physically moved to TextEdit coordinate (100,100), visibly far
+  outside the 380x153 haochen result window
+- post-leave samples (ms, result visible):
+  185 true
+  2016 true
+  3814 true
+  5667 true
+  7484 true
+  9334 true
+  11167 true
+  13000 true
+  14850 true
+  16664 true
+  18485 true
+  20349 true
+- result still had not dismissed 20,349 ms after pointer leave; it was then
+  closed manually through the top-right close control
+
+Top-right close:
+- close control returned the UI to idle; close + fresh accessibility
+  observation completed in 1,482 ms (observation latency included)
+

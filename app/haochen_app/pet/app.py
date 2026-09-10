@@ -23,6 +23,7 @@ import time
 from collections.abc import Callable
 
 from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QApplication
 
 from ..app_tracking import write_last_user_text
@@ -122,6 +123,14 @@ class PetApp(QObject):
         self._result_timer.timeout.connect(self._dismiss_result_if_idle)
         self._result_remaining_ms = RESULT_AUTO_DISMISS_MS
         self._result_timer_started_at = 0.0
+        # A native frameless Tool window does not reliably receive leaveEvent
+        # when the pointer moves directly into another macOS application.  Keep
+        # a cheap global-position watch active only while dismissal is paused.
+        self._result_hover_watch = QTimer(self)
+        self._result_hover_watch.setInterval(100)
+        self._result_hover_watch.timeout.connect(
+            self._resume_result_dismiss_if_pointer_left
+        )
         self._ack_timer = QTimer(self)
         self._ack_timer.setSingleShot(True)
         self._ack_timer.setInterval(ACK_MIN_VISIBLE_MS)
@@ -417,6 +426,7 @@ class PetApp(QObject):
 
     def _on_dismissed(self) -> None:
         self._result_timer.stop()
+        self._result_hover_watch.stop()
         # 收起时确认条还悬着 → 按「取消」答复引擎（rpc-contract §5.3 cancelled）
         if self._confirm_id:
             self._resolve_confirm(cancelled=True)
@@ -663,6 +673,7 @@ class PetApp(QObject):
         # interval remains RESULT_AUTO_DISMISS_MS.
         self._result_remaining_ms = self._result_timer.interval()
         self._result_timer_started_at = time.monotonic()
+        self._result_hover_watch.stop()
         self._result_timer.start(self._result_remaining_ms)
 
     def _pause_result_dismiss(self) -> None:
@@ -672,8 +683,10 @@ class PetApp(QObject):
         elapsed = int((time.monotonic() - self._result_timer_started_at) * 1000)
         self._result_remaining_ms = max(1_000, self._result_remaining_ms - elapsed)
         self._result_timer.stop()
+        self._result_hover_watch.start()
 
     def _resume_result_dismiss(self) -> None:
+        self._result_hover_watch.stop()
         if (self._state not in (PetState.PRESENTING, PetState.CANCELLED)
                 or self.ctrl.busy or self._confirm_id is not None
                 or self._detail_open or self._settings_open
@@ -681,6 +694,12 @@ class PetApp(QObject):
             return
         self._result_timer_started_at = time.monotonic()
         self._result_timer.start(max(1_000, self._result_remaining_ms))
+
+    def _resume_result_dismiss_if_pointer_left(self) -> None:
+        """Recover when macOS omits leaveEvent for a cross-app pointer move."""
+        if self.bubble.geometry().contains(QCursor.pos()):
+            return
+        self._resume_result_dismiss()
 
     def _dismiss_result_if_idle(self) -> None:
         """结果卡无交互后退场；工作、确认和详情阶段绝不误收起。"""

@@ -365,7 +365,16 @@ class OnboardingWizard(QWizard):
         self.setPage(KEY_PAGE, self.key_page)
         self.setPage(PERMISSIONS_PAGE, self.permission_page)
         self.setPage(TRIAL_PAGE, self.trial_page)
-        self.setStartId(self.state.page)
+        # QWizard treats ``startId`` as the beginning of navigation history.  If
+        # we start directly on a resumed page, Qt therefore hides/disables Back
+        # even though earlier configuration pages still matter.  Rebuild the
+        # real page history instead: users resume on the exact saved page and
+        # can still go back to review or change their model/profile choices.
+        resume_page = self.state.page
+        self.setStartId(WELCOME_PAGE)
+        self.restart()
+        for _page in range(WELCOME_PAGE, resume_page):
+            self.next()
         self.currentIdChanged.connect(self._page_changed)
         self.permission_page.permission_requested.connect(self.permission_requested)
 

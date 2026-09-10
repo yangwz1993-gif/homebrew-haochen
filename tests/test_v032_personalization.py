@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QPoint
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
@@ -51,7 +52,9 @@ def test_compact_actions_are_icons_and_emit_the_right_intent(qtbot) -> None:
     assert opened == [True]
 
 
-def test_result_auto_dismiss_pauses_while_user_is_interacting(qtbot, tmp_path: Path) -> None:
+def test_result_auto_dismiss_pauses_while_user_is_interacting(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
     client = harness.FakeClient()
     client.home = tmp_path
     pet = pet_module.PetApp(client=client, supervisor=None)
@@ -60,6 +63,11 @@ def test_result_auto_dismiss_pauses_while_user_is_interacting(qtbot, tmp_path: P
     pet._result_timer.setInterval(80)
     pet.bubble.summon()
     pet._on_summary_done("已经处理好了。")
+    monkeypatch.setattr(
+        pet_module.QCursor,
+        "pos",
+        lambda: pet.bubble.geometry().center(),
+    )
 
     pet.bubble.interaction_started.emit()
     qtbot.wait(130)
@@ -67,6 +75,31 @@ def test_result_auto_dismiss_pauses_while_user_is_interacting(qtbot, tmp_path: P
     assert not pet._result_timer.isActive()
 
     pet.bubble.interaction_ended.emit()
+    qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
+
+
+def test_hover_watch_resumes_when_cross_app_leave_event_is_missing(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    client = harness.FakeClient()
+    client.home = tmp_path
+    pet = pet_module.PetApp(client=client, supervisor=None)
+    qtbot.addWidget(pet.bubble)
+    qtbot.addWidget(pet.pet)
+    pet._result_timer.setInterval(80)
+    pet.bubble.summon()
+    pet._on_summary_done("已经处理好了。")
+    pet._pause_result_dismiss()
+    monkeypatch.setattr(
+        pet_module.QCursor,
+        "pos",
+        lambda: pet.bubble.geometry().bottomRight() + QPoint(50, 50),
+    )
+
+    pet._resume_result_dismiss_if_pointer_left()
+
+    assert pet._result_timer.isActive()
+    assert not pet._result_hover_watch.isActive()
     qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
 
 

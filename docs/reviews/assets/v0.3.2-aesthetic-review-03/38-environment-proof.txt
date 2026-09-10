@@ -1,0 +1,44 @@
+haochen v0.3.2 aesthetic review round 03 — environment proof
+Date: 2026-09-10 Asia/Shanghai
+
+Candidate:
+/Users/yangwz/Documents/workspace/haochen/packaging/dist/haochen-0.3.2.dmg
+SHA-256:
+f8aea229f7a70fb6e8cdc8b87cd6d4e4975fe2b30cd1af1d6722f97e492a141d
+Bundle version: 0.3.2 (build 2)
+Read-only mount:
+/private/tmp/haochen-v032-r03-mount.EQi4Q2/haochen.app
+
+Real configuration path:
+- HAOCHEN_HOME=/private/tmp/haochen-v032-r03-real-home.8m9zS8
+- HAOCHEN_KEYCHAIN_SERVICE=com.haochen.qa.v032.r03.real.8m9zS8
+- explicit env -u HAOCHEN_SKIP_ONBOARDING
+- explicit env -u HAOCHEN_SKIP_PERMISSION_GUIDE
+- explicit env -u HAOCHEN_MOCK
+- final main PID before cleanup: 75091
+- final engine PID before cleanup: 75110, PPID 75091
+- engine session-dir: /private/tmp/haochen-v032-r03-real-home.8m9zS8/pi-sessions
+- Keychain class/service/account: genp / com.haochen.qa.v032.r03.real.8m9zS8 / custom-a8900f2051
+- API secret was never printed or stored in evidence.
+
+Mock UI timing path requested by the acceptance brief:
+- HAOCHEN_HOME=/private/tmp/haochen-v032-r03-mock-home.uKmemz
+- HAOCHEN_KEYCHAIN_SERVICE=com.haochen.qa.v032.r03.mock.uKmemz
+- HAOCHEN_MOCK=1
+- HAOCHEN_SKIP_ONBOARDING=1
+- explicit env -u HAOCHEN_SKIP_PERMISSION_GUIDE
+- candidate exited with code 1 before showing UI:
+  FileNotFoundError: [Errno 2] No such file or directory:
+  '/private/tmp/haochen-v032-r03-mount.EQi4Q2/haochen.app/Contents/mock-engine'
+- read-only bundle listing found no file whose name contains "mock".
+
+The missing development mock is recorded as a coverage limitation, not as a
+user-facing product defect. Lifecycle timing was therefore completed through
+the validated local OpenAI-compatible configuration path.
+
+Cleanup:
+- normal TERM sent to final main PID 75091; main and engine 75110 exited
+- local OpenAI-compatible fixture and screenshot receiver stopped
+- real and mock test Keychain lookups both returned exit 44 after deletion
+- disk8 /private/tmp/haochen-v032-r03-mount.EQi4Q2 detached
+- both isolated Home directories and review evidence preserved
