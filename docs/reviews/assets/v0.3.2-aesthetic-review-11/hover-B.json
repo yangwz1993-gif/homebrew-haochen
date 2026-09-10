@@ -1,0 +1,100 @@
+[
+  {
+    "event": "appeared",
+    "monotonic": 261241.548868458,
+    "mouse": [
+      900.0,
+      100.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1115.0,
+        "Y": 620.0,
+        "Width": 292.0,
+        "Height": 91.0
+      }
+    },
+    "inside": false,
+    "case": "B"
+  },
+  {
+    "event": "entered",
+    "monotonic": 261241.554214625,
+    "mouse": [
+      1261.0,
+      660.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1115.0,
+        "Y": 620.0,
+        "Width": 292.0,
+        "Height": 91.0
+      }
+    },
+    "inside": true
+  },
+  {
+    "event": "held_22s",
+    "monotonic": 261263.565312416,
+    "mouse": [
+      1261.0,
+      660.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1027.0,
+        "Y": 518.0,
+        "Width": 380.0,
+        "Height": 193.0
+      }
+    },
+    "inside": true
+  },
+  {
+    "event": "left",
+    "monotonic": 261263.568433666,
+    "mouse": [
+      900.0,
+      100.0
+    ],
+    "window": {
+      "number": 19139,
+      "owner_pid": 79266,
+      "owner": "haochen",
+      "layer": 8,
+      "alpha": 1.0,
+      "bounds": {
+        "X": 1027.0,
+        "Y": 518.0,
+        "Width": 380.0,
+        "Height": 193.0
+      }
+    },
+    "inside": false
+  },
+  {
+    "event": "gone",
+    "monotonic": 261283.906960375,
+    "mouse": [
+      900.0,
+      100.0
+    ],
+    "window": null
+  }
+]
