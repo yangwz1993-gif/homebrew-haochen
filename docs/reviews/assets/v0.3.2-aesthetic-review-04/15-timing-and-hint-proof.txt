@@ -1,0 +1,30 @@
+Round 04 monotonic timing proof
+
+Segmented hover test:
+- successful result observed
+- result ran before deliberate hover: 8,075 ms
+- pointer held inside result: 7,434 ms; result remained visible
+- after cross-app pointer move, dismissal occurred in 4,544 ms
+- total from result observation to dismissal: 20,053 ms
+- expected if hover paused: about 27,400 ms total and about 12,000 ms
+  remaining after leave
+- observed behavior shows hover time was counted by the 20-second timer
+
+Continuous hover control:
+- pointer deliberately placed at local result-window coordinate (180,60)
+- screenshot shows pointer inside the result card
+- result dismissed 11,520 ms after hover placement rather than staying visible
+- the result had already consumed part of its 20-second lifetime before hover;
+  disappearance during uninterrupted hover directly disproves pause behavior
+
+Onboarding discovery hint regression:
+- restart timestamp from app output: 2026-09-10 11:49:40
+- resumed trial screenshot: 2026-09-10 11:50:04
+- discovery bubble appeared while onboarding was still incomplete, between that
+  screenshot and the hydrated-model screenshot at 11:51:43
+- text: 点一下直接问我 · 右键打开完整对话和设置
+- the bubble temporarily replaced the onboarding wizard in the accessibility
+  foreground; closing it returned to the correctly hydrated model page
+- evidence bounds: about 24–123 seconds after restart; behavior is consistent
+  with a first-use discovery timeout crossing the onboarding gate
+

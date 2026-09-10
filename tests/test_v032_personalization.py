@@ -52,6 +52,21 @@ def test_compact_actions_are_icons_and_emit_the_right_intent(qtbot) -> None:
     assert opened == [True]
 
 
+def test_discovery_hint_never_overlays_visible_onboarding(qtbot, tmp_path: Path) -> None:
+    client = harness.FakeClient()
+    client.home = tmp_path
+    pet = pet_module.PetApp(client=client, supervisor=None)
+    qtbot.addWidget(pet.bubble)
+    qtbot.addWidget(pet.pet)
+    pet.interaction_guard = lambda: False
+    pet._discovery_hint_retries = 30
+
+    pet._maybe_show_discovery_hint()
+
+    assert not pet.bubble.summoned
+    assert not pet._discovery_hint_active
+
+
 def test_result_auto_dismiss_pauses_while_user_is_interacting(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:
@@ -74,11 +89,16 @@ def test_result_auto_dismiss_pauses_while_user_is_interacting(
     assert pet.bubble.summoned
     assert not pet._result_timer.isActive()
 
+    monkeypatch.setattr(
+        pet_module.QCursor,
+        "pos",
+        lambda: pet.bubble.geometry().bottomRight() + QPoint(50, 50),
+    )
     pet.bubble.interaction_ended.emit()
     qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
 
 
-def test_hover_watch_resumes_when_cross_app_leave_event_is_missing(
+def test_hover_watch_detects_enter_and_leave_when_native_events_are_missing(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:
     client = harness.FakeClient()
@@ -89,17 +109,27 @@ def test_hover_watch_resumes_when_cross_app_leave_event_is_missing(
     pet._result_timer.setInterval(80)
     pet.bubble.summon()
     pet._on_summary_done("已经处理好了。")
-    pet._pause_result_dismiss()
+    monkeypatch.setattr(
+        pet_module.QCursor,
+        "pos",
+        lambda: pet.bubble.geometry().center(),
+    )
+
+    pet._sync_result_hover_state()
+
+    assert not pet._result_timer.isActive()
+    assert pet._result_hovering
     monkeypatch.setattr(
         pet_module.QCursor,
         "pos",
         lambda: pet.bubble.geometry().bottomRight() + QPoint(50, 50),
     )
 
-    pet._resume_result_dismiss_if_pointer_left()
+    pet._sync_result_hover_state()
 
     assert pet._result_timer.isActive()
-    assert not pet._result_hover_watch.isActive()
+    assert pet._result_hover_watch.isActive()
+    assert not pet._result_hovering
     qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
 
 

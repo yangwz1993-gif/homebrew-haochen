@@ -1,0 +1,34 @@
+haochen v0.3.2 aesthetic review round 04
+Date: 2026-09-10 Asia/Shanghai
+
+Candidate:
+/Users/yangwz/Documents/workspace/haochen/packaging/dist/haochen-0.3.2.dmg
+SHA-256:
+727e762cc17b8d3437e5f01f21cbf6c44b112215fa787031e766ce6686ca5aad
+Bundle version: 0.3.2 (build 2)
+Read-only mount:
+/private/tmp/haochen-v032-r04-mount.0BW0bn/haochen.app
+
+Isolation:
+- HAOCHEN_HOME=/private/tmp/haochen-v032-r04-home.WhAhGM
+- HAOCHEN_KEYCHAIN_SERVICE=com.haochen.qa.v032.r04.WhAhGM
+- explicit env -u HAOCHEN_SKIP_ONBOARDING
+- explicit env -u HAOCHEN_SKIP_PERMISSION_GUIDE
+- explicit env -u HAOCHEN_MOCK
+
+Final process proof before cleanup:
+- main PID 6688, PPID 18479
+- engine PID 6709, PPID 6688
+- engine --session-dir /private/tmp/haochen-v032-r04-home.WhAhGM/pi-sessions
+
+Keychain proof (secret never printed):
+- class genp
+- service com.haochen.qa.v032.r04.WhAhGM
+- account custom-2baad11019
+
+Cleanup:
+- normal TERM sent to main PID 6688; main and engine 6709 exited
+- local model fixture and screenshot receiver stopped
+- test Keychain item deleted; lookup exit 44 (not found)
+- disk8 detached
+- isolated Home and review evidence preserved

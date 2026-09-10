@@ -216,6 +216,9 @@ class AppShell:
     def _on_onboarding_finished(self, _result: int) -> None:
         self.pet.pet.show()
         self.pet.pet.raise_()
+        # Discovery help is intentionally suppressed while onboarding is
+        # visible; give it a fresh chance only after that surface is gone.
+        QTimer.singleShot(900, self.pet._maybe_show_discovery_hint)
 
     def any_key_configured(self) -> bool:
         try:

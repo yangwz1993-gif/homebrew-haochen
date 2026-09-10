@@ -123,14 +123,13 @@ class PetApp(QObject):
         self._result_timer.timeout.connect(self._dismiss_result_if_idle)
         self._result_remaining_ms = RESULT_AUTO_DISMISS_MS
         self._result_timer_started_at = 0.0
+        self._result_hovering = False
         # A native frameless Tool window does not reliably receive leaveEvent
         # when the pointer moves directly into another macOS application.  Keep
         # a cheap global-position watch active only while dismissal is paused.
         self._result_hover_watch = QTimer(self)
         self._result_hover_watch.setInterval(100)
-        self._result_hover_watch.timeout.connect(
-            self._resume_result_dismiss_if_pointer_left
-        )
+        self._result_hover_watch.timeout.connect(self._sync_result_hover_state)
         self._ack_timer = QTimer(self)
         self._ack_timer.setSingleShot(True)
         self._ack_timer.setInterval(ACK_MIN_VISIBLE_MS)
@@ -198,6 +197,7 @@ class PetApp(QObject):
 
     def quit(self) -> None:
         self._result_timer.stop()
+        self._result_hover_watch.stop()
         try:
             if self.supervisor is not None:
                 self.supervisor.stop()      # P4：整个 App 的引擎一起停
@@ -211,6 +211,7 @@ class PetApp(QObject):
     def _on_bubble_destroyed(self) -> None:
         """窗口销毁时解除长生命周期回调，避免计时器访问失效的 Qt 对象。"""
         self._result_timer.stop()
+        self._result_hover_watch.stop()
         self._ack_timer.stop()
         self._discovery_timer.stop()
         self._privacy_timer.stop()
@@ -296,6 +297,11 @@ class PetApp(QObject):
 
     def _maybe_show_discovery_hint(self) -> None:
         """全新数据目录只展示一次短促漫画提示，不依赖用户先悬停发现 tooltip。"""
+        # First-run is authoritative for as long as it is visible.  The old
+        # generic 30-second top-level-window retry eventually let this hint
+        # appear over a user who was carefully completing onboarding.
+        if self.interaction_guard is not None and not self.interaction_guard():
+            return
         marker = self.client.home / "interaction-hint-v1"
         if marker.exists() or self.bubble.summoned:
             return
@@ -427,6 +433,7 @@ class PetApp(QObject):
     def _on_dismissed(self) -> None:
         self._result_timer.stop()
         self._result_hover_watch.stop()
+        self._result_hovering = False
         # 收起时确认条还悬着 → 按「取消」答复引擎（rpc-contract §5.3 cancelled）
         if self._confirm_id:
             self._resolve_confirm(cancelled=True)
@@ -664,6 +671,8 @@ class PetApp(QObject):
     def _on_continue(self) -> None:
         """用户明确追问时才恢复输入；旧结果不继续占据 L1。"""
         self._result_timer.stop()
+        self._result_hover_watch.stop()
+        self._result_hovering = False
         self.bubble.start_input()
         self._place_bubble()
         self._set_state(PetState.LISTENING)
@@ -673,33 +682,57 @@ class PetApp(QObject):
         # interval remains RESULT_AUTO_DISMISS_MS.
         self._result_remaining_ms = self._result_timer.interval()
         self._result_timer_started_at = time.monotonic()
-        self._result_hover_watch.stop()
+        self._result_hovering = False
         self._result_timer.start(self._result_remaining_ms)
+        self._result_hover_watch.start()
 
     def _pause_result_dismiss(self) -> None:
         """Keep a result readable while the pointer is inside the compact bubble."""
         if not self._result_timer.isActive():
             return
-        elapsed = int((time.monotonic() - self._result_timer_started_at) * 1000)
-        self._result_remaining_ms = max(1_000, self._result_remaining_ms - elapsed)
+        remaining = self._result_timer.remainingTime()
+        if remaining >= 0:
+            self._result_remaining_ms = max(1_000, remaining)
+        else:
+            elapsed = int((time.monotonic() - self._result_timer_started_at) * 1000)
+            self._result_remaining_ms = max(1_000, self._result_remaining_ms - elapsed)
         self._result_timer.stop()
+        self._result_hovering = True
         self._result_hover_watch.start()
 
     def _resume_result_dismiss(self) -> None:
-        self._result_hover_watch.stop()
+        # Native leave events can also arrive spuriously while the animated
+        # frameless window is moving/resizing.  The global cursor position is
+        # the source of truth while the hover watchdog owns the pause.
+        if (self._result_hover_watch.isActive()
+                and self.bubble.geometry().contains(QCursor.pos())):
+            self._result_hovering = True
+            return
         if (self._state not in (PetState.PRESENTING, PetState.CANCELLED)
                 or self.ctrl.busy or self._confirm_id is not None
                 or self._detail_open or self._settings_open
                 or self.bubble._input_visible() or not self.bubble.summoned):
+            self._result_hover_watch.stop()
+            self._result_hovering = False
             return
+        self._result_hovering = False
         self._result_timer_started_at = time.monotonic()
         self._result_timer.start(max(1_000, self._result_remaining_ms))
+        self._result_hover_watch.start()
 
-    def _resume_result_dismiss_if_pointer_left(self) -> None:
-        """Recover when macOS omits leaveEvent for a cross-app pointer move."""
-        if self.bubble.geometry().contains(QCursor.pos()):
+    def _sync_result_hover_state(self) -> None:
+        """Use the global pointer as truth when native enter/leave events vanish."""
+        if (self._state not in (PetState.PRESENTING, PetState.CANCELLED)
+                or self.ctrl.busy or self._confirm_id is not None
+                or self._detail_open or self._settings_open
+                or self.bubble._input_visible() or not self.bubble.summoned):
+            self._result_hover_watch.stop()
+            self._result_hovering = False
             return
-        self._resume_result_dismiss()
+        if self.bubble.geometry().contains(QCursor.pos()):
+            self._pause_result_dismiss()
+        elif self._result_hovering:
+            self._resume_result_dismiss()
 
     def _dismiss_result_if_idle(self) -> None:
         """结果卡无交互后退场；工作、确认和详情阶段绝不误收起。"""
@@ -720,6 +753,8 @@ class PetApp(QObject):
 
         message = humanize_error(err)
         self._result_timer.stop()
+        self._result_hover_watch.stop()
+        self._result_hovering = False
         self._privacy_timer.stop()
         self._pending_privacy_summary = None
         self._ack_timer.stop()
@@ -889,6 +924,8 @@ class PetApp(QObject):
         self._settings_open = True
         self._resume_bubble_after_settings = self.bubble.summoned
         self._result_timer.stop()
+        self._result_hover_watch.stop()
+        self._result_hovering = False
         if self._resume_bubble_after_settings:
             self.bubble.cancel_dismiss()
             self.bubble.hide()
@@ -918,6 +955,8 @@ class PetApp(QObject):
             log.warning("detail_opener 未注入（应由壳层接线 chat.open_from_bubble）")
             return
         self._result_timer.stop()
+        self._result_hover_watch.stop()
+        self._result_hovering = False
         # 打开时气泡隐藏（不播收起动画、不动 _shown 标记），对话窗口从气泡 rect 长出
         rect = self.bubble.geometry()
         self._detail_open = True
