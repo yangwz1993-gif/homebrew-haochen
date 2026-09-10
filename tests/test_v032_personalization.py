@@ -133,7 +133,7 @@ def test_hover_watch_detects_enter_and_leave_when_native_events_are_missing(
     qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
 
 
-def test_hover_watch_ignores_stale_under_mouse_after_cross_app_exit(
+def test_application_deactivate_resumes_despite_stale_under_mouse(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:
     client = harness.FakeClient()
@@ -154,14 +154,13 @@ def test_hover_watch_ignores_stale_under_mouse_after_cross_app_exit(
     assert not pet._result_timer.isActive()
 
     # macOS can leave QWidget.underMouse() stuck on True after focus moves to
-    # another process.  The actual global position must win over that stale bit.
+    # another process.  The application-deactivate event must win over it.
     monkeypatch.setattr(pet.bubble, "underMouse", lambda: True)
-    monkeypatch.setattr(
-        pet_module.QCursor,
-        "pos",
-        lambda: pet.bubble.mapToGlobal(pet.bubble.rect().bottomRight() + QPoint(50, 50)),
+    pet.eventFilter(
+        pet_module.QApplication.instance(),
+        pet_module.QEvent(pet_module.QEvent.Type.ApplicationDeactivate),
     )
-    pet._sync_result_hover_state()
+    qtbot.waitUntil(pet._result_timer.isActive, timeout=500)
 
     assert pet._result_timer.isActive()
     assert not pet._result_hovering

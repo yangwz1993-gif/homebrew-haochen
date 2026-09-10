@@ -472,6 +472,11 @@ class PetApp(QObject):
             # Defer until Qt has updated widgetAt/underMouse; child-to-child
             # transitions must not be mistaken for leaving the whole bubble.
             QTimer.singleShot(0, self._resume_result_dismiss_if_pointer_left)
+        if ev.type() == QEvent.Type.ApplicationDeactivate:
+            # On macOS a frameless Tool window can keep underMouse() latched
+            # after the user clicks into another application.  Deactivation is
+            # an unambiguous end to interaction with this result bubble.
+            QTimer.singleShot(0, lambda: self._resume_result_dismiss(force=True))
         if (ev.type() == QEvent.Type.MouseButtonPress and self.bubble.summoned
                 and not self._detail_open
                 and not self._settings_open
@@ -721,11 +726,12 @@ class PetApp(QObject):
         self._result_hovering = True
         self._result_hover_watch.start()
 
-    def _resume_result_dismiss(self) -> None:
+    def _resume_result_dismiss(self, *, force: bool = False) -> None:
         # Native leave events can also arrive spuriously while the animated
         # frameless window is moving/resizing.  The global cursor position is
         # the source of truth while the hover watchdog owns the pause.
-        if self._result_hover_watch.isActive() and self._pointer_inside_bubble():
+        if (not force and self._result_hover_watch.isActive()
+                and self._pointer_inside_bubble()):
             self._result_hovering = True
             return
         if (self._state not in (PetState.PRESENTING, PetState.CANCELLED)
@@ -738,7 +744,13 @@ class PetApp(QObject):
         self._result_hovering = False
         self._result_timer_started_at = time.monotonic()
         self._result_timer.start(max(1_000, self._result_remaining_ms))
-        self._result_hover_watch.start()
+        if force:
+            # Do not let a stale underMouse bit immediately pause the timer
+            # again after another application became active.  A real re-entry
+            # will emit Enter/MouseMove and restart the watchdog.
+            self._result_hover_watch.stop()
+        else:
+            self._result_hover_watch.start()
 
     def _sync_result_hover_state(self) -> None:
         """Use the global pointer as truth when native enter/leave events vanish."""
@@ -763,21 +775,16 @@ class PetApp(QObject):
         fallback for cross-application moves where widgetAt returns ``None``.
         """
         try:
+            if self.bubble.underMouse():
+                return True
             cursor_pos = QCursor.pos()
-            # ``underMouse()`` can stay latched to True when a native macOS
-            # Tool window loses activation to another application.  Global
-            # geometry therefore has to be authoritative for cross-app exits.
-            local_pos = self.bubble.mapFromGlobal(cursor_pos)
-            if not self.bubble.rect().contains(local_pos):
-                return False
             hovered = QApplication.widgetAt(cursor_pos)
             if hovered is self.bubble or (
                 isinstance(hovered, QWidget) and self.bubble.isAncestorOf(hovered)
             ):
                 return True
-            # widgetAt can return None for a non-active native Tool window;
-            # the mapped position still correctly represents visual containment.
-            return True
+            local_pos = self.bubble.mapFromGlobal(cursor_pos)
+            return self.bubble.rect().contains(local_pos)
         except RuntimeError:
             return False
 
