@@ -1,0 +1,53 @@
+{
+  "elapsedMs": 37354.763499999994,
+  "samples": [
+    {
+      "ms": 1619.8922910000001,
+      "welcome": true,
+      "hint": false,
+      "pet": false
+    },
+    {
+      "ms": 6715.319833000001,
+      "welcome": true,
+      "hint": false,
+      "pet": false
+    },
+    {
+      "ms": 11812.459125000001,
+      "welcome": true,
+      "hint": false,
+      "pet": false
+    },
+    {
+      "ms": 16878.449416000003,
+      "welcome": true,
+      "hint": false,
+      "pet": false
+    },
+    {
+      "ms": 21968.978583000004,
+      "welcome": true,
+      "hint": false,
+      "pet": false
+    },
+    {
+      "ms": 27064.472833,
+      "welcome": true,
+      "hint": false,
+      "pet": false
+    },
+    {
+      "ms": 32164.969791000003,
+      "welcome": true,
+      "hint": false,
+      "pet": false
+    },
+    {
+      "ms": 37264.835041000006,
+      "welcome": true,
+      "hint": false,
+      "pet": false
+    }
+  ]
+}

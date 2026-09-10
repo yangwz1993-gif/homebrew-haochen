@@ -1,0 +1,35 @@
+haochen v0.3.2 aesthetic review round 07 — candidate/isolation proof
+Date: 2026-09-10 Asia/Shanghai
+
+Candidate:
+/Users/yangwz/Documents/workspace/haochen/packaging/dist/haochen-0.3.2.dmg
+SHA-256:
+fdc850c81ef488dd0ddbdb9939755696346353c862e6de5dd8bf5b4b776870c0
+Bundle version: 0.3.2 (build 2)
+Read-only mount:
+/private/tmp/haochen-v032-r07-mount.tT58mG/haochen.app
+
+Primary timing run:
+- HAOCHEN_HOME=/private/tmp/haochen-v032-r07-home.nnNYgU
+- HAOCHEN_KEYCHAIN_SERVICE=com.haochen.qa.v032.r07.nnNYgU
+- explicit unset: HAOCHEN_SKIP_ONBOARDING, HAOCHEN_SKIP_PERMISSION_GUIDE, HAOCHEN_MOCK
+- main PID 31135; engine PID 31161; engine session-dir matched the isolated Home
+- session model proof: provider custom-0276e9c417, model qa-local-r07
+- direct onboarding trial and all timing requests returned responseId chatcmpl-r07 from the local fixture
+
+Resume/hydration run:
+- HAOCHEN_HOME=/private/tmp/haochen-v032-r07-resume-home.k6kXI9
+- HAOCHEN_KEYCHAIN_SERVICE=com.haochen.qa.v032.r07.resume.k6kXI9
+- explicit unset: HAOCHEN_SKIP_ONBOARDING, HAOCHEN_SKIP_PERMISSION_GUIDE, HAOCHEN_MOCK
+- final main PID 36657; engine PID 36678; engine session-dir matched the resume Home
+
+Keychain proof (secrets never printed):
+- primary service/account: com.haochen.qa.v032.r07.nnNYgU / custom-0276e9c417
+- resume service/account: com.haochen.qa.v032.r07.resume.k6kXI9 / custom-0276e9c417
+
+Cleanup:
+- primary main/engine and resume main PID 36657 / engine PID 36678 exited after normal TERM
+- local fixture 127.0.0.1:18771 and screenshot receiver 127.0.0.1:8773 stopped; no listeners remain
+- both test Keychain items deleted; both lookup checks returned exit 44 (not found)
+- read-only DMG device disk8 detached
+- both isolated Homes and all review evidence preserved

@@ -133,6 +133,41 @@ def test_hover_watch_detects_enter_and_leave_when_native_events_are_missing(
     qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
 
 
+def test_hover_watch_ignores_stale_under_mouse_after_cross_app_exit(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    client = harness.FakeClient()
+    client.home = tmp_path
+    pet = pet_module.PetApp(client=client, supervisor=None)
+    qtbot.addWidget(pet.bubble)
+    qtbot.addWidget(pet.pet)
+    pet._result_timer.setInterval(80)
+    pet.bubble.summon()
+    pet._on_summary_done("已经处理好了。")
+    monkeypatch.setattr(
+        pet_module.QCursor,
+        "pos",
+        lambda: pet.bubble.mapToGlobal(pet.bubble.rect().center()),
+    )
+    pet._sync_result_hover_state()
+    assert pet._result_hovering
+    assert not pet._result_timer.isActive()
+
+    # macOS can leave QWidget.underMouse() stuck on True after focus moves to
+    # another process.  The actual global position must win over that stale bit.
+    monkeypatch.setattr(pet.bubble, "underMouse", lambda: True)
+    monkeypatch.setattr(
+        pet_module.QCursor,
+        "pos",
+        lambda: pet.bubble.mapToGlobal(pet.bubble.rect().bottomRight() + QPoint(50, 50)),
+    )
+    pet._sync_result_hover_state()
+
+    assert pet._result_timer.isActive()
+    assert not pet._result_hovering
+    qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
+
+
 def test_child_widget_mouse_events_pause_and_resume_result(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:

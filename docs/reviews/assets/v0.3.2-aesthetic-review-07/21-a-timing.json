@@ -1,0 +1,10 @@
+{
+  "resultToHoverMs": 8907.396500000032,
+  "outsideWaitMs": 8507.391124999966,
+  "hoverHeldMs": 8000.577000000048,
+  "prePresent": true,
+  "heldPresent": true,
+  "afterTrueLeaveToGoneMs": null,
+  "totalActiveBudgetMs": 67391.98466700001,
+  "totalWallIncludingExtendedHoverMs": null
+}

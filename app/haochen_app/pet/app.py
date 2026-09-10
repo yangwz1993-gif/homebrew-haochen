@@ -763,15 +763,21 @@ class PetApp(QObject):
         fallback for cross-application moves where widgetAt returns ``None``.
         """
         try:
-            if self.bubble.underMouse():
-                return True
-            hovered = QApplication.widgetAt(QCursor.pos())
+            cursor_pos = QCursor.pos()
+            # ``underMouse()`` can stay latched to True when a native macOS
+            # Tool window loses activation to another application.  Global
+            # geometry therefore has to be authoritative for cross-app exits.
+            local_pos = self.bubble.mapFromGlobal(cursor_pos)
+            if not self.bubble.rect().contains(local_pos):
+                return False
+            hovered = QApplication.widgetAt(cursor_pos)
             if hovered is self.bubble or (
                 isinstance(hovered, QWidget) and self.bubble.isAncestorOf(hovered)
             ):
                 return True
-            local_pos = self.bubble.mapFromGlobal(QCursor.pos())
-            return self.bubble.rect().contains(local_pos)
+            # widgetAt can return None for a non-active native Tool window;
+            # the mapped position still correctly represents visual containment.
+            return True
         except RuntimeError:
             return False
 
