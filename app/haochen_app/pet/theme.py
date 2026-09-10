@@ -4,12 +4,12 @@
 P4 集成时应收敛到壳级共享 theme 模块。
 """
 
-COLOR_BG = "#fdf6e3"        # color-bg 主背景（米白）
-COLOR_SURFACE = "#fffaf0"   # color-surface 卡片/气泡浅层表面
+COLOR_BG = "#fafafa"        # 单层中性背景
+COLOR_SURFACE = "#fafafa"   # 气泡内外同色
 COLOR_INK = "#2b2b22"       # color-ink 主文字 / 深描边
 COLOR_INK_SOFT = "#5c5c50"  # color-ink-soft 次级文字
 COLOR_LINE = "#2b2b22"      # color-line 主描边
-COLOR_LINE_SOFT = "#c8c0ac" # color-line-soft 分割线 / 弱描边
+COLOR_LINE_SOFT = "#d7d9d7" # color-line-soft 分割线 / 弱描边
 COLOR_ACCENT = "#3a7d5c"    # color-accent 强调（成功/确认）
 COLOR_ACCENT_DEEP = "#2f6a4d"  # accent hover 加深（醒目绿按钮悬停）
 COLOR_ACCENT_TINT = "#e4efe8"  # accent 极浅 tint（用户消息底，无描边区分用）
@@ -17,7 +17,7 @@ COLOR_INFO = "#5b7db1"      # color-info 信息/感知状态
 COLOR_WARN = "#b8860b"      # color-warn 警告（需要确认）
 COLOR_DANGER = "#b04a3a"    # color-danger 错误 / alert 姿态
 
-BORDER_MAIN = 2     # 主描边 px
+BORDER_MAIN = 1.5   # 主描边 px
 RADIUS_BUBBLE = 16  # 气泡/卡片圆角
 RADIUS_BUTTON = 8   # 小标签/按钮
 RADIUS_INPUT = 12   # 输入框

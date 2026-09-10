@@ -131,7 +131,7 @@ def test_key_save_flow_validate_success_saves(qtbot, tmp_path: Path, monkeypatch
     assert "已安全存储" in window._status.text() or credentials.get("deepseek") == "new-good-secret"
 
 
-def test_key_clear_removes_keychain_entry(qtbot, tmp_path: Path) -> None:
+def test_empty_save_preserves_keychain_entry(qtbot, tmp_path: Path) -> None:
     window, store, credentials = make_window(qtbot, tmp_path)
     credentials.set("deepseek", "existing")
     store.set_key("deepseek", "existing")
@@ -139,13 +139,14 @@ def test_key_clear_removes_keychain_entry(qtbot, tmp_path: Path) -> None:
 
     edits = window.findChildren(settings_module.QLineEdit)
     provider_edit = edits[0]
-    provider_edit.setText("")  # 清空 = 删除
+    provider_edit.setText("")  # 保存后的空输入不能解释为删除
     save_button = next(
         b for b in window.findChildren(settings_module.QPushButton) if b.text() == "保存并验证"
     )
     save_button.click()
 
-    qtbot.waitUntil(lambda: credentials.get("deepseek") is None, timeout=1000)
+    assert credentials.get("deepseek") == "existing"
+    assert "保持不变" in window._status.text()
 
 
 def test_corrupt_config_shows_recovery_card(qtbot, tmp_path: Path) -> None:

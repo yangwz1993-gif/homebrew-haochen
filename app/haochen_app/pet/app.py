@@ -1009,8 +1009,10 @@ class PetApp(QObject):
             self._status_block.set_text("正在读取屏幕", animated=True, cancellable=True)
         hint = getattr(self, "_perception_hint", None)
         if hint is not None:
-            hint.label.setText("👀 已允许，正在读取当前屏幕")
+            self.bubble.remove_widget(hint)
             self._perception_hint = None
+        self.bubble._set_mode("progress")
+        self.bubble._refresh_height()
         self._set_state(PetState.ACTING)
         self._resolve_confirm(confirmed=True)
         self.read_permission_requested.emit()
@@ -1097,7 +1099,7 @@ class PetApp(QObject):
         self._detail_open = True
         self.bubble.hide()
         # 详情是普通工作窗口；置顶桌宠继续显示会压住右下输入区。
-        self.pet.hide()
+        self.pet.show()
         self.detail_opener(rect)
 
     def restore_bubble(self) -> None:

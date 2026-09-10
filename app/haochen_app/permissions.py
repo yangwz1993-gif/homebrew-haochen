@@ -82,6 +82,13 @@ def open_settings() -> None:
     subprocess.Popen(["open", _SETTINGS_URL])  # noqa: S603,S607
 
 
+def open_permission_settings(permission: str) -> None:
+    """Bring the requested system page forward even after an earlier denial."""
+    if permission not in ("accessibility", "screen"):
+        return
+    subprocess.Popen(["open", _SETTINGS_SCREEN if permission == "screen" else _SETTINGS_URL])
+
+
 def _bundle_id() -> str:
     """当前 app 的 bundle id（tccutil 客户端标识）；非打包形态回退默认值。"""
     try:

@@ -162,7 +162,7 @@ def test_upgrade_with_missing_custom_key_keeps_model_fields_and_explains_reentry
     assert wizard.key_page.model_id_edit.text() == "qa-local-upgrade"
     assert wizard.key_page.model_name_edit.text() == "QA Local Upgrade"
     assert not wizard.key_page.isComplete()
-    assert "为避免旧版钥匙串弹窗" in wizard.key_page.status.text()
+    assert "授权已有 Key" in wizard.key_page.status.text()
 
 
 def test_resumed_trial_can_go_back_to_hydrated_custom_model(qtbot, tmp_path: Path) -> None:

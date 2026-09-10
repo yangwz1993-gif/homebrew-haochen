@@ -16,7 +16,6 @@ P4 集成入口：
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -27,6 +26,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QToolButton,
@@ -34,7 +34,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..background import run_in_background
 from ..key_validation import validate_api_key, validate_custom_model
+from ..keychain import read_credential_without_ui
 from ..pet.profile import load_name_candidate, profile_needs_confirmation, save_user_name
 from . import theme
 from .config_store import (
@@ -89,6 +91,10 @@ class SettingsWindow(QWidget):
         self._pending_custom_model: dict | None = None
         self._editing_custom: tuple[str, str] | None = None
         self._runtime_key_validation: dict[str, tuple[bool, str]] = {}
+        self._key_widgets: dict[str, tuple[QLineEdit, QLabel, QPushButton]] = {}
+        self._key_delete_buttons: dict[str, QPushButton] = {}
+        self._working = False
+        self._rebuild_pending = False
         self.keyValidationFinished.connect(self._on_key_validation_finished)
         self.customModelValidationFinished.connect(self._on_custom_model_validation_finished)
         self.setWindowTitle("haochen 设置")
@@ -106,6 +112,13 @@ class SettingsWindow(QWidget):
         self._body = QVBoxLayout(body)
         self._body.setContentsMargins(16, 16, 16, 8)
         self._body.setSpacing(14)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(4)
+        self.progress.hide()
+        root.addWidget(self.progress)
 
         # 底部状态条：保存反馈 / 生效语义提示
         self._status = QLabel("", objectName="statusOk")
@@ -130,6 +143,11 @@ class SettingsWindow(QWidget):
     # ── 构建 / 重建（损坏恢复后整体重绘）───────────────────────
 
     def _build(self) -> None:
+        if self._working:
+            self._rebuild_pending = True
+            return
+        self._key_widgets.clear()
+        self._key_delete_buttons.clear()
         while self._body.count():
             item = self._body.takeAt(0)
             if w := item.widget():
@@ -154,7 +172,7 @@ class SettingsWindow(QWidget):
     def _profile_card(self) -> QFrame:
         card, lay = _card(
             "称呼",
-            "桌宠的名字固定是 haochen；这里只设置它如何称呼你。留空则自然称“你”。",
+            "桌面助手的名字是 haochen；这里只设置它如何称呼你。留空则自然称“你”。",
         )
         row = QHBoxLayout()
         self._profile_name_edit = QLineEdit(load_name_candidate(self.store.home))
@@ -336,6 +354,12 @@ class SettingsWindow(QWidget):
                     wordWrap=True,
                 )
                 row.addWidget(summary, 1)
+                if self.store.key_access_required(provider.id):
+                    authorize = QPushButton("授权已有 Key")
+                    authorize.clicked.connect(
+                        lambda _checked=False, pid=provider.id, b=authorize: self._authorize_key(pid, b)
+                    )
+                    row.addWidget(authorize)
                 edit = QPushButton("编辑")
                 edit.clicked.connect(
                     lambda _checked=False, p=provider, m=model: self._edit_custom_model(p, m)
@@ -401,6 +425,8 @@ class SettingsWindow(QWidget):
             self._remove_custom_model(provider_id, model_id)
 
     def _save_custom_model(self) -> None:
+        if self._working:
+            return
         editing_provider, editing_model = self._editing_custom or (None, None)
         candidate = {
             "base_url": self._custom_url_edit.text().strip(),
@@ -414,37 +440,45 @@ class SettingsWindow(QWidget):
         if not candidate["base_url"] or not candidate["model_id"]:
             self._set_status("请填写 API URL 和模型 ID", ok=False)
             return
-        effective_key = candidate["key"]
-        if editing_provider and not effective_key:
-            effective_key = self.store.keychain.get(editing_provider) or ""
         self._pending_custom_model = candidate
+        self._set_working(True)
         self._custom_save_button.setEnabled(False)
         self._custom_form_toggle.setEnabled(False)
         self._custom_cancel_button.setEnabled(False)
         self._custom_save_button.setText("测试中…")
 
-        def validate() -> None:
-            result = validate_custom_model(
-                candidate["base_url"], candidate["model_id"], effective_key
-            )
-            self.customModelValidationFinished.emit(candidate, result.ok, result.message)
+        def validate():
+            effective_key = candidate["key"]
+            if editing_provider and not effective_key:
+                effective_key = read_credential_without_ui(self.store.keychain, editing_provider) or ""
+            return validate_custom_model(candidate["base_url"], candidate["model_id"], effective_key,
+                                         api=candidate["api"])
 
-        threading.Thread(target=validate, name="haochen-custom-model-check", daemon=True).start()
+        def validated(result, error):
+            self._on_custom_model_validation_finished(
+                candidate, error is None and result.ok,
+                "无法完成连接验证，请检查配置后重试" if error else result.message,
+            )
+
+        run_in_background(self, validate, validated)
 
     def _on_custom_model_validation_finished(self, candidate: dict, ok: bool, message: str) -> None:
         if self._pending_custom_model is not candidate:
             return
-        self._pending_custom_model = None
-        self._custom_save_button.setEnabled(True)
-        self._custom_form_toggle.setEnabled(True)
-        self._custom_cancel_button.setEnabled(True)
-        self._custom_save_button.setText("测试并更新" if self._editing_custom else "测试并保存")
         if not ok:
+            self._pending_custom_model = None
+            self._finish_working()
+            self._custom_save_button.setEnabled(True)
+            self._custom_form_toggle.setEnabled(True)
+            self._custom_cancel_button.setEnabled(True)
+            self._custom_save_button.setText("重新测试")
             self._set_status(f"连接失败：{message}；原配置未更改", ok=False)
             return
+        self._custom_save_button.setText("安全保存中…")
         key = candidate["key"] if candidate["key"] else None
-        try:
-            provider, _effect = self.store.upsert_custom_model(
+
+        def save():
+            return self.store.upsert_custom_model(
                 base_url=candidate["base_url"],
                 model_id=candidate["model_id"],
                 model_name=candidate["model_name"],
@@ -453,24 +487,41 @@ class SettingsWindow(QWidget):
                 provider_id=candidate["provider_id"],
                 original_model_id=candidate["original_model_id"],
             )
-        except Exception as exc:  # noqa: BLE001
-            self._set_status(f"保存失败：{exc}；已恢复原配置", ok=False)
-            return
-        self._editing_custom = None
-        self._runtime_key_validation[provider] = (True, message)
-        self._set_status(f"已安全保存并切换到 {candidate['model_id']}", ok=True)
-        self.restartRequired.emit("自定义模型配置已更新")
-        self._build()
+
+        def saved(result, error):
+            self._pending_custom_model = None
+            self._finish_working()
+            self._custom_save_button.setEnabled(True)
+            self._custom_form_toggle.setEnabled(True)
+            self._custom_cancel_button.setEnabled(True)
+            if error:
+                self._custom_save_button.setText("重新保存")
+                self._set_status("保存未完成，原配置已保留。请检查钥匙串和磁盘后重试。", ok=False)
+                return
+            provider, _effect = result
+            self._editing_custom = None
+            self._runtime_key_validation[provider] = (True, message)
+            self._set_status(f"已安全保存并切换到 {candidate['model_id']}", ok=True)
+            self._build()
+            self.restartRequired.emit("自定义模型配置已更新")
+
+        run_in_background(self, save, saved)
 
     def _remove_custom_model(self, provider_id: str, model_id: str) -> None:
-        try:
-            self.store.remove_custom_model(provider_id, model_id)
-        except Exception as exc:  # noqa: BLE001
-            self._set_status(f"删除失败：{exc}", ok=False)
+        if self._working:
             return
-        self._set_status(f"已删除自定义模型 {model_id}", ok=True)
-        self.restartRequired.emit("自定义模型已删除")
-        self._build()
+        self._set_working(True)
+
+        def done(_result, error):
+            self._finish_working()
+            if error:
+                self._set_status("删除未完成，请稍后重试。", ok=False)
+                return
+            self._set_status(f"已删除自定义模型 {model_id}", ok=True)
+            self._build()
+            self.restartRequired.emit("自定义模型已删除")
+
+        run_in_background(self, lambda: self.store.remove_custom_model(provider_id, model_id), done)
 
     def _keys_card(self, providers) -> QFrame:
         card, lay = _card(
@@ -520,41 +571,124 @@ class SettingsWindow(QWidget):
             save.setObjectName("primaryBtn")
             save.setEnabled(not edit.isReadOnly())
             save.clicked.connect(lambda _checked=False, pid=p.id, e=edit, b=badge, s=save: self._save_key(pid, e, b, s))
+            self._key_widgets[p.id] = (edit, badge, save)
             row.addWidget(edit, 1)
             row.addWidget(eye)
             row.addWidget(save)
+            if not edit.isReadOnly():
+                remove = QPushButton("删除 Key")
+                remove.setEnabled(configured)
+                self._key_delete_buttons[p.id] = remove
+                remove.setAccessibleName(f"删除 {p.name} 的 API Key")
+                remove.clicked.connect(lambda _checked=False, pid=p.id: self._delete_key(pid))
+                row.addWidget(remove)
             lay.addLayout(row)
+            if managed_reference:
+                authorize = QPushButton("授权已有 Key")
+                authorize.setToolTip("仅点击后才请求系统授权；不会删除或替换 Key")
+                authorize.clicked.connect(
+                    lambda _checked=False, pid=p.id, b=authorize: self._authorize_key(pid, b)
+                )
+                lay.addWidget(authorize, alignment=Qt.AlignmentFlag.AlignLeft)
         return card
+
+    def _authorize_key(self, provider: str, button: QPushButton) -> None:
+        if self._working:
+            return
+        self._set_working(True)
+        self.lower()
+        self._set_status("请在 macOS 授权框中操作。“允许”用于本次运行，“始终允许”用于后续读取；也可以拒绝。", ok=True)
+
+        def done(allowed, error):
+            self._finish_working()
+            if error or not allowed:
+                self._set_status("授权未完成，原 Key 未改变；可以再次点击“授权已有 Key”。", ok=False)
+                return
+            button.setText("重新授权 Key")
+            if provider in self._key_widgets:
+                edit, badge, _save = self._key_widgets[provider]
+                self._update_key_badge(badge, True, "已授权 · 连接待确认")
+                edit.setPlaceholderText("已有 Key 已授权 · 输入新 Key 可更换")
+                self._key_delete_buttons[provider].setEnabled(True)
+            self._set_status("已有 Key 已授权，重启引擎后即可用于对话。", ok=True)
+            self.restartRequired.emit(f"{provider} 的已有 Key 已授权")
+
+        run_in_background(self, lambda: self.store.authorize_key(provider), done)
 
     def set_runtime_key_validation(self, provider: str, valid: bool, message: str) -> None:
         """记录本次运行的连接事实；Keychain 中“有值”不再冒充“验证成功”。"""
         self._runtime_key_validation[provider] = (valid, message)
-        self._build()
+        widgets = self._key_widgets.get(provider)
+        if widgets:
+            _edit, badge, _save = widgets
+            self._update_key_badge(badge, valid, "已连接 · 安全存储" if valid else "当前凭据验证失败")
+            if not valid:
+                badge.setObjectName("badgeErr")
+                badge.setStyleSheet("")
+            elif not _edit.text():
+                _edit.setPlaceholderText("已安全保存 · 输入新 Key 可更换")
+                if provider in self._key_delete_buttons:
+                    self._key_delete_buttons[provider].setEnabled(True)
+        if self._working:
+            return
         if valid:
             self._set_status(f"{provider}：连接已验证，凭据安全存储", ok=True)
         else:
             self._set_status(f"{provider}：{message}，请重新输入并验证", ok=False)
 
     def _save_key(self, provider: str, edit: QLineEdit, badge: QLabel, save: QPushButton) -> None:
+        if self._working:
+            return
         candidate = edit.text().strip()
         if not candidate:
-            self.store.set_key(provider, "")
-            self._runtime_key_validation.pop(provider, None)
-            configured, status = self.store.key_status(provider)
-            self._update_key_badge(badge, configured, status)
-            edit.setPlaceholderText("输入 API Key")
-            self._announce(f"{provider} 的 API Key 已清除", EFFECT_IMMEDIATE)
-            self.restartRequired.emit(f"{provider} 的 API Key 已清除")
+            self._set_status("原 Key 保持不变；如需更换，请输入新 Key。", ok=True)
             return
+        self._set_working(True)
         save.setEnabled(False)
         save.setText("验证中…")
         self._pending_key_validations[provider] = (candidate, edit, badge, save)
 
-        def validate() -> None:
-            result = validate_api_key(provider, candidate)
-            self.keyValidationFinished.emit(provider, candidate, result.ok, result.message)
+        def validated(result, error):
+            self._on_key_validation_finished(provider, candidate, error is None and result.ok,
+                                             "连接验证未完成，请重试" if error else result.message)
 
-        threading.Thread(target=validate, name=f"haochen-key-check-{provider}", daemon=True).start()
+        run_in_background(self, lambda: validate_api_key(provider, candidate), validated)
+
+    def _set_working(self, working: bool) -> None:
+        self._working = working
+        self._body.parentWidget().setEnabled(not working)
+        self.progress.setVisible(working)
+
+    def _finish_working(self) -> None:
+        self._set_working(False)
+        # Explicit rebuild requests are handled after the completion callback
+        # has finished with its widgets. Runtime status never rebuilds the form.
+        if self._rebuild_pending:
+            self._rebuild_pending = False
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, self._build)
+
+    def _delete_key(self, provider: str) -> None:
+        if self._working:
+            return
+        if QMessageBox.question(self, "删除 API Key", "删除后需要重新填写 Key 才能使用这个模型。确定删除吗？",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        self._set_working(True)
+        self._set_status("正在删除…", ok=True)
+
+        def done(_result, error):
+            self._finish_working()
+            if error:
+                self._set_status("删除未完成，请稍后重试。", ok=False)
+                return
+            self._runtime_key_validation.pop(provider, None)
+            self._build()
+            self._set_status("API Key 已删除。", ok=True)
+            self.restartRequired.emit(f"{provider} 的 API Key 已清除")
+
+        run_in_background(self, lambda: self.store.set_key(provider, ""), done)
 
     @staticmethod
     def _update_key_badge(badge: QLabel, configured: bool, status: str) -> None:
@@ -566,25 +700,37 @@ class SettingsWindow(QWidget):
         pending = self._pending_key_validations.get(provider)
         if pending is None or pending[0] != candidate:
             return
-        self._pending_key_validations.pop(provider, None)
         _candidate, edit, badge, save = pending
-        save.setEnabled(True)
-        save.setText("保存并验证")
         if not ok:
+            self._pending_key_validations.pop(provider, None)
+            self._finish_working()
+            save.setEnabled(True)
+            save.setText("重新验证")
             self._set_status(f"验证失败：{message}；原 Key 未更改", ok=False)
             return
-        try:
-            effect = self.store.set_key(provider, candidate)
-        except Exception as exc:  # noqa: BLE001
-            self._set_status(f"Keychain 保存失败：{exc}", ok=False)
-            return
-        self._runtime_key_validation[provider] = (True, message)
-        edit.clear()
-        edit.setPlaceholderText("已验证，输入新 Key 可替换")
-        configured, status = self.store.key_status(provider)
-        self._update_key_badge(badge, configured, "已验证 · 安全存储")
-        self._announce(f"{provider} 的 API Key", effect)
-        self.restartRequired.emit(f"{provider} 的 API Key 已更新")
+        save.setText("安全保存中…")
+        self._set_status("连接成功，正在安全保存…", ok=True)
+
+        def saved(effect, error):
+            self._pending_key_validations.pop(provider, None)
+            self._finish_working()
+            save.setEnabled(True)
+            if error:
+                save.setText("重新保存")
+                self._set_status("连接成功，但未能保存。请解锁 macOS 钥匙串后重试。", ok=False)
+                return
+            self._runtime_key_validation[provider] = (True, message)
+            if edit.text().strip() == candidate:
+                edit.clear()
+            edit.setPlaceholderText("已安全保存 · 输入新 Key 可更换")
+            save.setText("更换 Key")
+            self._update_key_badge(badge, True, "已连接 · 安全存储")
+            if provider in self._key_delete_buttons:
+                self._key_delete_buttons[provider].setEnabled(True)
+            self._announce(f"{provider} 的 API Key", effect)
+            self.restartRequired.emit(f"{provider} 的 API Key 已更新")
+
+        run_in_background(self, lambda: self.store.set_key(provider, candidate), saved)
 
     # ── 行为 ──────────────────────────────────────────────────
 

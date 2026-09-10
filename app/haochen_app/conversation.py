@@ -185,7 +185,9 @@ def _chinese_number(token: str) -> int | None:
 
 def plain_visible_text(text: str) -> str:
     """Remove lightweight Markdown punctuation for compact plain-text surfaces."""
-    return _VISIBLE_MARKDOWN.sub("", strip_tags(text or "")).strip()
+    clean = strip_tags(text or "")
+    clean = re.sub(r"(?<![=])={2,3}([^=\n]+?)={2,3}(?![=])", r"\1", clean)
+    return _VISIBLE_MARKDOWN.sub("", clean).strip()
 
 
 def _truncate_visible(text: str, limit: int) -> str:

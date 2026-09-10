@@ -7,14 +7,17 @@ import json
 import os
 import re
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Protocol
 
 # 0.3.1 created items while the app was ad-hoc signed.  Their ACL therefore
 # trusts that exact build hash and macOS displays a blocking SecurityAgent
 # prompt when a later, stably signed build reads them.  Never probe that legacy
-# namespace during normal startup.  The versioned namespace starts with the
-# stable signing identity used by 0.3.2+ and can persist across later upgrades.
+# namespace during normal startup. The v2 namespace avoids that legacy item.
+# Even a stable self-signed designated requirement may have a cdhash-bound
+# Keychain partition. Upgrades therefore expose explicit authorization, never
+# assume silent access, and never weaken or rewrite the item's ACL.
 LEGACY_SERVICE = "com.haochen.app.api-key"
 SERVICE = "com.haochen.app.api-key.v2"
 SERVICE_ENV = "HAOCHEN_KEYCHAIN_SERVICE"
@@ -124,7 +127,11 @@ class _NativeKeychainBackend:
 
     def get_without_ui(self, service: str, account: str) -> str | None:
         """Read without allowing SecurityAgent to display an authorization dialog."""
-        with _INTERACTION_LOCK:
+        # An explicit authorization can remain open while the user switches
+        # windows. Never let an incidental GUI status query wait behind it.
+        if not _INTERACTION_LOCK.acquire(blocking=False):
+            raise KeychainError("钥匙串授权正在进行中")
+        try:
             previous = ctypes.c_ubyte()
             status = self.security.SecKeychainGetUserInteractionAllowed(
                 ctypes.byref(previous)
@@ -161,8 +168,40 @@ class _NativeKeychainBackend:
                         self.core_foundation.CFRelease(ctypes.c_void_p(item))
             finally:
                 self.security.SecKeychainSetUserInteractionAllowed(previous.value)
+        finally:
+            _INTERACTION_LOCK.release()
+
+    def authorize(self, service: str, account: str) -> str | None:
+        """Interactive read ONLY in response to the user's explicit button click."""
+        with _INTERACTION_LOCK:
+            previous = ctypes.c_ubyte()
+            if self.security.SecKeychainGetUserInteractionAllowed(ctypes.byref(previous)) != 0:
+                raise KeychainError("无法读取钥匙串状态")
+            if self.security.SecKeychainSetUserInteractionAllowed(True) != 0:
+                raise KeychainError("无法请求钥匙串授权")
+            try:
+                return self.get(service, account)
+            finally:
+                self.security.SecKeychainSetUserInteractionAllowed(previous.value)
+
+    @contextmanager
+    def _without_interaction(self):
+        with _INTERACTION_LOCK:
+            previous = ctypes.c_ubyte()
+            if self.security.SecKeychainGetUserInteractionAllowed(ctypes.byref(previous)) != 0:
+                raise KeychainError("无法读取钥匙串状态")
+            if self.security.SecKeychainSetUserInteractionAllowed(False) != 0:
+                raise KeychainError("无法设置钥匙串访问方式")
+            try:
+                yield
+            finally:
+                self.security.SecKeychainSetUserInteractionAllowed(previous.value)
 
     def set(self, service: str, account: str, secret: str) -> None:
+        with self._without_interaction():
+            self._set(service, account, secret)
+
+    def _set(self, service: str, account: str, secret: str) -> None:
         status, _length, data, item = self._find(service, account)
         if data:
             self.security.SecKeychainItemFreeContent(None, ctypes.c_void_p(data))
@@ -200,6 +239,10 @@ class _NativeKeychainBackend:
             raise KeychainError("无法写入 macOS Keychain")
 
     def delete(self, service: str, account: str) -> None:
+        with self._without_interaction():
+            self._delete(service, account)
+
+    def _delete(self, service: str, account: str) -> None:
         status, _length, data, item = self._find(service, account)
         if data:
             self.security.SecKeychainItemFreeContent(None, ctypes.c_void_p(data))
@@ -221,23 +264,37 @@ class KeychainStore:
     def __init__(self, service: str | None = None, backend=None):
         self.service = service or os.environ.get(SERVICE_ENV, SERVICE)
         self._backend = backend or _NativeKeychainBackend()
+        self._authorized: dict[str, str] = {}
 
     def get(self, provider: str) -> str | None:
-        return self._backend.get(self.service, provider)
+        return self.get_without_ui(provider)
 
     def get_without_ui(self, provider: str) -> str | None:
+        if provider in self._authorized:
+            return self._authorized[provider]
         getter = getattr(self._backend, "get_without_ui", None)
         if getter is None:
             return self._backend.get(self.service, provider)
         return getter(self.service, provider)
 
+    def authorize(self, provider: str) -> bool:
+        secret = self._backend.authorize(self.service, provider)
+        if secret:
+            # Respect "Allow" for this process without demanding "Always
+            # Allow". Never persist this session cache or send it to Qt UI.
+            self._authorized[provider] = secret
+        return bool(secret)
+
     def set(self, provider: str, secret: str) -> None:
         if not secret:
             raise ValueError("secret must not be empty")
         self._backend.set(self.service, provider, secret)
+        if provider in self._authorized:
+            self._authorized[provider] = secret
 
     def delete(self, provider: str) -> None:
         self._backend.delete(self.service, provider)
+        self._authorized.pop(provider, None)
 
 
 class MemoryCredentialStore:

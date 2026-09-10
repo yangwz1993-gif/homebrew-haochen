@@ -170,6 +170,13 @@ class ChatWindow(QWidget):
         self._detail_mode = False
         self._detail_collapsing = False
         self._detail_source_rect = QRect()
+        self._detail_anchor_text = ""
+        self._detail_anchor_row = None
+        self._detail_position_pending = False
+        self._anchor_settle = QTimer(self)
+        self._anchor_settle.setSingleShot(True)
+        self._anchor_settle.setInterval(120)
+        self._anchor_settle.timeout.connect(self._finish_detail_position)
         self._normal_geometry = QRect()
         self._geom_anim: QPropertyAnimation | None = None
 
@@ -451,7 +458,8 @@ class ChatWindow(QWidget):
             self.flow.insertWidget(self.flow.count() - 1, row)
         else:
             self.flow.insertWidget(self.flow.indexOf(before), row)
-        self._defer(0, self._scroll_bottom)
+        if not self._detail_mode:
+            self._defer(0, self._scroll_bottom)
         return row
 
     def _defer(self, delay_ms: int, callback) -> None:
@@ -481,8 +489,29 @@ class ChatWindow(QWidget):
         self._follow_stream = False
         self.jump_to_latest_button.hide()
 
+    def _scroll_current_turn(self) -> None:
+        self._follow_stream = False
+        row = self._detail_anchor_row
+        if row is not None:
+            try:
+                y = row.mapTo(self.scroll.widget(), row.rect().topLeft()).y()
+                self.scroll.verticalScrollBar().setValue(max(0, y - 12))
+            except RuntimeError:
+                pass
+        else:
+            sb = self.scroll.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        self._follow_stream = False
+
+    def _finish_detail_position(self) -> None:
+        if self._detail_mode and self._detail_position_pending:
+            self._scroll_current_turn()
+        self._detail_position_pending = False
+
     def _on_scroll_moved(self) -> None:
         """用户主动滚动后重估“是否在底部”；离开底部即停止强制跟随。"""
+        if self._detail_position_pending:
+            return
         sb = self.scroll.verticalScrollBar()
         at_bottom = sb.maximum() - sb.value() <= self.SCROLL_FOLLOW_THRESHOLD
         was_following = self._follow_stream
@@ -505,6 +534,10 @@ class ChatWindow(QWidget):
             self._defer(0, self._scroll_bottom)
 
     def _on_range_changed(self) -> None:
+        if self._detail_mode and self._detail_position_pending:
+            self._defer(0, self._scroll_current_turn)
+            self._anchor_settle.start()
+            return
         if self._follow_stream:
             sb = self.scroll.verticalScrollBar()
             sb.setValue(sb.maximum())
@@ -576,14 +609,16 @@ class ChatWindow(QWidget):
                 # 详情模式 Esc = 收起（优先于打断生成）；正常打开时行为不变
                 self.collapse_detail()
             else:
-                self._on_stop()
+                self.close()
             return
         super().keyPressEvent(ev)
 
     def _on_close_shortcut(self) -> None:
-        """⌘W：仅详情模式拦截为「收起」；正常模式不处理（保持旧行为）。"""
+        """Close both entry modes; hiding a window does not cancel its task."""
         if self._detail_mode:
             self.collapse_detail()
+        else:
+            self.close()
 
     def closeEvent(self, ev) -> None:
         # 详情模式下系统级关闭（⌘W/Mission Control 等）也走收起，绝不退出 app
@@ -598,7 +633,7 @@ class ChatWindow(QWidget):
 
     # ── 详情模式：从气泡展开 / 收回气泡 ─────────────────────────
 
-    def open_from_bubble(self, source_rect: QRect | None = None) -> None:
+    def open_from_bubble(self, source_rect: QRect | None = None, anchor_text: str = "") -> None:
         """「展开详细」：从短会话气泡 rect 平滑扩展（OutCubic ~220ms）到正常尺寸，
         并从会话顶部开始阅读完整上下文。"""
         self._remember_normal_geometry()
@@ -606,6 +641,9 @@ class ChatWindow(QWidget):
         self._detail_collapsing = False
         self._follow_stream = False
         self._detail_source_rect = source_rect or QRect()
+        self._detail_anchor_text = anchor_text
+        self._detail_position_pending = True
+        self._anchor_settle.start(350)
         self.sidebar.hide()
         self.detail_header.show()
         self.input.setPlaceholderText("继续这个话题…（⏎ 发送，⌘⏎ 换行）")
@@ -623,8 +661,9 @@ class ChatWindow(QWidget):
         self.activateWindow()
         # showEvent 可能异步重绘历史；动画前后都钉在顶部，最终 _render_history
         # 还会再按 detail mode 定位一次，覆盖布局/rangeChanged 竞态。
-        self._defer(0, self._scroll_top)
-        self._defer(300, self._scroll_top)
+        self._defer(0, self._scroll_current_turn)
+        self._defer(300, self._scroll_current_turn)
+        self.input.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def _restore_min_size(self) -> None:
         if self._detail_mode and not self._detail_collapsing:
@@ -1193,6 +1232,8 @@ class ChatWindow(QWidget):
         if not resp.get("success"):
             return
         self._clear_flow()
+        self._detail_anchor_row = None
+        last_user_row = None
         messages = self._collapse_repeated_error_retries(
             (resp.get("data") or {}).get("messages") or []
         )
@@ -1205,7 +1246,10 @@ class ChatWindow(QWidget):
                     continue          # 契约 §4.4：summary 踢令永不渲染
                 if text:
                     self.ctrl.clear_resume_context()
-                    self._add_row(UserBubble(visible_user_text(text)), "right")
+                    row = self._add_row(UserBubble(visible_user_text(text)), "right")
+                    last_user_row = row
+                    if visible_user_text(text).strip() == self._detail_anchor_text.strip():
+                        self._detail_anchor_row = row
             elif role == "assistant":
                 self._render_history_assistant(msg)
             elif role == "toolResult":
@@ -1219,8 +1263,12 @@ class ChatWindow(QWidget):
                 )
                 self._add_row(card, "left")
         if self._detail_mode:
+            self._detail_position_pending = True
+            self._anchor_settle.start(350)
+            if self._detail_anchor_row is None:
+                self._detail_anchor_row = last_user_row
             self._follow_stream = False
-            self._defer(0, self._scroll_top)
+            self._defer(0, self._scroll_current_turn)
         else:
             self._follow_stream = True
             self._defer(0, self._scroll_bottom)

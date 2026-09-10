@@ -179,7 +179,7 @@ def test_late_detail_collapse_does_not_hide_reopened_bubble(qtbot, tmp_path: Pat
     assert pet.bubble._input_visible()
 
 
-def test_detail_hides_topmost_pet_until_collapsed(qtbot, tmp_path: Path) -> None:
+def test_detail_keeps_pet_available_until_collapsed(qtbot, tmp_path: Path) -> None:
     pet, _client = make_pet(qtbot, tmp_path)
     opened: list = []
     pet.detail_opener = lambda rect: opened.append(rect)
@@ -190,7 +190,7 @@ def test_detail_hides_topmost_pet_until_collapsed(qtbot, tmp_path: Path) -> None
     pet._on_expand_detail()
 
     assert opened
-    assert not pet.pet.isVisible()
+    assert pet.pet.isVisible()
     pet.restore_bubble()
     assert pet.pet.isVisible()
 
@@ -548,7 +548,9 @@ def test_engine_events_drive_visible_work_phases(qtbot, tmp_path: Path) -> None:
     client.response.emit({"id": request_id, "success": True, "type": "response"})
     assert pet.state is PetState.ACKNOWLEDGING
     qtbot.waitUntil(lambda: pet.state is PetState.COMPOSING, timeout=1000)
-    assert pet._status_block.text == "正在组织回答"
+    assert pet._status_block.text == "我想想"
+    assert pet._status_block._lb.isHidden()
+    assert not pet._status_block.dots.isHidden()
 
     client.event.emit({"type": "tool_execution_start", "toolName": "bash"})
     assert pet.state is PetState.ACTING
@@ -583,11 +585,12 @@ def test_status_block_has_comic_pulse_without_exposing_reasoning(qtbot) -> None:
     block = StatusBlock("正在组织回答")
     qtbot.addWidget(block)
     block._pulse.setInterval(10)
-    before = block._lb.text()
-    qtbot.waitUntil(lambda: block._lb.text() != before, timeout=250)
+    before = block.dots.frame
+    qtbot.waitUntil(lambda: block.dots.frame != before, timeout=250)
+    assert block._lb.isHidden()
 
     assert block.text == "正在组织回答"
-    assert " ·" in block._lb.text()
+    assert not block.dots.isHidden()
     block.set_text("想好了 ✓", animated=False)
     assert not block._pulse.isActive()
 

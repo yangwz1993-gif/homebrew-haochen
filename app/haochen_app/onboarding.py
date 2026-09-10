@@ -3,22 +3,24 @@
 from __future__ import annotations
 
 import json
-import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
     QLineEdit,
+    QProgressBar,
     QPushButton,
+    QStyleFactory,
     QVBoxLayout,
     QWidget,
     QWizard,
     QWizardPage,
 )
 
+from .background import run_in_background
 from .key_validation import ValidationResult, validate_api_key, validate_custom_model
 from .pet.profile import load_name_candidate, profile_needs_confirmation, save_user_name
 from .secure_storage import atomic_write_private, ensure_private_file
@@ -76,7 +78,7 @@ class ProfilePage(QWizardPage):
         self.setTitle("我该怎么称呼你？")
         layout = QVBoxLayout(self)
         note = QLabel(
-            "haochen 是桌宠的名字。这里填的是它对你的称呼，"
+            "haochen 是桌面助手的名字。这里填的是它对你的称呼，"
             "可以留空，以后也能在设置中修改。"
         )
         note.setWordWrap(True)
@@ -121,9 +123,10 @@ class KeyPage(QWizardPage):
         self._verified = store.key_status(self.provider)[0]
         self._configured_custom_signature: tuple[str, str, str] | None = None
         self._pending_custom: dict | None = None
+        self._working = False
         self.setTitle("连接模型")
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("API Key 只会在验证成功后保存到 macOS Keychain。"))
+        layout.addWidget(QLabel("连接成功后，API Key 会安全保存在 macOS 钥匙串中。"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("DeepSeek（预设）", "deepseek")
         self.mode_combo.addItem("自定义 OpenAI 兼容模型", "custom")
@@ -158,6 +161,16 @@ class KeyPage(QWizardPage):
         self.verify_button.setObjectName("primaryBtn")
         self.verify_button.clicked.connect(self._verify)
         layout.addWidget(self.verify_button)
+        self.authorize_button = QPushButton("授权已有 Key")
+        self.authorize_button.setToolTip("仅点击后才会请求 macOS 钥匙串授权；不会删除或替换已有 Key")
+        self.authorize_button.clicked.connect(self._authorize_existing_key)
+        layout.addWidget(self.authorize_button)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(4)
+        self.progress.hide()
+        layout.addWidget(self.progress)
         self.status = QLabel(self._connection_status())
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -196,7 +209,7 @@ class KeyPage(QWizardPage):
         if self._verified:
             return "已配置，可继续"
         if self.requires_key_reentry:
-            return "为避免旧版钥匙串弹窗，请在这里重新输入一次 API Key 并验证。"
+            return "已有 Key 若需要授权，请点“授权已有 Key”；没有保存过 Key 时再填写。"
         return "尚未验证"
 
     def _custom_signature(self) -> tuple[str, str, str]:
@@ -207,7 +220,11 @@ class KeyPage(QWizardPage):
         )
 
     def _custom_value_edited(self, _value: str) -> None:
+        self.verify_button.setText("保存并验证")
         if self.mode_combo.currentData() != "custom":
+            self._verified = False
+            self.status.setText("修改后请重新验证")
+            self.completeChanged.emit()
             return
         self._verified = bool(
             not self.key_edit.text()
@@ -217,13 +234,56 @@ class KeyPage(QWizardPage):
         self.completeChanged.emit()
 
     def isComplete(self) -> bool:
-        return self._verified
+        return self._verified and not self._working
+
+    def _set_working(self, working: bool) -> None:
+        self._working = working
+        for widget in (self.verify_button, self.authorize_button, self.mode_combo, self.key_edit,
+                       self.url_edit, self.model_id_edit, self.model_name_edit):
+            widget.setEnabled(not working)
+        self.progress.setVisible(working)
+        self.completeChanged.emit()
+
+    def _stored_provider(self) -> str | None:
+        if self.mode_combo.currentData() != "custom":
+            return self.provider
+        for provider in self.store.providers():
+            if (not provider.builtin and provider.base_url == self.url_edit.text().strip()
+                    and any(model.get("id") == self.model_id_edit.text().strip()
+                            for model in provider.models)):
+                return provider.id
+        return None
+
+    def _authorize_existing_key(self) -> None:
+        provider = self._stored_provider()
+        if self._working or not provider:
+            return
+        self._set_working(True)
+        self.window().lower()
+        self.status.setText("请在 macOS 授权框中操作。“允许”用于本次运行，“始终允许”用于后续读取；也可以拒绝。")
+
+        def done(allowed, error):
+            self._set_working(False)
+            if error or not allowed:
+                self.status.setText("授权未完成，原 Key 未改变。可以再次点击“授权已有 Key”。")
+                return
+            self._verified = not self.key_edit.text()
+            if self.mode_combo.currentData() == "custom":
+                self._configured_custom_signature = self._custom_signature()
+            self.authorize_button.hide()
+            self.key_edit.setPlaceholderText("已有 Key 已授权 · 输入新 Key 可更换")
+            self.status.setText("已有 Key 已授权，可继续；模型连接将在实际对话时确认。")
+            self.completeChanged.emit()
+
+        run_in_background(self, lambda: self.store.authorize_key(provider), done)
 
     def _verify(self) -> None:
+        if self._working:
+            return
         candidate = self.key_edit.text().strip()
         mode = self.mode_combo.currentData()
         if not candidate and mode != "custom":
-            self.status.setText("请输入 API Key")
+            self.status.setText("已安全保存，可继续；如需更换，请输入新 Key。" if self._verified else "请输入 API Key")
             return
         if mode == "custom":
             self._pending_custom = {
@@ -235,51 +295,71 @@ class KeyPage(QWizardPage):
             if not self._pending_custom["base_url"] or not self._pending_custom["model_id"]:
                 self.status.setText("请填写 API URL 和模型 ID")
                 return
-        self.verify_button.setEnabled(False)
-        self.mode_combo.setEnabled(False)
+        self._set_working(True)
+        self.verify_button.setText("连接验证中…")
         self.status.setText("正在验证…")
         pending_custom = dict(self._pending_custom) if self._pending_custom is not None else None
 
-        def run() -> None:
+        def run():
             if pending_custom is not None:
-                result = self.custom_verifier(
+                return self.custom_verifier(
                     pending_custom["base_url"],
                     pending_custom["model_id"],
                     candidate,
                 )
-            else:
-                result = self.verifier(self.provider, candidate)
-            self.validation_finished.emit(candidate, result.ok, result.message)
+            return self.verifier(self.provider, candidate)
 
-        threading.Thread(target=run, name="haochen-onboarding-key-check", daemon=True).start()
+        def done(result, error):
+            self._finish_validation(candidate, error is None and result.ok,
+                                    "连接验证未完成，请重试" if error else result.message)
+
+        run_in_background(self, run, done)
 
     def _finish_validation(self, candidate: str, ok: bool, message: str) -> None:
-        self.verify_button.setEnabled(True)
-        self.mode_combo.setEnabled(True)
         if not ok:
+            self._set_working(False)
+            self.verify_button.setText("重新验证")
             self.status.setText(f"验证失败：{message}；原 Key 未更改")
             self._pending_custom = None
             return
-        try:
-            if self._pending_custom is not None:
-                self.store.upsert_custom_model(
-                    base_url=self._pending_custom["base_url"],
-                    model_id=self._pending_custom["model_id"],
-                    model_name=self._pending_custom["model_name"],
+        pending = dict(self._pending_custom) if self._pending_custom is not None else None
+        self._set_working(True)
+        self.verify_button.setText("安全保存中…")
+        self.status.setText("连接成功，正在保存…")
+
+        def save():
+            if pending is not None:
+                return self.store.upsert_custom_model(
+                    base_url=pending["base_url"],
+                    model_id=pending["model_id"],
+                    model_name=pending["model_name"],
                     key=candidate or None,
                 )
-                self._configured_custom_signature = self._custom_signature()
-            else:
-                self.store.set_key(self.provider, candidate)
-        except Exception as exc:  # noqa: BLE001
+            return self.store.set_key(self.provider, candidate)
+
+        def saved(_result, error):
             self._pending_custom = None
-            self.status.setText(f"Keychain 保存失败：{exc}")
-            return
-        self._pending_custom = None
-        self.key_edit.clear()
-        self._verified = True
-        self.status.setText("验证成功，已保存到 Keychain")
-        self.completeChanged.emit()
+            self._set_working(False)
+            if error:
+                self.verify_button.setText("重新保存")
+                self.status.setText("连接成功，但未能保存。请解锁 macOS 钥匙串后重试。")
+                return
+            if pending:
+                self._configured_custom_signature = tuple(
+                    pending[field] for field in ("base_url", "model_id", "model_name")
+                )
+            if self.key_edit.text().strip() == candidate:
+                self.key_edit.clear()
+            self._verified = not self.key_edit.text() and (
+                pending is None or self._configured_custom_signature == self._custom_signature()
+            )
+            self.key_edit.setPlaceholderText("已安全保存 · 输入新 Key 可更换")
+            self.verify_button.setText("已连接 ✓")
+            self.status.setText("验证成功，已安全保存。可以点“下一步”了。" if self._verified
+                                else "原配置已保存，修改后的内容请重新验证。")
+            self.completeChanged.emit()
+
+        run_in_background(self, save, saved)
 
     def _mode_changed(self) -> None:
         custom = self.mode_combo.currentData() == "custom"
@@ -296,6 +376,8 @@ class KeyPage(QWizardPage):
             else self.store.key_status(self.provider)[0]
         )
         self.status.setText(self._connection_status())
+        provider = self._stored_provider()
+        self.authorize_button.setVisible(bool(provider and self.store.key_access_required(provider)))
         self.completeChanged.emit()
 
 
@@ -316,6 +398,28 @@ class PermissionPage(QWizardPage):
         screen.clicked.connect(lambda: self.permission_requested.emit("screen"))
         layout.addWidget(screen)
         layout.addWidget(QLabel("可直接点“下一步”，稍后在真正使用相关能力时再授权。"))
+        self.status = QLabel("尚未检查权限；聊天可直接使用。")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self._poll = QTimer(self)
+        self._poll.setInterval(1500)
+        self._poll.timeout.connect(self.refresh_status)
+
+    def refresh_status(self) -> None:
+        from .permissions import accessibility_granted, screen_recording_granted
+        self.status.setText(
+            f"读文字：{'已授权' if accessibility_granted() else '未授权'}  ·  "
+            f"看图片：{'已授权' if screen_recording_granted() else '未授权'}"
+        )
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.refresh_status()
+        self._poll.start()
+
+    def hideEvent(self, event) -> None:
+        self._poll.stop()
+        super().hideEvent(event)
 
 
 class TrialPage(QWizardPage):
@@ -342,6 +446,11 @@ class OnboardingWizard(QWizard):
         super().__init__(parent)
         self.store = store
         self.state = OnboardingState(store.home)
+        # The wizard uses our own styled controls in both a .app and test runners.
+        # Native macOS wizard decorations require a bundle even in offscreen Qt.
+        wizard_style = QStyleFactory.create("Fusion")
+        wizard_style.setParent(self)
+        self.setStyle(wizard_style)
         self.setWindowTitle("欢迎使用 haochen")
         self.setMinimumSize(680, 580)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)

@@ -144,7 +144,7 @@ def test_key_status_turns_blocked_acl_into_in_app_reentry_message(tmp_path: Path
 
     assert store.key_status("deepseek") == (
         False,
-        "应用安全身份已更新，请重新输入 API Key",
+        "已有 Key 需要授权本版本读取",
     )
 
 

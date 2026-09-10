@@ -92,6 +92,7 @@ class WindowContent:
     app_name: str = ""
     window_title: str = ""
     blocks: list[Block] = field(default_factory=list)
+    window_bounds: tuple[float, float, float, float] | None = None
 
 
 class AXError(RuntimeError):
@@ -114,6 +115,13 @@ def _geom(el) -> tuple[float, float]:
     try:
         return float(pos.x()), float(pos.y())
     except Exception:
+        try:
+            from ApplicationServices import AXValueGetValue, kAXValueCGPointType
+            ok, value = AXValueGetValue(pos, kAXValueCGPointType, None)
+            if ok:
+                return float(value.x), float(value.y)
+        except Exception:
+            pass
         return 0.0, 0.0
 
 
@@ -123,6 +131,13 @@ def _size(el) -> tuple[float, float]:
     try:
         return float(size.width()), float(size.height())
     except Exception:
+        try:
+            from ApplicationServices import AXValueGetValue, kAXValueCGSizeType
+            ok, value = AXValueGetValue(size, kAXValueCGSizeType, None)
+            if ok:
+                return float(value.width), float(value.height)
+        except Exception:
+            pass
         return 0.0, 0.0
 
 
@@ -315,7 +330,9 @@ def read_window(pid: int, app_name: str, allow_wait: bool = True) -> WindowConte
             _walk(win, 0, blocks)
             if len(blocks) >= 20 or _has_webarea(win):
                 break
-    return WindowContent(app_name=app_name, window_title=title, blocks=_dedup_sort(blocks))
+    bounds = (*_geom(win), *_size(win))
+    return WindowContent(app_name=app_name, window_title=title, blocks=_dedup_sort(blocks),
+                         window_bounds=bounds if bounds[2] > 0 and bounds[3] > 0 else None)
 
 
 def _window_center(pid: int) -> tuple[float, float] | None:
@@ -368,6 +385,8 @@ def read_full(max_scrolls: int = 20, stagnant_rounds: int = 3,
         scroll_once(pid)
         time.sleep(0.4)
         snap = read_window(pid, app_name, allow_wait=False)
+        if (snap.window_title != first.window_title or snap.window_bounds != first.window_bounds):
+            break  # Never mix text from a newly focused window into the first one.
         new = [b for b in snap.blocks if (b.kind, b.text, b.url) not in seen]
         if new:
             stagnant = 0
@@ -381,7 +400,8 @@ def read_full(max_scrolls: int = 20, stagnant_rounds: int = 3,
         if stagnant >= stagnant_rounds:
             break
 
-    result = WindowContent(app_name=first.app_name, window_title=first.window_title)
+    result = WindowContent(app_name=first.app_name, window_title=first.window_title,
+                           window_bounds=first.window_bounds)
     result.blocks = _dedup_sort(all_blocks)
     return result
 
@@ -569,34 +589,30 @@ def _cgimage_to_png_data_url(img) -> str | None:
         return None
 
 
-def capture_window_image(pid: int) -> str | None:
+def select_capture_window(windows, pid: int, title: str = "", bounds=None):
+    """Match the same AX window; never replace it with a larger unrelated one."""
+    candidates = [w for w in windows or [] if int(w.get("kCGWindowLayer", -1)) == 0
+                  and int(w.get("kCGWindowOwnerPID", -1)) == pid]
+    if bounds:
+        for window in candidates:
+            rect = window.get("kCGWindowBounds", {})
+            if all(abs(float(rect.get(name, -99999)) - value) <= 4
+                   for name, value in zip(("X", "Y", "Width", "Height"), bounds, strict=True)):
+                return window
+        return None  # Target moved/closed while images were fetched: do not substitute.
+    if title:
+        matches = [w for w in candidates if _norm(w.get("kCGWindowName")) == title]
+        return matches[0] if len(matches) == 1 else None
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def capture_window_image(pid: int, title: str = "", bounds=None) -> str | None:
     """截取目标窗口图像，返回 PNG data URL；无权限/失败返回 None。"""
     if not screen_capture_granted():
         return None  # 需要屏幕录制权限
     wins = CGWindowListCopyWindowInfo(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, 0)
-    best = None
-    best_area = 0.0
-    # 优先：目标 pid 的最大普通窗口（layer 0）；若没有（如系统通知弹窗/宠物前台），
-    # 回退到屏幕最大普通窗口（用户的实际窗口），避免截到通知/宠物自身。
-    for w in wins or []:
-        if int(w.get("kCGWindowLayer", -1)) != 0:
-            continue
-        b = w.get("kCGWindowBounds", {})
-        area = float(b.get("Width", 0)) * float(b.get("Height", 0))
-        if int(w.get("kCGWindowOwnerPID", -1)) == pid:
-            if area > best_area:
-                best_area = area
-                best = w
-    if best is None:
-        for w in wins or []:
-            if int(w.get("kCGWindowLayer", -1)) != 0:
-                continue
-            b = w.get("kCGWindowBounds", {})
-            area = float(b.get("Width", 0)) * float(b.get("Height", 0))
-            if area > best_area:
-                best_area = area
-                best = w
+    best = select_capture_window(wins, pid, title, bounds)
     if best is None:
         return None
     wid = int(best["kCGWindowNumber"])
@@ -671,7 +687,7 @@ def main() -> int:
         screenshot = None
         need_sr = False
     else:
-        screenshot = capture_window_image(pid)
+        screenshot = capture_window_image(pid, content.window_title, content.window_bounds)
         need_sr = screenshot is None and not screen_capture_granted()
     print(json.dumps({
         "app": content.app_name,

@@ -366,7 +366,7 @@ def test_detail_mode_expand_and_collapse(qtbot, tmp_path: Path) -> None:
     assert window.height() >= 560
 
 
-def test_detail_mode_opens_at_conversation_top_after_history_layout(
+def test_detail_mode_opens_at_latest_turn_after_history_layout(
     qtbot, tmp_path: Path,
 ) -> None:
     from PyQt6.QtCore import QRect
@@ -395,7 +395,7 @@ def test_detail_mode_opens_at_conversation_top_after_history_layout(
 
     bar = window.scroll.verticalScrollBar()
     assert bar.maximum() > 0
-    assert bar.value() == bar.minimum() == 0
+    assert bar.value() > bar.minimum()
     assert window._follow_stream is False
 
 

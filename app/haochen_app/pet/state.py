@@ -51,9 +51,9 @@ POSE_ALERT = "angry"  # 出错姿态（visual-spec §4 angry/alert）
 
 # 状态 → 气泡状态条文案（body-sm / color-info 弱化展示）
 STATUS_LINE = {
-    PetState.ACKNOWLEDGING: "收到，我接住了",
+    PetState.ACKNOWLEDGING: "我想想",
     PetState.PERCEIVING: "需要你确认后，我才能看屏幕",
     PetState.ACTING: "正在处理",
-    PetState.COMPOSING: "正在组织回答",
-    PetState.PRESENTING: "马上说重点",
+    PetState.COMPOSING: "我想想",
+    PetState.PRESENTING: "想好了",
 }

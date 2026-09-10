@@ -405,7 +405,7 @@ class ConfigStore:
             try:
                 stored = read_credential_without_ui(self.keychain, provider)
             except KeychainInteractionRequired:
-                return False, "应用安全身份已更新，请重新输入 API Key"
+                return False, "已有 Key 需要授权本版本读取"
             except KeychainError:
                 return False, "Keychain 暂时不可用"
             return (True, "已安全存储在 Keychain") if stored else (False, "Keychain 中缺少凭据")
@@ -414,6 +414,23 @@ class ConfigStore:
         if key.startswith("!"):
             return True, "已配置（命令间接引用）"
         return True, "已配置"
+
+    def key_access_required(self, provider: str) -> bool:
+        if self.get_key(provider) != f"${credential_env_name(provider)}":
+            return False
+        try:
+            read_credential_without_ui(self.keychain, provider)
+        except KeychainInteractionRequired:
+            return True
+        except KeychainError:
+            pass
+        return False
+
+    def authorize_key(self, provider: str) -> bool:
+        authorize = getattr(self.keychain, "authorize", None)
+        if authorize is None:
+            raise KeychainError("当前凭据存储不支持系统授权")
+        return bool(authorize(provider))
 
     def set_key(self, provider: str, key: str) -> str:
         """Store a pre-validated key in Keychain and persist only an environment reference."""

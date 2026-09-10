@@ -43,7 +43,7 @@ from . import theme as T
 
 BUBBLE_WIDTH = 380          # 结果/错误卡；各状态按内容进一步收紧
 INPUT_WIDTH = 344           # 输入态更像一句话气泡，避免遮挡桌面主工作区
-PROGRESS_WIDTH = 292
+PROGRESS_WIDTH = 196
 ACTION_WIDTH = 392
 _MAX_H_RATIO = 0.70         # 最大高度 ~70% 屏
 _BODY_BOTTOM_PADDING = 8    # 内容与主体下描边保持呼吸感，尾巴槽另计
@@ -55,7 +55,9 @@ _SLIDE_PX = 10              # 唤起上滑距离
 
 def _action_icon(kind: str, color: str, size: int = 18) -> QIcon:
     """Draw restrained vector icons so the compact bubble never depends on emoji glyphs."""
-    pixmap = QPixmap(size, size)
+    # Supply native 1x/2x/3x rasters so QIcon never enlarges a tiny 1x image.
+    pixmap = QPixmap(size * 3, size * 3)
+    pixmap.setDevicePixelRatio(3.0)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -80,6 +82,9 @@ def _action_icon(kind: str, color: str, size: int = 18) -> QIcon:
     elif kind == "close":
         painter.drawLine(QPointF(4.5, 4.5), QPointF(size - 4.5, size - 4.5))
         painter.drawLine(QPointF(size - 4.5, 4.5), QPointF(4.5, size - 4.5))
+    elif kind == "stop":
+        painter.setBrush(QColor(color))
+        painter.drawRoundedRect(QRectF(4, 4, size - 8, size - 8), 2, 2)
     painter.end()
     return QIcon(pixmap)
 
@@ -174,24 +179,56 @@ class HintBlock(QWidget):
         lay.addStretch(1)
 
 
+class ThinkingDots(QWidget):
+    """Small painted dots; no emoji/font dependency or invented progress."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.frame = 0
+        self.setFixedSize(76, 32)
+        self.setAccessibleName("haochen 正在思考")
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        for index in range(3):
+            phase = self.frame / 15 * math.tau - index * 0.85
+            lift = 0 if a11y.reduce_motion_enabled() else max(0, math.sin(phase)) * 4
+            color = QColor(T.COLOR_INK_SOFT)
+            color.setAlphaF(0.48 + lift * 0.10)
+            painter.setBrush(color)
+            painter.drawEllipse(QRectF(13 + index * 21, 13 - lift, 7, 7))
+
+
 class StatusBlock(QWidget):
     """漫画式处理状态：只呈现阶段和动态节奏，不暴露隐藏思维。"""
 
     stop_requested = pyqtSignal()
+    layout_changed = pyqtSignal()
+    QUIET_STATES = {
+        "我想想", "收到，我接住了", "正在处理", "正在组织回答", "想好了", "马上说重点",
+        "准备读取屏幕", "正在读取屏幕", "正在查看网页", "正在执行命令", "正在整理文件", "正在使用工具",
+    }
 
     def __init__(self, text: str, *, cancellable: bool = False, parent=None):
         super().__init__(parent)
         self.setStyleSheet("background: transparent;")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(4, 2, 48, 2)
+        lay.setContentsMargins(0, 0, 0, 0)
         self._base_text = text.rstrip(".。… ·")
         self._frame = 0
         self._lb = _text_label(self._base_text, "", T.FONT_BODY_SM)
         self._lb.setStyleSheet(f"QLabel {{ color: {T.COLOR_INK_SOFT};"
                                f" font-size: {T.FONT_BODY_SM}px; padding: 2px 4px; }}")
         lay.addWidget(self._lb)
+        self.dots = ThinkingDots()
+        lay.addWidget(self.dots)
         lay.addStretch(1)
-        self.stop_button = QPushButton("停止")
+        self.stop_button = QPushButton()
+        self.stop_button.setIcon(_action_icon("stop", T.COLOR_INK_SOFT))
+        self.stop_button.setIconSize(QSize(18, 18))
+        self.stop_button.setFixedSize(28, 28)
         self.stop_button.setAccessibleName("停止当前处理")
         self.stop_button.setToolTip("停止当前处理（Esc）")
         self.stop_button.setStyleSheet(
@@ -203,14 +240,35 @@ class StatusBlock(QWidget):
         self.stop_button.setVisible(cancellable)
         lay.addWidget(self.stop_button)
         self._pulse = QTimer(self)
-        self._pulse.setInterval(420)
+        self._pulse.setInterval(90)
         self._pulse.timeout.connect(self._advance)
         if not a11y.reduce_motion_enabled():
             self._pulse.start()
+        self._slow = QTimer(self)
+        self._slow.setSingleShot(True)
+        self._slow.setInterval(20000)
+        self._slow.timeout.connect(self._show_slow_status)
+        if cancellable:
+            self._slow.start()
+        self._sync_presentation()
+
+    def _sync_presentation(self) -> None:
+        quiet = self._base_text in self.QUIET_STATES
+        self._lb.setVisible(not quiet)
+        self.dots.setVisible(quiet)
+        self.setAccessibleDescription(self._base_text)
+        self.layout_changed.emit()
+
+    def _show_slow_status(self) -> None:
+        self._slow_waiting = True
+        self._base_text = "还在等回复，可以继续等或停止。"
+        self._lb.setText(self._base_text)
+        self._sync_presentation()
 
     def _advance(self) -> None:
-        self._frame = (self._frame + 1) % 4
-        self._lb.setText(self._base_text + " ·" * self._frame)
+        self._frame = (self._frame + 1) % 16
+        self.dots.frame = self._frame
+        self.dots.update()
 
     def set_text(
         self,
@@ -219,7 +277,8 @@ class StatusBlock(QWidget):
         animated: bool = True,
         cancellable: bool | None = None,
     ) -> None:
-        self._base_text = text.rstrip(".。… ·")
+        if not (getattr(self, "_slow_waiting", False) and text in self.QUIET_STATES):
+            self._base_text = text.rstrip(".。… ·")
         self._frame = 0
         self._lb.setText(self._base_text)
         if animated and not a11y.reduce_motion_enabled():
@@ -228,6 +287,9 @@ class StatusBlock(QWidget):
             self._pulse.stop()
         if cancellable is not None:
             self.stop_button.setVisible(cancellable)
+            if not cancellable:
+                self._slow.stop()
+        self._sync_presentation()
 
     @property
     def text(self) -> str:
@@ -251,7 +313,8 @@ class SummaryBlock(QWidget):
             f"QWidget {{ background: {T.COLOR_SURFACE}; border: none;"
             f" border-radius: {T.RADIUS_BUBBLE}px; }}")
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(12, 10, 12, 10)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(12)
         if cancelled:
             stopped = _text_label(
                 "已停止",
@@ -465,7 +528,7 @@ class BubbleWindow(QWidget):
 
         root = QVBoxLayout(self)
         self._root = root
-        root.setContentsMargins(14, 10, 14, 0)  # 底部留给自绘尾巴
+        root.setContentsMargins(16, 12, 38, 0)  # 右侧为角落关闭按钮留出点击区
         root.setSpacing(6)
 
         # 轻量顶栏只承载关闭动作；不显示窗口标题，避免把漫画气泡做成传统对话框。
@@ -489,9 +552,10 @@ class BubbleWindow(QWidget):
         btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_close.clicked.connect(self.dismiss)
         self.btn_close = btn_close
-        head.addWidget(btn_close)
-        root.addWidget(self._head_panel)
-        self._head_panel.show()
+        btn_close.setParent(self)
+        btn_close.setFixedSize(24, 24)
+        btn_close.show()
+        self._head_panel.hide()
 
         # 动态对话流（滚动区）
         # v0.1.4 hotfix 问题2：viewport / flow_host 默认会填系统灰底，必须显式透明，
@@ -651,7 +715,7 @@ class BubbleWindow(QWidget):
             "error": 82,
         }
         self._mode = mode
-        self._head_panel.show()
+        self._head_panel.hide()
         self._min_h = minimums[mode]
         self.setMinimumHeight(self._min_h)
         self.setFixedWidth(widths[mode])
@@ -835,6 +899,7 @@ class BubbleWindow(QWidget):
         self._set_mode("progress")
         block = StatusBlock(text, cancellable=cancellable)
         block.stop_requested.connect(self.abort_requested.emit)
+        block.layout_changed.connect(self._refresh_height)
         return self._append(block)
 
     def present_status(self, text: str, *, cancellable: bool = False) -> StatusBlock:
@@ -912,8 +977,11 @@ class BubbleWindow(QWidget):
         """收起确认条；emit_result=True/False 时才补发结果信号，None 静默。"""
         bar, self._confirm_bar = self._confirm_bar, None
         if bar:
+            self.flow.removeWidget(bar)
             bar.hide()
             bar.deleteLater()
+            self._refresh_height()
+            QTimer.singleShot(0, self._refresh_height)
         if emit_result is True or emit_result is False:
             self.confirm_resolved.emit(emit_result)
 
@@ -1058,13 +1126,13 @@ class BubbleWindow(QWidget):
             self._tail_side = side
             if side == "top":
                 self._root.setContentsMargins(
-                    14, T.TAIL_SIZE + 10, 14, _BODY_BOTTOM_PADDING
+                    16, T.TAIL_SIZE + 12, 38, _BODY_BOTTOM_PADDING
                 )
                 self._tail_spacer.changeSize(
                     0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
                 )
             else:
-                self._root.setContentsMargins(14, 10, 14, 0)
+                self._root.setContentsMargins(16, 12, 38, 0)
                 self._tail_spacer.changeSize(
                     0,
                     T.TAIL_SIZE + _BODY_BOTTOM_PADDING,
@@ -1072,6 +1140,8 @@ class BubbleWindow(QWidget):
                     QSizePolicy.Policy.Fixed,
                 )
             self._root.invalidate()
+            if hasattr(self, "btn_close"):
+                self.btn_close.move(self.width() - 31, (T.TAIL_SIZE if side == "top" else 0) + 7)
         self.update()
 
     # ── 自绘：气泡主体 + 可移动尾巴（指向桌宠）─────────────────
@@ -1091,6 +1161,13 @@ class BubbleWindow(QWidget):
         p.setBrush(QColor(T.COLOR_BG))
         p.drawPath(path)
         tail_x = self._tail_tip_x - 10
+        if self._mode == "progress":
+            direction = -1 if top_tail else 1
+            edge = body_top if top_tail else body_h
+            for offset, radius in ((3, 3.5), (10, 2.2)):
+                p.drawEllipse(QPointF(self._tail_tip_x, edge + direction * offset), radius, radius)
+            p.end()
+            return
         if top_tail:
             tri = QPolygonF([
                 QPointF(tail_x, T.TAIL_SIZE + 2),
@@ -1145,6 +1222,9 @@ class BubbleWindow(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        if hasattr(self, "btn_close"):
+            self.btn_close.move(self.width() - 31, (T.TAIL_SIZE if self._tail_side == "top" else 0) + 7)
+            self.btn_close.raise_()
         self.resized.emit()
 
     def changeEvent(self, e):

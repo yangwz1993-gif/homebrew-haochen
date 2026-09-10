@@ -23,7 +23,7 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from .chat import ChatWindow
@@ -56,7 +56,7 @@ class AppShell:
         sup = self.supervisor
 
         # 双入口联动：气泡「展开详细」→ 对话窗口从气泡 rect 动画展开（v0.1.4 hotfix）
-        self.pet.detail_opener = self.chat.open_from_bubble
+        self.pet.detail_opener = self._open_pet_detail
         self.pet.new_session_opener = self.chat._new_session
         self.pet.interaction_guard = self._interaction_allowed
         self.pet.chat_requested.connect(self.show_chat)
@@ -108,9 +108,32 @@ class AppShell:
         if draft and not self.chat.input.toPlainText():
             self.chat.input.setPlainText(draft)
         if self.pet.bubble.summoned:
-            self.pet.bubble.dismiss()
-        self.pet.pet.hide()
-        self.chat.show_normal()
+            rect = self.pet.bubble.geometry()
+            self.pet.bubble.hide()
+            self.pet._detail_open = True
+            self._open_pet_detail(rect)
+        else:
+            self.chat.show_normal()
+        self._keep_pet_beside_chat()
+
+    def _open_pet_detail(self, rect) -> None:
+        self.chat.open_from_bubble(rect, self.pet._last_user_text)
+        self._keep_pet_beside_chat()
+        self.chat._defer(250, self._keep_pet_beside_chat)
+
+    def _keep_pet_beside_chat(self) -> None:
+        from .a11y import screen_of
+        if not self.chat.isVisible():
+            return
+        pet = self.pet.pet
+        if self.chat.geometry().intersects(pet.geometry()):
+            screen = screen_of(pet).availableGeometry()
+            x = self.chat.x() + self.chat.width() + 10
+            if x + pet.width() > screen.right():
+                x = max(screen.left(), self.chat.x() - pet.width() - 10)
+            pet.move(x, max(screen.top(), min(pet.y(), screen.bottom() - pet.height())))
+        pet.show()
+        pet.raise_()
 
     def new_session(self) -> None:
         """Create through the pet state reset and the chat session tracker exactly once."""
@@ -218,7 +241,6 @@ class AppShell:
         self.onboarding.permission_requested.connect(self._request_onboarding_permission)
         self.onboarding.trial_requested.connect(self._send_onboarding_trial)
         self.onboarding.finished.connect(self._on_onboarding_finished)
-        self.onboarding.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self._present_onboarding()
 
     def _present_onboarding(self) -> None:
@@ -242,7 +264,7 @@ class AppShell:
         self.pet.pet.raise_()
         # Discovery help is intentionally suppressed while onboarding is
         # visible; give it a fresh chance only after that surface is gone.
-        QTimer.singleShot(900, self.pet._maybe_show_discovery_hint)
+        self.chat._defer(900, self.pet._maybe_show_discovery_hint)
 
     def any_key_configured(self) -> bool:
         try:
@@ -251,12 +273,21 @@ class AppShell:
             return False
 
     def _request_onboarding_permission(self, permission: str) -> None:
-        from .permissions import request_accessibility, request_screen_recording
+        from .permissions import open_permission_settings, request_accessibility, request_screen_recording
 
-        if permission == "accessibility":
-            request_accessibility()
-        elif permission == "screen":
-            request_screen_recording()
+        if permission not in ("accessibility", "screen"):
+            return
+        if hasattr(self, "onboarding"):
+            self.onboarding.lower()
+
+        def handoff():
+            granted = request_accessibility() if permission == "accessibility" else request_screen_recording()
+            if not granted:
+                open_permission_settings(permission)
+            if hasattr(self, "onboarding"):
+                self.onboarding.permission_page.refresh_status()
+
+        QTimer.singleShot(0, handoff)
 
     def _send_onboarding_trial(self, prompt: str) -> None:
         provider, model_id = self.store.default_model()
