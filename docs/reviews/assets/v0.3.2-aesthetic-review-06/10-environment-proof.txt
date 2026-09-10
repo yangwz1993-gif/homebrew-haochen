@@ -1,0 +1,35 @@
+haochen v0.3.2 aesthetic review round 06 — candidate and isolation proof
+Date: 2026-09-10 Asia/Shanghai
+
+Candidate:
+/Users/yangwz/Documents/workspace/haochen/packaging/dist/haochen-0.3.2.dmg
+SHA-256:
+46a6900886b21f4dbbd851045fdfbb713fd92ca2406d9d5c3d97dc6126291af9
+Bundle version: 0.3.2 (build 2)
+Read-only mount:
+/private/tmp/haochen-v032-r06-mount.1Y5NGK/haochen.app
+
+Isolation:
+- HAOCHEN_HOME=/private/tmp/haochen-v032-r06-home.WNQzWv
+- HAOCHEN_KEYCHAIN_SERVICE=com.haochen.qa.v032.r06.WNQzWv
+- explicit env -u HAOCHEN_SKIP_ONBOARDING
+- explicit env -u HAOCHEN_SKIP_PERMISSION_GUIDE
+- explicit env -u HAOCHEN_MOCK
+
+Final process proof before cleanup:
+- main PID 20868, PPID 18479
+- engine PID 23243, PPID 20868
+- engine --session-dir /private/tmp/haochen-v032-r06-home.WNQzWv/pi-sessions
+
+Keychain proof (secret never printed):
+- class genp
+- service com.haochen.qa.v032.r06.WNQzWv
+- account custom-4a37b0ebe8
+- engine environment contained the matching custom-provider key variable; only length/prefix shape was inspected
+
+Cleanup:
+- normal TERM sent to main PID 20868; main and engine PID 23243 exited
+- local model fixture on 127.0.0.1:18770 and screenshot receiver on 127.0.0.1:8773 stopped; no listeners remain
+- test Keychain item deleted; lookup exit 44 (not found)
+- read-only DMG device disk8 detached
+- isolated Home and review evidence preserved

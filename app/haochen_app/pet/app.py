@@ -24,7 +24,7 @@ from collections.abc import Callable
 
 from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCursor
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from ..app_tracking import write_last_user_text
 from ..conversation import ConversationController, make_session_title, plain_visible_text
@@ -451,6 +451,27 @@ class PetApp(QObject):
 
     def eventFilter(self, obj, ev):
         """点气泡/桌宠之外的区域 → 收起（显式点击收起；失焦本身不收起）。"""
+        try:
+            bubble_child = (
+                isinstance(obj, QWidget)
+                and (obj is self.bubble or self.bubble.isAncestorOf(obj))
+            )
+        except RuntimeError:
+            # Qt can deliver final child events while the C++ BubbleWindow is
+            # already being torn down, just before destroyed removes us.
+            return False
+        if bubble_child and ev.type() in (
+            QEvent.Type.Enter,
+            QEvent.Type.HoverEnter,
+            QEvent.Type.MouseMove,
+        ):
+            # The compact result is composed of child widgets that can consume
+            # native enter/move events before BubbleWindow sees them.
+            self._pause_result_dismiss()
+        elif bubble_child and ev.type() in (QEvent.Type.Leave, QEvent.Type.HoverLeave):
+            # Defer until Qt has updated widgetAt/underMouse; child-to-child
+            # transitions must not be mistaken for leaving the whole bubble.
+            QTimer.singleShot(0, self._resume_result_dismiss_if_pointer_left)
         if (ev.type() == QEvent.Type.MouseButtonPress and self.bubble.summoned
                 and not self._detail_open
                 and not self._settings_open
@@ -734,14 +755,29 @@ class PetApp(QObject):
             self._resume_result_dismiss()
 
     def _pointer_inside_bubble(self) -> bool:
-        """Map native global coordinates through Qt before testing the window rect.
+        """Combine Qt hit-testing paths for native and synthetic macOS events.
 
-        Comparing ``QCursor.pos()`` with a top-level widget's ``geometry()`` is
-        unreliable on macOS when screens have different origins/scales.  Qt's
-        global-to-local mapping handles those native coordinate transforms.
+        Frameless tool windows can miss top-level enter/leave, while global
+        cursor coordinates can disagree across mixed-scale screens.  underMouse
+        and widgetAt cover event-driven interaction; local mapping is a final
+        fallback for cross-application moves where widgetAt returns ``None``.
         """
-        local_pos = self.bubble.mapFromGlobal(QCursor.pos())
-        return self.bubble.rect().contains(local_pos)
+        try:
+            if self.bubble.underMouse():
+                return True
+            hovered = QApplication.widgetAt(QCursor.pos())
+            if hovered is self.bubble or (
+                isinstance(hovered, QWidget) and self.bubble.isAncestorOf(hovered)
+            ):
+                return True
+            local_pos = self.bubble.mapFromGlobal(QCursor.pos())
+            return self.bubble.rect().contains(local_pos)
+        except RuntimeError:
+            return False
+
+    def _resume_result_dismiss_if_pointer_left(self) -> None:
+        if not self._pointer_inside_bubble():
+            self._resume_result_dismiss()
 
     def _dismiss_result_if_idle(self) -> None:
         """结果卡无交互后退场；工作、确认和详情阶段绝不误收起。"""

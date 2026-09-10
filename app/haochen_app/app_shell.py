@@ -46,6 +46,8 @@ class AppShell:
         self.chat.setStyleSheet(app_stylesheet())
         self.pet = PetApp(client=self.supervisor.client, supervisor=self.supervisor)
         self.settings = SettingsWindow(home=home, store=self.store)
+        self._apply_default_model_after_restart = False
+        self._pending_onboarding_trial: str | None = None
         self._wire()
 
     # ── 接线 ──────────────────────────────────────────────────
@@ -64,11 +66,8 @@ class AppShell:
         self.pet.credential_validation.connect(self._on_credential_validation)
         self.pet.read_permission_requested.connect(self._request_read_permission)
         self.chat.read_permission_requested.connect(self._request_read_permission)
-        sup.restart_failed.connect(
-            lambda: self._on_credential_validation(
-                False, "当前模型连接失败，请检查凭据或模型设置"
-            )
-        )
+        sup.restarted.connect(self._on_config_restart_completed)
+        sup.restart_failed.connect(self._on_config_restart_failed)
         self.settings.closed.connect(self.pet.restore_after_settings)
 
         # 配置 → 引擎生效链（M-D 预留信号，P4 接线）
@@ -150,6 +149,7 @@ class AppShell:
         if not self.supervisor.running:
             return  # 引擎还没起：下次启动即生效，无需打扰
         if os.environ.get("HAOCHEN_AUTO_RESTART") == "1":
+            self._apply_default_model_after_restart = True
             self.supervisor.restart_now()
             return
         box = QMessageBox(self.settings)
@@ -159,7 +159,26 @@ class AppShell:
         box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         box.setDefaultButton(QMessageBox.StandardButton.Yes)
         if box.exec() == QMessageBox.StandardButton.Yes:
+            self._apply_default_model_after_restart = True
             self.supervisor.restart_now()
+
+    def _on_config_restart_completed(self) -> None:
+        """Apply the configured default after Supervisor restores the old session."""
+        if self._apply_default_model_after_restart:
+            provider, model_id = self.store.default_model()
+            if provider and model_id:
+                self.supervisor.client.set_model(provider, model_id)
+            self._apply_default_model_after_restart = False
+        prompt, self._pending_onboarding_trial = self._pending_onboarding_trial, None
+        if prompt:
+            self._dispatch_onboarding_trial(prompt)
+
+    def _on_config_restart_failed(self) -> None:
+        self._apply_default_model_after_restart = False
+        self._pending_onboarding_trial = None
+        self._on_credential_validation(
+            False, "当前模型连接失败，请检查凭据或模型设置"
+        )
 
     # ── 首启引导 ───────────────────────────────────────────────
 
@@ -235,6 +254,20 @@ class AppShell:
             request_screen_recording()
 
     def _send_onboarding_trial(self, prompt: str) -> None:
+        provider, model_id = self.store.default_model()
+        if self.supervisor.running and provider.startswith("custom-"):
+            # The custom provider was written after the engine started. Restart
+            # to reload its catalog, then override the restored session's old
+            # model before sending the first trial prompt.
+            self._pending_onboarding_trial = prompt
+            self._apply_default_model_after_restart = True
+            self.supervisor.restart_now()
+            return
+        if self.supervisor.running and provider and model_id:
+            self.supervisor.client.set_model(provider, model_id)
+        self._dispatch_onboarding_trial(prompt)
+
+    def _dispatch_onboarding_trial(self, prompt: str) -> None:
         if not self.pet.bubble.summoned:
             self.pet._toggle_bubble()
         self.pet.send(prompt)

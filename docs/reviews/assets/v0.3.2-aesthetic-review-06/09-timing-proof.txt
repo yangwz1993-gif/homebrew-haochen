@@ -1,0 +1,23 @@
+haochen v0.3.2 aesthetic review round 06 — monotonic timing proof
+Date: 2026-09-10 Asia/Shanghai
+
+Group A (real local OpenAI-compatible provider, 100 ms polling):
+- result visible -> hover entered: 9185.716 ms
+  (target was about 8 s; screenshot/app-switch overhead accounts for the excess)
+- continuous pointer hover in result text region: 8001.498 ms
+- result still present at end of hover: yes
+- pointer moved across applications to TextEdit
+- leave -> automatic dismissal: 1998.650 ms
+- total result-visible wall time: 20101.780 ms
+
+Expected if hover paused the timer:
+- leave -> dismissal should have been about 11-12 s
+- total visible wall time should have been about 28 s
+
+Observed:
+- the entire hover interval was counted in the approximately 20 s lifetime
+- screenshot 05-a-hover-held-8s.jpg shows the real pointer in the result text region
+
+Group B:
+- not run after Group A produced a conclusive failure; coordinator instructed that a failed A should be reported without repeating the timing scenario.
+

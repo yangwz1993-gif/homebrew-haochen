@@ -133,6 +133,29 @@ def test_hover_watch_detects_enter_and_leave_when_native_events_are_missing(
     qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
 
 
+def test_child_widget_mouse_events_pause_and_resume_result(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    client = harness.FakeClient()
+    client.home = tmp_path
+    pet = pet_module.PetApp(client=client, supervisor=None)
+    qtbot.addWidget(pet.bubble)
+    qtbot.addWidget(pet.pet)
+    pet._result_timer.setInterval(80)
+    pet.bubble.summon()
+    pet._on_summary_done("已经处理好了。")
+    child = pet.bubble.scroll.viewport()
+
+    pet.eventFilter(child, pet_module.QEvent(pet_module.QEvent.Type.Enter))
+
+    assert not pet._result_timer.isActive()
+    assert pet._result_hovering
+    monkeypatch.setattr(pet, "_pointer_inside_bubble", lambda: False)
+    pet.eventFilter(child, pet_module.QEvent(pet_module.QEvent.Type.Leave))
+    qtbot.waitUntil(pet._result_timer.isActive, timeout=500)
+    qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
+
+
 def test_expanding_compact_composer_preserves_unsent_draft(qtbot, tmp_path: Path) -> None:
     shell = app_shell_module.AppShell(mock=True, home=tmp_path)
     qtbot.addWidget(shell.chat)
