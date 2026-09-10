@@ -11,11 +11,12 @@
 | 独立用户验收 | 第 11 轮黑盒验收 PASS；连续结果、系统级 hover 与完整产品路径均通过，P0/P1/P2 均为 0 | PASS |
 | 代码质量 | `make check`：367 tests，coverage 83% | PASS |
 | 分层回归 | `make regressions`：6/6 | PASS |
-| PR | [#8](https://github.com/yangwz1993-gif/homebrew-haochen/pull/8)；首轮 CI PASS，新修复提交后重跑 | 进行中 |
+| PR / CI | [#8](https://github.com/yangwz1993-gif/homebrew-haochen/pull/8) 已合并为 `264cb74`；最终 macOS quality gate 全绿 | PASS |
+| 标签 / Release | `v0.3.2` 指向 `264cb74`；正式 Release 含唯一 DMG 资产 | PASS |
 | 发布模式 | 所有者 2026-09-09 明确选择 legacy | 已授权 |
 | 签名 | `haochen Local Signing`，门禁确认不是 ad-hoc | PASS |
-| DMG / Cask | 唯一候选 `90baf661…a693a`；legacy preflight 与第 11 轮独立验收均 PASS | PASS |
-| Homebrew 安装 | 从线上 Release 安装、启动、升级与卸载 | 待发布复核 |
+| DMG / Cask | 本地、线上重新下载与 Cask SHA 均为 `90baf661…a693a`；legacy preflight 与独立验收均 PASS | PASS |
+| Homebrew 安装 | 线上 0.3.1→0.3.2 升级、卸载、重装和 `open -a haochen` 均通过；最终从 `/Applications` 运行 | PASS |
 
 ## 风险边界
 
