@@ -223,6 +223,7 @@ class ConfigStore:
         api: str = "openai-completions",
         provider_id: str | None = None,
         original_model_id: str | None = None,
+        allow_keychain_authorization: bool = False,
     ) -> tuple[str, str]:
         """Atomically add/update one user-owned endpoint and select it as default."""
         from ..key_validation import normalize_model_base_url
@@ -247,7 +248,7 @@ class ConfigStore:
             name: (self.agent_dir / name).read_text(encoding="utf-8")
             for name in (MODELS_FILE, SETTINGS_FILE, AUTH_FILE)
         }
-        previous_key = self.keychain.get(provider_id)
+        previous_key, previous_key_known = self._previous_key(provider_id)
         try:
             catalog = self._load(MODELS_FILE)
             providers = catalog.setdefault("providers", {})
@@ -283,19 +284,24 @@ class ConfigStore:
             }
             self._save(MODELS_FILE, catalog)
             if key is not None:
-                self.set_key(provider_id, key)
+                self.set_key(
+                    provider_id, key,
+                    allow_keychain_authorization=allow_keychain_authorization,
+                )
             self.set_default_model(provider_id, model_id)
         except Exception:
             for name, payload in snapshots.items():
                 atomic_write_private(self.agent_dir / name, payload)
-            if previous_key is None:
+            if previous_key_known and previous_key is None:
                 self.keychain.delete(provider_id)
-            else:
+            elif previous_key is not None:
                 self.keychain.set(provider_id, previous_key)
             raise
         return provider_id, EFFECT_RESTART
 
-    def remove_custom_model(self, provider_id: str, model_id: str) -> str:
+    def remove_custom_model(
+        self, provider_id: str, model_id: str, *, allow_keychain_authorization: bool = False
+    ) -> str:
         """Remove an exact custom model and repair the default selection transactionally."""
         self.ensure_initialized()
         catalog = self._load(MODELS_FILE)
@@ -307,7 +313,7 @@ class ConfigStore:
             name: (self.agent_dir / name).read_text(encoding="utf-8")
             for name in (MODELS_FILE, SETTINGS_FILE, AUTH_FILE)
         }
-        previous_key = self.keychain.get(provider_id)
+        previous_key, previous_key_known = self._previous_key(provider_id)
         try:
             remaining = [
                 item for item in provider.get("models", [])
@@ -317,7 +323,10 @@ class ConfigStore:
                 provider["models"] = remaining
             else:
                 providers.pop(provider_id, None)
-                self.set_key(provider_id, "")
+                self.set_key(
+                    provider_id, "",
+                    allow_keychain_authorization=allow_keychain_authorization,
+                )
             self._save(MODELS_FILE, catalog)
             current_provider, current_model = self.default_model()
             if current_provider == provider_id and current_model == model_id:
@@ -330,9 +339,9 @@ class ConfigStore:
         except Exception:
             for name, payload in snapshots.items():
                 atomic_write_private(self.agent_dir / name, payload)
-            if previous_key is None:
+            if previous_key_known and previous_key is None:
                 self.keychain.delete(provider_id)
-            else:
+            elif previous_key is not None:
                 self.keychain.set(provider_id, previous_key)
             raise
         return EFFECT_RESTART
@@ -432,30 +441,54 @@ class ConfigStore:
             raise KeychainError("当前凭据存储不支持系统授权")
         return bool(authorize(provider))
 
-    def set_key(self, provider: str, key: str) -> str:
+    def _previous_key(self, provider: str) -> tuple[str | None, bool]:
+        """Return (value, known) without turning an old ACL into data loss."""
+        try:
+            return self.keychain.get(provider), True
+        except KeychainInteractionRequired:
+            return None, False
+
+    def set_key(
+        self, provider: str, key: str, *, allow_keychain_authorization: bool = False
+    ) -> str:
         """Store a pre-validated key in Keychain and persist only an environment reference."""
         key = key.strip()
         auth = self._load(AUTH_FILE)
         auth_snapshot = (self.agent_dir / AUTH_FILE).read_text(encoding="utf-8")
-        previous_key = self.keychain.get(provider)
+        previous_key, previous_key_known = self._previous_key(provider)
         try:
             if key and is_indirect_reference(key):
-                self.keychain.delete(provider)
+                if allow_keychain_authorization:
+                    remover = getattr(self.keychain, "delete_with_authorization", None)
+                    (remover or self.keychain.delete)(provider)
+                else:
+                    self.keychain.delete(provider)
                 auth[provider] = {"type": "api_key", "key": key}
             elif key:
-                self.keychain.set(provider, key)
+                if allow_keychain_authorization:
+                    writer = getattr(self.keychain, "set_with_authorization", None)
+                    if writer is None:
+                        self.keychain.set(provider, key)
+                    else:
+                        writer(provider, key)
+                else:
+                    self.keychain.set(provider, key)
                 if self.keychain.get(provider) != key:
                     raise RuntimeError("Keychain read-back verification failed")
                 auth[provider] = {"type": "api_key", "key": f"${credential_env_name(provider)}"}
             else:
-                self.keychain.delete(provider)
+                if allow_keychain_authorization:
+                    remover = getattr(self.keychain, "delete_with_authorization", None)
+                    (remover or self.keychain.delete)(provider)
+                else:
+                    self.keychain.delete(provider)
                 auth.pop(provider, None)
             self._save(AUTH_FILE, auth)
         except Exception:
             atomic_write_private(self.agent_dir / AUTH_FILE, auth_snapshot)
-            if previous_key is None:
+            if previous_key_known and previous_key is None:
                 self.keychain.delete(provider)
-            else:
+            elif previous_key is not None:
                 self.keychain.set(provider, previous_key)
             raise
         return EFFECT_RESTART

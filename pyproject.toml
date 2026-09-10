@@ -1,6 +1,6 @@
 [project]
 name = "haochen"
-version = "0.3.4rc1"
+version = "0.3.4rc2"
 description = "haochen macOS desktop agent"
 requires-python = ">=3.12,<3.13"
 dependencies = [

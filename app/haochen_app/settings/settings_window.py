@@ -486,6 +486,7 @@ class SettingsWindow(QWidget):
                 api=candidate["api"],
                 provider_id=candidate["provider_id"],
                 original_model_id=candidate["original_model_id"],
+                allow_keychain_authorization=True,
             )
 
         def saved(result, error):
@@ -521,7 +522,13 @@ class SettingsWindow(QWidget):
             self._build()
             self.restartRequired.emit("自定义模型已删除")
 
-        run_in_background(self, lambda: self.store.remove_custom_model(provider_id, model_id), done)
+        run_in_background(
+            self,
+            lambda: self.store.remove_custom_model(
+                provider_id, model_id, allow_keychain_authorization=True
+            ),
+            done,
+        )
 
     def _keys_card(self, providers) -> QFrame:
         card, lay = _card(
@@ -688,7 +695,13 @@ class SettingsWindow(QWidget):
             self._set_status("API Key 已删除。", ok=True)
             self.restartRequired.emit(f"{provider} 的 API Key 已清除")
 
-        run_in_background(self, lambda: self.store.set_key(provider, ""), done)
+        run_in_background(
+            self,
+            lambda: self.store.set_key(
+                provider, "", allow_keychain_authorization=True
+            ),
+            done,
+        )
 
     @staticmethod
     def _update_key_badge(badge: QLabel, configured: bool, status: str) -> None:
@@ -730,7 +743,13 @@ class SettingsWindow(QWidget):
             self._announce(f"{provider} 的 API Key", effect)
             self.restartRequired.emit(f"{provider} 的 API Key 已更新")
 
-        run_in_background(self, lambda: self.store.set_key(provider, candidate), saved)
+        run_in_background(
+            self,
+            lambda: self.store.set_key(
+                provider, candidate, allow_keychain_authorization=True
+            ),
+            saved,
+        )
 
     # ── 行为 ──────────────────────────────────────────────────
 

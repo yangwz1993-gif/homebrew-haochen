@@ -27,7 +27,9 @@ _INTERACTION_LOCK = threading.RLock()
 class CredentialStore(Protocol):
     def get(self, provider: str) -> str | None: ...
     def set(self, provider: str, secret: str) -> None: ...
+    def set_with_authorization(self, provider: str, secret: str) -> None: ...
     def delete(self, provider: str) -> None: ...
+    def delete_with_authorization(self, provider: str) -> None: ...
 
 
 class KeychainError(RuntimeError):
@@ -201,6 +203,24 @@ class _NativeKeychainBackend:
         with self._without_interaction():
             self._set(service, account, secret)
 
+    def set_with_authorization(self, service: str, account: str, secret: str) -> None:
+        """Write after an explicit user action, allowing macOS to request access.
+
+        Startup and status paths must never arrive here.  This is deliberately
+        separate from ``set`` so a background refresh cannot accidentally
+        summon SecurityAgent.
+        """
+        with _INTERACTION_LOCK:
+            previous = ctypes.c_ubyte()
+            if self.security.SecKeychainGetUserInteractionAllowed(ctypes.byref(previous)) != 0:
+                raise KeychainError("无法读取钥匙串状态")
+            if self.security.SecKeychainSetUserInteractionAllowed(True) != 0:
+                raise KeychainError("无法请求钥匙串授权")
+            try:
+                self._set(service, account, secret)
+            finally:
+                self.security.SecKeychainSetUserInteractionAllowed(previous.value)
+
     def _set(self, service: str, account: str, secret: str) -> None:
         status, _length, data, item = self._find(service, account)
         if data:
@@ -241,6 +261,18 @@ class _NativeKeychainBackend:
     def delete(self, service: str, account: str) -> None:
         with self._without_interaction():
             self._delete(service, account)
+
+    def delete_with_authorization(self, service: str, account: str) -> None:
+        with _INTERACTION_LOCK:
+            previous = ctypes.c_ubyte()
+            if self.security.SecKeychainGetUserInteractionAllowed(ctypes.byref(previous)) != 0:
+                raise KeychainError("无法读取钥匙串状态")
+            if self.security.SecKeychainSetUserInteractionAllowed(True) != 0:
+                raise KeychainError("无法请求钥匙串授权")
+            try:
+                self._delete(service, account)
+            finally:
+                self.security.SecKeychainSetUserInteractionAllowed(previous.value)
 
     def _delete(self, service: str, account: str) -> None:
         status, _length, data, item = self._find(service, account)
@@ -292,8 +324,32 @@ class KeychainStore:
         if provider in self._authorized:
             self._authorized[provider] = secret
 
+    def set_with_authorization(self, provider: str, secret: str) -> None:
+        """Persist after a visible, user-initiated save action.
+
+        A one-time ``Allow`` may not make a subsequent silent read possible.
+        Retain the successfully written value in the process-only cache so the
+        immediate read-back is reliable without requesting a second dialog.
+        """
+        if not secret:
+            raise ValueError("secret must not be empty")
+        writer = getattr(self._backend, "set_with_authorization", None)
+        if writer is None:
+            self._backend.set(self.service, provider, secret)
+        else:
+            writer(self.service, provider, secret)
+        self._authorized[provider] = secret
+
     def delete(self, provider: str) -> None:
         self._backend.delete(self.service, provider)
+        self._authorized.pop(provider, None)
+
+    def delete_with_authorization(self, provider: str) -> None:
+        remover = getattr(self._backend, "delete_with_authorization", None)
+        if remover is None:
+            self._backend.delete(self.service, provider)
+        else:
+            remover(self.service, provider)
         self._authorized.pop(provider, None)
 
 
@@ -314,8 +370,14 @@ class MemoryCredentialStore:
             raise ValueError("secret must not be empty")
         self.values[provider] = secret
 
+    def set_with_authorization(self, provider: str, secret: str) -> None:
+        self.set(provider, secret)
+
     def delete(self, provider: str) -> None:
         self.values.pop(provider, None)
+
+    def delete_with_authorization(self, provider: str) -> None:
+        self.delete(provider)
 
 
 def credential_env_name(provider: str) -> str:

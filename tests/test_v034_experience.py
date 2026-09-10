@@ -91,6 +91,24 @@ def test_settings_existing_key_authorization_preserves_draft(qtbot, tmp_path):
     assert store.key_status("deepseek")[0]
 
 
+def test_onboarding_save_explicitly_allows_keychain_authorization(qtbot, tmp_path, monkeypatch):
+    store = store_at(tmp_path)
+    calls = []
+    original = store.set_key
+
+    def save(provider, key, *, allow_keychain_authorization=False):
+        calls.append(allow_keychain_authorization)
+        return original(provider, key, allow_keychain_authorization=allow_keychain_authorization)
+
+    monkeypatch.setattr(store, "set_key", save)
+    page = KeyPage(store, lambda *_: key_validation.ValidationResult(True, "ok"))
+    qtbot.addWidget(page)
+    page.key_edit.setText("test-only-credential")
+    page.verify_button.click()
+    qtbot.waitUntil(page.isComplete)
+    assert calls == [True]
+
+
 def test_noninteractive_status_never_waits_for_pending_system_authorization():
     import pytest
     from haochen_app.keychain import _INTERACTION_LOCK, KeychainError, _NativeKeychainBackend
@@ -122,7 +140,8 @@ def test_key_save_does_not_block_gui_and_survives_runtime_refresh(qtbot, tmp_pat
     worker_threads = []
     original = store.set_key
 
-    def slow_save(provider, candidate):
+    def slow_save(provider, candidate, **kwargs):
+        assert kwargs == {"allow_keychain_authorization": True}
         worker_threads.append(threading.get_ident())
         entered.set()
         if not release.wait(2):

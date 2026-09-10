@@ -334,15 +334,18 @@ class KeyPage(QWizardPage):
                     model_id=pending["model_id"],
                     model_name=pending["model_name"],
                     key=candidate or None,
+                    allow_keychain_authorization=True,
                 )
-            return self.store.set_key(self.provider, candidate)
+            return self.store.set_key(
+                self.provider, candidate, allow_keychain_authorization=True
+            )
 
         def saved(_result, error):
             self._pending_custom = None
             self._set_working(False)
             if error:
                 self.verify_button.setText("重新保存")
-                self.status.setText("连接成功，但未能保存。请解锁 macOS 钥匙串后重试。")
+                self.status.setText("连接成功，但未能保存。请点击“重新保存”并在 macOS 授权框中允许。")
                 return
             if pending:
                 self._configured_custom_signature = tuple(

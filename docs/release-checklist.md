@@ -1,4 +1,4 @@
-# v0.3.4-rc.1 正式发布清单
+# v0.3.4-rc.2 正式发布清单
 
 当前仅为本机验收候选，尚未正式发布。所有者明确选择沿用 legacy DMG + Homebrew；本轮由所有者亲自验收，不安排验收 agent。未经 Apple 公证，必须使用稳定自签身份，禁止回落 ad-hoc。
 
@@ -28,4 +28,4 @@ legacy Cask 的 postflight_steps 延续既定 quarantine 处理。自签名不�
 
 历史 v0.3.3 发布记录仍保存在 v0.3.3 标签中。
 
-本轮证据见 [工程验证记录](reviews/v0.3.4-rc.1-engineering-check.md)。旧钥匙串可能包含绑定旧 cdhash 的分区限制，稳定自签身份不保证无感读取；只能由用户明确许可恢复，禁止自动改写或放宽 ACL。
+本轮证据见 [工程验证记录](reviews/v0.3.4-rc.1-engineering-check.md) 与 [rc.2 保存修复](reviews/v0.3.4-rc.2-keychain-save.md)。旧钥匙串可能包含绑定旧 cdhash 的分区限制，稳定自签身份不保证无感读取；只能由用户明确许可恢复，禁止自动改写或放宽 ACL。rc.2 修正了显式保存被错误静默化的问题：用户点击保存时可正常获得 macOS 授权，后台路径仍无弹窗。
