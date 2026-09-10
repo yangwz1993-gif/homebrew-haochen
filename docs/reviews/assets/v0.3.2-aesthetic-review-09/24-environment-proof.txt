@@ -1,0 +1,27 @@
+haochen v0.3.2 aesthetic review round 09 — environment proof
+Date: 2026-09-10 Asia/Shanghai
+
+Candidate: /Users/yangwz/Documents/workspace/haochen/packaging/dist/haochen-0.3.2.dmg
+SHA-256: 192123a8e7c3c3d7434ab504627c4a812a4bd9b3574ab90e9b0f28d80fec1f3b
+Bundle version: 0.3.2 (build 2)
+Read-only mount: /private/tmp/haochen-v032-r09-mount.nXZjwV/haochen.app
+
+Isolation:
+- HAOCHEN_HOME=/private/tmp/haochen-v032-r09-home.2EELbp
+- HAOCHEN_KEYCHAIN_SERVICE=com.haochen.qa.v032.r09.2EELbp
+- explicit unset: HAOCHEN_SKIP_ONBOARDING, HAOCHEN_SKIP_PERMISSION_GUIDE, HAOCHEN_MOCK
+- main PID 45508; final engine PID 46171
+- engine session-dir /private/tmp/haochen-v032-r09-home.2EELbp/pi-sessions
+
+Model proof:
+- Keychain class genp; account custom-e843744daf; service com.haochen.qa.v032.r09.2EELbp
+- secret never printed
+- session started on custom-e843744daf / qa-local-r09
+- local fixture responseId chatcmpl-r09
+
+Cleanup:
+- normal TERM sent to main PID 45508; main and engine PID 46171 exited
+- local fixture 127.0.0.1:18773 and screenshot receiver 127.0.0.1:8775 stopped; no listeners remain
+- test Keychain item deleted; lookup returned exit 44 (not found)
+- read-only DMG device disk8 detached
+- isolated Home and review evidence preserved

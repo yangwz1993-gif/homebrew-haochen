@@ -8,13 +8,13 @@
 
 | 门禁 | 证据 | 状态 |
 |---|---|---|
-| 独立用户验收 | 第 8 轮证明纯坐标判定会误判真实 hover；已改为原生 hover + 应用失活恢复并开展第 9 轮复验 | 进行中 |
-| 代码质量 | `make check`：365 tests，coverage 83% | PASS |
+| 独立用户验收 | 第 9 轮发现应用失活恢复偶发遗漏；已改用 Quartz 原生窗口/光标几何并开展第 10 轮复验 | 进行中 |
+| 代码质量 | `make check`：366 tests，coverage 83% | PASS |
 | 分层回归 | `make regressions`：6/6 | PASS |
 | PR | [#8](https://github.com/yangwz1993-gif/homebrew-haochen/pull/8)；首轮 CI PASS，新修复提交后重跑 | 进行中 |
 | 发布模式 | 所有者 2026-09-09 明确选择 legacy | 已授权 |
 | 签名 | `haochen Local Signing`，门禁确认不是 ad-hoc | PASS |
-| DMG / Cask | 第 9 轮候选 `192123a8…c1f3b`；legacy preflight PASS，独立复验后封板 | 进行中 |
+| DMG / Cask | 第 10 轮候选 `08437178…dc445`；legacy preflight PASS，独立复验后封板 | 进行中 |
 | Homebrew 安装 | 从线上 Release 安装、启动、升级与卸载 | 待发布复核 |
 
 ## 风险边界

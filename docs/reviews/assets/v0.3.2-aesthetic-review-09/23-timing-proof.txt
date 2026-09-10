@@ -1,0 +1,32 @@
+haochen v0.3.2 aesthetic review round 09 — monotonic timing proof
+Date: 2026-09-10 Asia/Shanghai
+
+Group A timestamps:
+- appeared: 238814.280 ms
+- entered hover: 247566.374 ms
+- left via TextEdit entity click: 256167.787 ms
+- gone: null; still present 49914.026 ms after leave
+
+Group A intervals:
+- outside before hover: 8523.805 ms
+- hover: 8404.118 ms; held throughout
+- expected after leave: about 11-12 s
+- observed: still present after 49.914 s
+- outcome: FAIL; Qt hover paused, ApplicationDeactivate did not resume this result
+
+Group B timestamps:
+- appeared: 393347.002 ms
+- entered hover: 393613.298 ms
+- left via TextEdit entity click: 416222.942 ms
+- gone: 436761.116 ms
+
+Group B intervals:
+- appeared to hover: 266.296 ms
+- hover: 22408.301 ms; held throughout
+- leave to gone: 20538.173 ms
+- outcome: PASS within UI/polling tolerance
+
+Joint outcome:
+- identical candidate and pointer-transfer method produced one failed and one passing resume path.
+- lifecycle behavior is nondeterministic; a single reproducible core failure prevents release.
+

@@ -116,6 +116,7 @@ class PetApp(QObject):
 
         self.pet = PetWindow(hotkey_hint=HOTKEY_LABEL if ok else "双击")
         self.bubble = BubbleWindow()
+        self._bubble_native_window_number: int | None = None
         self._result_timer = QTimer(self)
         self._result_timer.setSingleShot(True)
         self._result_timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -706,6 +707,9 @@ class PetApp(QObject):
     def _start_result_dismiss(self) -> None:
         # Keep test and accessibility overrides meaningful while the production
         # interval remains RESULT_AUTO_DISMISS_MS.
+        # Qt may recreate the native Tool window between hidden/input/result
+        # states, so capture its current stable number only after result layout.
+        self._bubble_native_window_number = self._resolve_native_window_number()
         self._result_remaining_ms = self._result_timer.interval()
         self._result_timer_started_at = time.monotonic()
         self._result_hovering = False
@@ -767,13 +771,17 @@ class PetApp(QObject):
             self._resume_result_dismiss()
 
     def _pointer_inside_bubble(self) -> bool:
-        """Combine Qt hit-testing paths for native and synthetic macOS events.
+        """Combine native macOS geometry with Qt hit-testing fallbacks.
 
         Frameless tool windows can miss top-level enter/leave, while global
-        cursor coordinates can disagree across mixed-scale screens.  underMouse
-        and widgetAt cover event-driven interaction; local mapping is a final
-        fallback for cross-application moves where widgetAt returns ``None``.
+        Qt cursor coordinates can disagree across mixed-scale screens.  Cocoa's
+        mouse location and NSWindow frame share one coordinate system, so that
+        result is authoritative when available.  The Qt paths retain portable
+        behavior and cover startup before a native window exists.
         """
+        native_inside = self._native_pointer_inside_bubble()
+        if native_inside is not None:
+            return native_inside
         try:
             if self.bubble.underMouse():
                 return True
@@ -787,6 +795,64 @@ class PetApp(QObject):
             return self.bubble.rect().contains(local_pos)
         except RuntimeError:
             return False
+
+    def _resolve_native_window_number(self) -> int | None:
+        """Resolve the bubble's Quartz window number without raw Cocoa pointers."""
+        try:
+            import os
+
+            from Quartz import (
+                CGWindowListCopyWindowInfo,
+                kCGNullWindowID,
+                kCGWindowListOptionOnScreenOnly,
+            )
+
+            expected_width = self.bubble.width()
+            expected_height = self.bubble.height()
+            descriptions = CGWindowListCopyWindowInfo(
+                kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+            ) or ()
+            for description in descriptions:
+                if int(description.get("kCGWindowOwnerPID", -1)) != os.getpid():
+                    continue
+                bounds = description.get("kCGWindowBounds") or {}
+                if (abs(float(bounds.get("Width", 0.0)) - expected_width) <= 2
+                        and abs(float(bounds.get("Height", 0.0)) - expected_height) <= 2):
+                    return int(description.get("kCGWindowNumber"))
+            return None
+        except (ImportError, RuntimeError, TypeError, ValueError, AttributeError):
+            return None
+
+    def _native_pointer_inside_bubble(self) -> bool | None:
+        """Return Quartz containment without retaining a Cocoa object pointer."""
+        number = self._bubble_native_window_number
+        if number is None:
+            number = self._resolve_native_window_number()
+            self._bubble_native_window_number = number
+            if number is None:
+                return None
+        try:
+            from Quartz import (
+                CGEventCreate,
+                CGEventGetLocation,
+                CGWindowListCreateDescriptionFromArray,
+            )
+
+            descriptions = CGWindowListCreateDescriptionFromArray((number,)) or ()
+            for description in descriptions:
+                if int(description.get("kCGWindowNumber", -1)) != number:
+                    continue
+                bounds = description.get("kCGWindowBounds") or {}
+                x = float(bounds.get("X", 0.0))
+                y = float(bounds.get("Y", 0.0))
+                width = float(bounds.get("Width", 0.0))
+                height = float(bounds.get("Height", 0.0))
+                point = CGEventGetLocation(CGEventCreate(None))
+                return (x <= float(point.x) < x + width
+                        and y <= float(point.y) < y + height)
+            return None
+        except (ImportError, RuntimeError, TypeError, ValueError, AttributeError):
+            return None
 
     def _resume_result_dismiss_if_pointer_left(self) -> None:
         if not self._pointer_inside_bubble():

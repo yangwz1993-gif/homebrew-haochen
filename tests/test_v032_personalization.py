@@ -78,6 +78,7 @@ def test_result_auto_dismiss_pauses_while_user_is_interacting(
     pet._result_timer.setInterval(80)
     pet.bubble.summon()
     pet._on_summary_done("已经处理好了。")
+    monkeypatch.setattr(pet, "_native_pointer_inside_bubble", lambda: None)
     monkeypatch.setattr(
         pet_module.QCursor,
         "pos",
@@ -109,6 +110,7 @@ def test_hover_watch_detects_enter_and_leave_when_native_events_are_missing(
     pet._result_timer.setInterval(80)
     pet.bubble.summon()
     pet._on_summary_done("已经处理好了。")
+    monkeypatch.setattr(pet, "_native_pointer_inside_bubble", lambda: None)
     monkeypatch.setattr(
         pet_module.QCursor,
         "pos",
@@ -133,6 +135,23 @@ def test_hover_watch_detects_enter_and_leave_when_native_events_are_missing(
     qtbot.waitUntil(lambda: not pet.bubble.summoned, timeout=1600)
 
 
+def test_native_pointer_geometry_overrides_stale_qt_hover(qtbot, tmp_path: Path, monkeypatch) -> None:
+    client = harness.FakeClient()
+    client.home = tmp_path
+    pet = pet_module.PetApp(client=client, supervisor=None)
+    qtbot.addWidget(pet.bubble)
+    qtbot.addWidget(pet.pet)
+    pet.bubble.summon()
+    monkeypatch.setattr(pet.bubble, "underMouse", lambda: True)
+
+    monkeypatch.setattr(pet, "_native_pointer_inside_bubble", lambda: False)
+    assert not pet._pointer_inside_bubble()
+
+    monkeypatch.setattr(pet.bubble, "underMouse", lambda: False)
+    monkeypatch.setattr(pet, "_native_pointer_inside_bubble", lambda: True)
+    assert pet._pointer_inside_bubble()
+
+
 def test_application_deactivate_resumes_despite_stale_under_mouse(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:
@@ -144,6 +163,7 @@ def test_application_deactivate_resumes_despite_stale_under_mouse(
     pet._result_timer.setInterval(80)
     pet.bubble.summon()
     pet._on_summary_done("已经处理好了。")
+    monkeypatch.setattr(pet, "_native_pointer_inside_bubble", lambda: None)
     monkeypatch.setattr(
         pet_module.QCursor,
         "pos",
