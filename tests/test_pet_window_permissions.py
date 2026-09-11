@@ -164,7 +164,7 @@ def test_pose_transition_never_fades_skin_into_desktop_color(
     effect = window.label.graphicsEffect()
     assert effect is not None
     assert effect.opacity() >= 0.94
-    qtbot.wait(pet_window_module.ANIM_POSE_MS + 40)
+    qtbot.waitUntil(lambda: window.label.graphicsEffect() is None, timeout=5000)
     assert window.label.graphicsEffect() is None
     assert window.pose == "idle"
 

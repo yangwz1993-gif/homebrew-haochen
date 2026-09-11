@@ -542,6 +542,14 @@ class ChatWindow(QWidget):
 
     def _finish_detail_position(self) -> None:
         if self._detail_mode and self._detail_position_pending:
+            # A busy event loop can deliver this timer before QScrollArea has
+            # applied the newly inserted history's layout. Do not end anchoring
+            # while overflowing content still has a zero scroll range: the later
+            # rangeChanged event must be allowed to position the current turn.
+            if (self.scroll.verticalScrollBar().maximum() == 0
+                    and self.flow.sizeHint().height() > self.scroll.viewport().height()):
+                self._anchor_settle.start()
+                return
             self._scroll_current_turn()
         self._detail_position_pending = False
 
