@@ -272,9 +272,10 @@ def test_detail_anchors_current_question_not_history_start(qtbot, monkeypatch):
     messages = [{"role": "user", "content": [{"type": "text", "text": f"Question {i}"}]}
                 for i in range(30)]
     window._render_history({"success": True, "data": {"messages": messages}})
-    qtbot.wait(350)
     assert window._detail_anchor_row is not None
     scroll = window.scroll.verticalScrollBar()
+    qtbot.waitUntil(lambda: 0 < scroll.value() < scroll.maximum(), timeout=5000)
+    qtbot.waitUntil(lambda: not window._detail_position_pending, timeout=5000)
     assert 0 < scroll.value() < scroll.maximum()
 
 

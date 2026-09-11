@@ -392,9 +392,11 @@ def test_detail_mode_opens_at_latest_turn_after_history_layout(
 
     window.open_from_bubble(QRect(100, 100, 320, 240))
     window._render_history({"success": True, "data": {"messages": messages}})
-    qtbot.wait(350)
-
     bar = window.scroll.verticalScrollBar()
+    # Qt delivers layout/range updates asynchronously; hosted offscreen runners
+    # need not finish them within one animation's nominal duration.
+    qtbot.waitUntil(lambda: bar.maximum() > 0 and bar.value() > bar.minimum(), timeout=5000)
+    qtbot.waitUntil(lambda: not window._detail_position_pending, timeout=5000)
     assert bar.maximum() > 0
     assert bar.value() > bar.minimum()
     assert window._follow_stream is False

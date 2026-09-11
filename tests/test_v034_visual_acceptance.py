@@ -97,15 +97,18 @@ def test_reopening_same_turn_preserves_reading_position(qtbot, tmp_path):
     history = {"success": True, "data": {"messages": messages}}
     window.open_from_bubble(QRect(300, 200, 300, 90), "问题 14")
     window._render_history(history)
-    qtbot.wait(450)
     bar = window.scroll.verticalScrollBar()
+    qtbot.waitUntil(lambda: bar.maximum() > 1000, timeout=5000)
+    qtbot.waitUntil(lambda: not window._detail_position_pending, timeout=5000)
     assert bar.maximum() > 1000
     bar.setValue(380)
     window.collapse_detail()
     qtbot.waitUntil(lambda: not window.isVisible())
     window.open_from_bubble(QRect(300, 200, 300, 90), "问题 14")
     window._render_history(history)
-    qtbot.wait(450)
+    qtbot.waitUntil(lambda: bar.maximum() > 1000 and abs(bar.value() - 380) <= 2,
+                   timeout=5000)
+    qtbot.waitUntil(lambda: not window._detail_position_pending, timeout=5000)
     assert abs(bar.value() - 380) <= 2
 
 
