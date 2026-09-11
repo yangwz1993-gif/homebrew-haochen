@@ -707,6 +707,9 @@ class BubbleWindow(QWidget):
             "result": BUBBLE_WIDTH,
             "error": BUBBLE_WIDTH,
         }
+        reading = self.findChild(QWidget, "readingStatus")
+        if reading is not None and not reading.isHidden():
+            widths["progress"] = 420  # Reading guidance needs more room than the thinking dots.
         minimums = {
             "input": 80,
             "progress": 64,

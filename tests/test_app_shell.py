@@ -86,7 +86,7 @@ def test_restart_required_auto_mode_restarts(qtbot, tmp_path: Path) -> None:
     start_engine(shell)
     os.environ["HAOCHEN_AUTO_RESTART"] = "1"
     restarted: list[bool] = []
-    shell.supervisor.restart_now = lambda: restarted.append(True)
+    shell.supervisor.restart_now = lambda **_kwargs: restarted.append(True)
     try:
         shell._on_restart_required("测试原因")
     finally:
@@ -101,7 +101,7 @@ def test_restart_required_is_automatic_when_interactive(qtbot, tmp_path: Path, m
     start_engine(shell)
     monkeypatch.delenv("HAOCHEN_AUTO_RESTART", raising=False)
     restarted: list[bool] = []
-    shell.supervisor.restart_now = lambda: restarted.append(True)
+    shell.supervisor.restart_now = lambda **_kwargs: restarted.append(True)
     shell._on_restart_required("换 provider")
     assert restarted == [True]
     shell.stop()
@@ -159,7 +159,7 @@ def test_custom_onboarding_trial_restarts_then_applies_model(
     restarted: list[bool] = []
     selected: list[tuple[str, str]] = []
     sent: list[str] = []
-    shell.supervisor.restart_now = lambda: restarted.append(True)
+    shell.supervisor.restart_now = lambda **_kwargs: restarted.append(True)
     shell.supervisor.client.set_model = lambda p, m: selected.append((p, m)) or "m-1"
     shell.pet.send = sent.append
 
@@ -189,7 +189,7 @@ def test_settings_restart_applies_default_after_session_restore(
     selected: list[tuple[str, str]] = []
     restarted: list[bool] = []
     shell.supervisor.client.set_model = lambda p, m: selected.append((p, m)) or "m-1"
-    shell.supervisor.restart_now = lambda: restarted.append(True)
+    shell.supervisor.restart_now = lambda **_kwargs: restarted.append(True)
     monkeypatch.setenv("HAOCHEN_AUTO_RESTART", "1")
 
     shell._on_restart_required("测试")
@@ -205,7 +205,7 @@ def test_restart_failure_does_not_blame_key_and_keeps_chat_blocked(qtbot, tmp_pa
     qtbot.addWidget(shell.chat)
     qtbot.addWidget(shell.settings)
 
-    shell.supervisor.restart_now = lambda: None
+    shell.supervisor.restart_now = lambda **_kwargs: None
     shell._on_restart_required("test")
     shell.supervisor.restart_failed.emit()
     assert "模型尚未就绪" in shell.settings._status.text()

@@ -56,6 +56,7 @@ from ..conversation import (
     visible_user_text,
 )
 from ..engine_client import EngineClient, delete_session, list_sessions, restore_session
+from ..reading_status import ReadingStatus, event_phase
 from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
 from .chrome import ConversationHeader, configure_native_chrome
@@ -1084,8 +1085,9 @@ class ChatWindow(QWidget):
             self._drop_thinking()
             name = ev.get("toolName", "tool")
             if name == "read_screen":
-                # 感知提示（interaction-spec §4.1：绝不默默读屏）
-                self._add_row(StatusBubble("我正看一下你的屏幕…", "perceive"), "left")
+                self._reading_status = ReadingStatus()
+                self._reading_tool_id = ev.get("toolCallId", "")
+                self._add_row(self._reading_status, "left")
             card = ToolCard(ev.get("toolCallId", ""), name, ev.get("args") or {})
             card.start_clock()
             # 运行中可取消（中止回合）；失败可重试；产物可打开。
@@ -1113,6 +1115,14 @@ class ChatWindow(QWidget):
             self._on_ui_request(ev)
         elif t == "extension_error":
             self._add_row(ErrorBanner(f"扩展错误：{ev.get('error', '')}", retryable=False), "left")
+        phase = event_phase(ev)
+        if phase and ev.get("toolCallId", "") == getattr(self, "_reading_tool_id", None):
+            detail = ((ev.get("partialResult") or {}).get("details") or {})
+            log.info("read_phase tool=%s phase=%s elapsed_ms=%s", ev.get("toolCallId", ""),
+                     phase, detail.get("elapsedMs", "-"))
+            from PyQt6.sip import isdeleted
+            if not isdeleted(self._reading_status):
+                self._reading_status.set_phase(phase)
 
     def _on_ui_request(self, ev: dict) -> None:
         if self._supervisor is not None and not self.ctrl.busy:
@@ -1447,9 +1457,14 @@ class ChatWindow(QWidget):
             self._rpc(self.client.get_messages, self._render_history)
 
     def _on_sup_restarting(self, attempt: int) -> None:
+        if getattr(self._supervisor, "restart_reason", "recovery") == "configuration":
+            return
         self.sidebar.set_status(f"引擎重启中（第 {attempt} 次）…")
 
     def _on_sup_restarted(self) -> None:
+        if getattr(self._supervisor, "restart_reason", "recovery") == "configuration":
+            self._rpc(self.client.get_state, self._on_state)
+            return
         self._engine_crashed = False
         self._make_controller()     # 旧 controller 可能卡在中途相位，重建并重注册
         self._reload_persisted_sessions()
@@ -1459,6 +1474,8 @@ class ChatWindow(QWidget):
         self._rpc(self.client.get_state, self._on_state)
 
     def _on_sup_restart_failed(self) -> None:
+        if getattr(self._supervisor, "restart_reason", "recovery") == "configuration":
+            return
         banner = ErrorBanner("引擎连续重启失败。请检查设置（API Key / 模型）后点「重试」。",
                              retryable=True)
         banner.retry.connect(self._supervisor.restart_now)

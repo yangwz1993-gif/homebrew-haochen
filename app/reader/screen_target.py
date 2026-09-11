@@ -14,6 +14,7 @@ from ApplicationServices import (
 from Quartz import (
     CGWindowListCopyWindowInfo,
     kCGWindowListExcludeDesktopElements,
+    kCGWindowListOptionAll,
     kCGWindowListOptionOnScreenOnly,
 )
 
@@ -23,22 +24,35 @@ def attribute(element, name):
     return value if err == 0 else None
 
 
-def document_id(window):
-    """Only document/URL metadata; bounded traversal, never AXValue/body text."""
-    document = attribute(window, "AXDocument")
-    if document:
-        return str(document)
+def web_area(window):
+    """Find a page object by metadata only; callers may retain it across focus changes."""
     pending = [(window, 0)]
-    deadline = time.monotonic() + 0.15
-    for _ in range(80):
+    deadline = time.monotonic() + 0.5
+    for _ in range(300):
         if not pending or time.monotonic() > deadline:
             break
         element, depth = pending.pop(0)
         if attribute(element, "AXRole") == "AXWebArea":
-            return str(attribute(element, "AXURL") or "")
-        if depth < 10:
+            return element
+        if depth < 14:
             pending.extend((child, depth + 1) for child in (attribute(element, "AXChildren") or []))
-    return ""
+    return None
+
+
+def document_id(window):
+    """Use the page's identity, not Chromium's potentially stale AXDocument.
+
+    SPA navigation can update the page and window title while AXDocument still
+    names the site's previous document. File-backed native windows keep their
+    document URL. No body values or address-bar keystrokes are used here.
+    """
+    document = attribute(window, "AXDocument")
+    if document and str(document).startswith("file:"):
+        return str(document)
+    page = web_area(window)
+    if page is not None:
+        return str(attribute(page, "AXURL") or "")
+    return str(document or "")
 
 
 def fingerprint(window):
@@ -46,9 +60,10 @@ def fingerprint(window):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def window_list(pid):
+def window_list(pid, *, all_windows=False):
     windows = CGWindowListCopyWindowInfo(
-        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, 0)
+        (kCGWindowListOptionAll if all_windows else kCGWindowListOptionOnScreenOnly)
+        | kCGWindowListExcludeDesktopElements, 0)
     return [w for w in windows or [] if int(w.get("kCGWindowOwnerPID", -1)) == pid
             and int(w.get("kCGWindowLayer", -1)) == 0]
 
@@ -67,7 +82,7 @@ def bounds(window):
 
 def matching_ax_window(pid, window_id):
     """Resolve a fixed CG window to AX, refusing ambiguous matches."""
-    cg = next((w for w in window_list(pid) if int(w["kCGWindowNumber"]) == window_id), None)
+    cg = next((w for w in window_list(pid, all_windows=True) if int(w["kCGWindowNumber"]) == window_id), None)
     if cg is None:
         return None
     app = AXUIElementCreateApplication(pid)
@@ -97,7 +112,8 @@ def describe_target(pid):
         # Chromium exposes document metadata only after its accessibility tree is enabled.
         # No body values are queried here, and this never requests system permission.
         for flag in ("AXEnhancedUserInterface", "AXManualAccessibility"):
-            AXUIElementSetAttributeValue(app, flag, True)
+            if not attribute(app, flag):
+                AXUIElementSetAttributeValue(app, flag, True)
         focused = attribute(app, "AXFocusedWindow")
         focused_bounds = bounds(focused) if focused is not None else None
         if focused_bounds:
@@ -114,8 +130,12 @@ def describe_target(pid):
     if trusted:
         ax = matching_ax_window(pid, target["window_id"])
         if ax is not None:
-            target["fingerprint"] = fingerprint(ax)
             target["title"] = str(attribute(ax, "AXTitle") or "")[:180]
+            # Capture each metadata value once. A timed-out second URL lookup must
+            # not turn an unchanged document into a different fingerprint.
+            target["document_uri"] = document_id(ax)
+            target["fingerprint"] = hashlib.sha256(
+                (target["title"] + "\n" + target["document_uri"]).encode()).hexdigest()
     return target
 
 

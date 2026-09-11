@@ -57,7 +57,8 @@ class FakeSupervisor(QObject):
         self._restarting = False
         self.restarts = 0
 
-    def restart_now(self):
+    def restart_now(self, *, reason="recovery"):
+        self.restart_reason = reason
         self.restarts += 1
 
 

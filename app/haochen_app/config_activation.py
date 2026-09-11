@@ -68,7 +68,7 @@ class ConfigActivation(QObject):
         self._deadline.start()
         if self._reload or not self.client.alive or self.supervisor._restarting:
             self._phase = "restarting"
-            self.supervisor.restart_now()
+            self.supervisor.restart_now(reason="configuration")
         else:
             self._select()
 

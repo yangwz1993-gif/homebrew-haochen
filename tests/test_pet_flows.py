@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 
@@ -29,8 +31,44 @@ def make_pet(qtbot, tmp_path: Path):
     return pet, client
 
 
+def test_configuration_restart_never_summons_orphan_bubble(qtbot, tmp_path, monkeypatch):
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet.supervisor = SimpleNamespace(restart_reason="configuration")
+    monkeypatch.setattr(pet, "_drain_queue", lambda: None)
+    monkeypatch.setattr(pet.bubble, "present_status", lambda *_a, **_k: pytest.fail("orphan recovery bubble"))
+    pet._on_sup_restarting(1)
+    pet._on_sup_restarted()
+    pet._on_sup_restart_failed()
+    assert not pet.bubble.summoned
+
+
 def user_message(text: str) -> dict:
     return {"role": "user", "content": [{"type": "text", "text": text}]}
+
+
+def test_reading_phases_route_to_bubble_and_ignore_old_turn(qtbot, tmp_path):
+    pet, client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet.send("读一下当前页面")
+    client.event.emit({"type": "tool_execution_start", "toolName": "read_screen", "toolCallId": "current"})
+    for phase in ("bound", "capturing", "snapshot"):
+        client.event.emit({"type": "tool_execution_update", "toolName": "read_screen", "toolCallId": "current",
+                           "partialResult": {"details": {"readPhase": phase}}})
+        assert pet._perception_hint.phase == phase
+        assert "已读取" not in pet._perception_hint.label.text()
+    pet._show_read_phase("complete", "old")
+    assert pet._perception_hint.phase == "snapshot"
+    client.event.emit({"type": "tool_execution_end", "toolName": "read_screen", "toolCallId": "current",
+                       "result": {"details": {"readSuccess": True}}})
+    assert pet._perception_hint.phase == "complete"
+    for phase in ("capturing", "snapshot", "complete", "failed"):
+        pet._show_read_phase(phase, "current")
+        qtbot.wait(220)
+        assert pet.bubble.width() >= 420
+        assert pet._perception_hint.label.height() <= 42
+        shot = tmp_path / f"reading-{phase}.png"
+        assert pet.bubble.grab().save(str(shot))
+    print("visual QA", tmp_path)
 
 
 def assistant_message(text: str) -> dict:

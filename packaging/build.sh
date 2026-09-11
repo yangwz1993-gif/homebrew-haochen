@@ -70,13 +70,13 @@ PYI="$VENV/bin/pyinstaller"
 test -x "$PYI"
 test -f "$ENGINE_MANIFEST"
 
-echo "==> [2/6] 冻结读屏执行体 haochen-reader（onefile）"
-"$PYI" --noconfirm --clean --onefile \
+echo "==> [2/6] 冻结读屏执行体 haochen-reader（onedir，免重复解包）"
+"$PYI" --noconfirm --clean --onedir \
     --name haochen-reader \
     --paths "$APP_DIR" \
     --distpath "$DIST/reader" --workpath "$DIR/build/reader" --specpath "$DIR/build" \
     "$APP_DIR/reader/haochen_reader.py" >/dev/null
-test -x "$DIST/reader/haochen-reader"
+test -x "$DIST/reader/haochen-reader/haochen-reader"
 
 echo "==> [3/6] 生成 App 图标（像素小哥，视觉规范色）"
 ICON_BASE="$DIR/iconsrc/icon_1024.png"
@@ -123,7 +123,8 @@ mkdir -p "$APP/Contents/Resources/engine"
 cp "$ROOT/engine/haochen-engine" "$APP/Contents/Resources/engine/haochen-engine"
 chmod +x "$APP/Contents/Resources/engine/haochen-engine"
 cp "$ENGINE_MANIFEST" "$APP/Contents/Resources/engine/package.json"
-cp "$DIST/reader/haochen-reader" "$APP/Contents/Resources/haochen-reader"
+cp -R "$DIST/reader/haochen-reader" "$APP/Contents/Resources/reader"
+ln -s reader/haochen-reader "$APP/Contents/Resources/haochen-reader"
 chmod +x "$APP/Contents/Resources/haochen-reader"
 
 echo "==> [5/6] Info.plist（LSUIElement / 版本 / 图标）+ 签名"
