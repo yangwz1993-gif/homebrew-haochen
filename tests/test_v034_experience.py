@@ -268,9 +268,12 @@ def test_detail_anchors_current_question_not_history_start(qtbot, monkeypatch):
     monkeypatch.setattr(a11y, "reduce_motion_enabled", lambda: True)
     window = harness.ChatWindow(harness.FakeClient())
     qtbot.addWidget(window)
-    window.open_from_bubble(QRect(), "Question 20")
+    # Exercise a genuinely scrollable middle turn independent of hosted screen
+    # dimensions/font metrics. Screen placement has its own parameterized tests.
+    monkeypatch.setattr(window, "_detail_target_rect", lambda: QRect(20, 20, 520, 480))
+    window.open_from_bubble(QRect(), "Question 40")
     messages = [{"role": "user", "content": [{"type": "text", "text": f"Question {i}"}]}
-                for i in range(30)]
+                for i in range(100)]
     window._render_history({"success": True, "data": {"messages": messages}})
     assert window._detail_anchor_row is not None
     scroll = window.scroll.verticalScrollBar()
