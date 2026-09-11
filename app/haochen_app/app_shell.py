@@ -6,7 +6,7 @@ P4 集成验证脚本共用本装配，保证「测的就是跑的」。
 接线清单（开发总纲 §二 P4）：
 - 唯一引擎：EngineSupervisor 持有唯一 EngineClient，三 UI 共用 → 引擎侧同一会话；
 - 双入口联动：气泡「展开详细」→ 对话窗口从气泡 rect 动画展开为详情（v0.1.4 hotfix）；桌宠右键「设置」→ 设置面板；
-- 配置生效链：modelChanged → set_model 热切换；restartRequired → 询问重启引擎；
+- 配置生效链：保存 → ConfigActivation 加载 → 模型选择应答 → 状态确认 → 放行聊天；
 - 首启引导：单一可续办向导依次完成 Keychain 验证、按需权限和试问；不读取全局 pi 凭据。
 
 环境变量：
@@ -14,7 +14,6 @@ P4 集成验证脚本共用本装配，保证「测的就是跑的」。
     HAOCHEN_HOME=<path>        数据目录（测试隔离）
     HAOCHEN_KEYCHAIN_SERVICE   Keychain 服务名（开发配置隔离）
     HAOCHEN_SKIP_ONBOARDING=1  自动化环境不显示首启向导
-    HAOCHEN_AUTO_RESTART=1     配置要求重启引擎时免询问直接重启（自动化）
 """
 
 from __future__ import annotations
@@ -23,11 +22,12 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QMessageBox, QWidget
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QWidget
 
 from .chat import ChatWindow
 from .chat.theme import app_stylesheet
+from .config_activation import ConfigActivation
 from .pet import PetApp
 from .settings import SettingsWindow
 from .settings.config_store import ConfigStore
@@ -45,9 +45,9 @@ class AppShell:
         self.chat = ChatWindow(client=self.supervisor.client, supervisor=self.supervisor)
         self.chat.setStyleSheet(app_stylesheet())
         self.pet = PetApp(client=self.supervisor.client, supervisor=self.supervisor)
-        self.settings = SettingsWindow(home=home, store=self.store)
-        self._apply_default_model_after_restart = False
-        self._pending_onboarding_trial: str | None = None
+        self.activation = ConfigActivation(self.supervisor)
+        self.settings = SettingsWindow(home=home, store=self.store, activate=self._activate_config)
+        self._syncing_draft = False
         self._wire()
 
     # ── 接线 ──────────────────────────────────────────────────
@@ -56,21 +56,23 @@ class AppShell:
         sup = self.supervisor
 
         # 双入口联动：气泡「展开详细」→ 对话窗口从气泡 rect 动画展开（v0.1.4 hotfix）
-        self.pet.detail_opener = self.chat.open_from_bubble
+        self.pet.detail_opener = self._open_pet_detail
         self.pet.new_session_opener = self.chat._new_session
         self.pet.interaction_guard = self._interaction_allowed
         self.pet.chat_requested.connect(self.show_chat)
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
         self.chat.normal_closed.connect(self._restore_pet_after_chat)
+        self.pet.bubble.input.textChanged.connect(
+            lambda: self._sync_draft(self.pet.bubble.input, self.chat.input))
+        self.chat.input.textChanged.connect(
+            lambda: self._sync_draft(self.chat.input, self.pet.bubble.input))
         self.pet.settings_requested.connect(self.show_settings)
         self.pet.credential_validation.connect(self._on_credential_validation)
         self.pet.read_permission_requested.connect(self._request_read_permission)
         self.chat.read_permission_requested.connect(self._request_read_permission)
-        sup.restarted.connect(self._on_config_restart_completed)
-        sup.restart_failed.connect(self._on_config_restart_failed)
         self.settings.closed.connect(self.pet.restore_after_settings)
 
-        # 配置 → 引擎生效链（M-D 预留信号，P4 接线）
+        # Both hot model changes and credential reloads share the same readiness gate.
         self.settings.modelChanged.connect(self._on_model_changed)
         self.settings.restartRequired.connect(self._on_restart_required)
 
@@ -102,15 +104,35 @@ class AppShell:
         if not self._interaction_allowed():
             return
         self.pet._result_timer.stop()
-        # The compact composer is an alternate view of the same conversation.
-        # Preserve an unsent draft when the user taps its expand icon.
-        draft = self.pet.bubble.input.toPlainText()
-        if draft and not self.chat.input.toPlainText():
-            self.chat.input.setPlainText(draft)
         if self.pet.bubble.summoned:
-            self.pet.bubble.dismiss()
-        self.pet.pet.hide()
-        self.chat.show_normal()
+            rect = self.pet.bubble.geometry()
+            self.pet.bubble.hide()
+            self.pet._detail_open = True
+            self._open_pet_detail(rect)
+        else:
+            self.chat.show_normal()
+        self._keep_pet_beside_chat()
+
+    def _open_pet_detail(self, rect) -> None:
+        self.chat.open_from_bubble(rect, self.pet._last_user_text, self.pet.pet.geometry())
+        self._keep_pet_beside_chat()
+
+    def _sync_draft(self, source, target) -> None:
+        if self._syncing_draft or source.toPlainText() == target.toPlainText():
+            return
+        self._syncing_draft = True
+        try:
+            target.setPlainText(source.toPlainText())
+        finally:
+            self._syncing_draft = False
+
+    def _keep_pet_beside_chat(self) -> None:
+        # The panel chooses free space around the pet, never the reverse.
+        if not self.chat.isVisible():
+            return
+        pet = self.pet.pet
+        pet.show()
+        pet.raise_()
 
     def new_session(self) -> None:
         """Create through the pet state reset and the chat session tracker exactly once."""
@@ -139,46 +161,21 @@ class AppShell:
     # ── 配置生效链 ─────────────────────────────────────────────
 
     def _on_model_changed(self, provider: str, model_id: str) -> None:
-        """同 provider 换模型 → 引擎热切换（config/README §6）。"""
-        if not self.supervisor.running:
-            return  # 引擎未起：启动时自然读到新配置
-        log.info("hot set_model %s/%s", provider, model_id)
-        self.supervisor.client.set_model(provider, model_id)
+        self._activate_config(provider, model_id, self._settings_config_done, reload=False)
 
     def _on_restart_required(self, reason: str) -> None:
-        if not self.supervisor.running:
-            return  # 引擎还没起：下次启动即生效，无需打扰
-        if os.environ.get("HAOCHEN_AUTO_RESTART") == "1":
-            self._apply_default_model_after_restart = True
-            self.supervisor.restart_now()
+        provider, model = self.store.default_model()
+        self._activate_config(provider, model, self._settings_config_done)
+
+    def _activate_config(self, provider, model, done, *, reload=True):
+        self.activation.apply(provider, model, done, reload=reload)
+
+    def _settings_config_done(self, ok, message):
+        from PyQt6.sip import isdeleted
+        if isdeleted(self.settings):
             return
-        box = QMessageBox(self.settings)
-        box.setWindowTitle("重启引擎")
-        box.setText(f"{reason}，重启引擎后生效。现在重启吗？")
-        box.setInformativeText("重启约 1 秒，当前会话自动恢复，历史不丢。")
-        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        box.setDefaultButton(QMessageBox.StandardButton.Yes)
-        if box.exec() == QMessageBox.StandardButton.Yes:
-            self._apply_default_model_after_restart = True
-            self.supervisor.restart_now()
-
-    def _on_config_restart_completed(self) -> None:
-        """Apply the configured default after Supervisor restores the old session."""
-        if self._apply_default_model_after_restart:
-            provider, model_id = self.store.default_model()
-            if provider and model_id:
-                self.supervisor.client.set_model(provider, model_id)
-            self._apply_default_model_after_restart = False
-        prompt, self._pending_onboarding_trial = self._pending_onboarding_trial, None
-        if prompt:
-            self._dispatch_onboarding_trial(prompt)
-
-    def _on_config_restart_failed(self) -> None:
-        self._apply_default_model_after_restart = False
-        self._pending_onboarding_trial = None
-        self._on_credential_validation(
-            False, "当前模型连接失败，请检查凭据或模型设置"
-        )
+        self.settings._finish_working()
+        self.settings._set_status(message, ok=ok)
 
     # ── 首启引导 ───────────────────────────────────────────────
 
@@ -213,12 +210,13 @@ class AppShell:
         self.onboarding = OnboardingWizard(
             self.store,
             requires_key_reentry=requires_key_reentry,
+            activate=self._activate_config,
+            prepare=self.activation.ensure_ready,
             parent=parent,
         )
         self.onboarding.permission_requested.connect(self._request_onboarding_permission)
         self.onboarding.trial_requested.connect(self._send_onboarding_trial)
         self.onboarding.finished.connect(self._on_onboarding_finished)
-        self.onboarding.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self._present_onboarding()
 
     def _present_onboarding(self) -> None:
@@ -242,7 +240,7 @@ class AppShell:
         self.pet.pet.raise_()
         # Discovery help is intentionally suppressed while onboarding is
         # visible; give it a fresh chance only after that surface is gone.
-        QTimer.singleShot(900, self.pet._maybe_show_discovery_hint)
+        self.chat._defer(900, self.pet._maybe_show_discovery_hint)
 
     def any_key_configured(self) -> bool:
         try:
@@ -251,26 +249,35 @@ class AppShell:
             return False
 
     def _request_onboarding_permission(self, permission: str) -> None:
-        from .permissions import request_accessibility, request_screen_recording
+        from .permissions import open_permission_settings, request_accessibility, request_screen_recording
 
-        if permission == "accessibility":
-            request_accessibility()
-        elif permission == "screen":
-            request_screen_recording()
+        if permission in ("manage_accessibility", "manage_screen"):
+            if hasattr(self, "onboarding"):
+                self.onboarding.lower()
+            open_permission_settings(permission.removeprefix("manage_"))
+            return
+        if permission not in ("accessibility", "screen"):
+            return
+        if hasattr(self, "onboarding"):
+            self.onboarding.lower()
+
+        def handoff():
+            granted = request_accessibility() if permission == "accessibility" else request_screen_recording()
+            if not granted:
+                open_permission_settings(permission)
+            if hasattr(self, "onboarding"):
+                self.onboarding.permission_page.refresh_status()
+
+        QTimer.singleShot(0, handoff)
 
     def _send_onboarding_trial(self, prompt: str) -> None:
         provider, model_id = self.store.default_model()
-        if self.supervisor.running and provider.startswith("custom-"):
-            # The custom provider was written after the engine started. Restart
-            # to reload its catalog, then override the restored session's old
-            # model before sending the first trial prompt.
-            self._pending_onboarding_trial = prompt
-            self._apply_default_model_after_restart = True
-            self.supervisor.restart_now()
-            return
-        if self.supervisor.running and provider and model_id:
-            self.supervisor.client.set_model(provider, model_id)
-        self._dispatch_onboarding_trial(prompt)
+        def ready(ok, message):
+            if ok:
+                self._dispatch_onboarding_trial(prompt)
+            else:
+                self.pet.bubble.add_perception_hint(message)
+        self.activation.ensure_ready(provider, model_id, ready)
 
     def _dispatch_onboarding_trial(self, prompt: str) -> None:
         if not self.pet.bubble.summoned:
@@ -312,4 +319,5 @@ class AppShell:
         install_tracker(haochen_home())
 
     def stop(self) -> None:
+        self.activation.stop()
         self.supervisor.stop()

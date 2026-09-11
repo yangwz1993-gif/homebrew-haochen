@@ -26,9 +26,10 @@ from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from ..app_tracking import write_last_user_text
+from ..app_tracking import publish_question_target, write_last_user_text
 from ..conversation import ConversationController, make_session_title, plain_visible_text
 from ..engine_client import EngineClient
+from ..reading_status import ReadingStatus, event_phase
 from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
 from . import theme as T
@@ -533,6 +534,7 @@ class PetApp(QObject):
         self._perception_hint = None
         self._last_user_text = item.text
         write_last_user_text(self.client.home, item.text)
+        publish_question_target(self.client.home, item, self.coordinator.current_session)
         if self._session_needs_title:
             self._pending_session_title = make_session_title(item.text)
         status_text = (
@@ -952,9 +954,15 @@ class PetApp(QObject):
             QTimer.singleShot(0, self._drain_queue)
         # P4 双入口：确认/感知事件只由「本轮发起方」处理（另一入口静默）
         if (self.supervisor is not None and t in (
-                "extension_ui_request", "tool_execution_start", "tool_execution_end")
+                "extension_ui_request", "tool_execution_start", "tool_execution_update", "tool_execution_end")
                 and not self.ctrl.busy):
             return
+        phase = event_phase(ev)
+        if phase:
+            detail = ((ev.get("partialResult") or {}).get("details") or {})
+            log.info("read_phase tool=%s phase=%s elapsed_ms=%s", ev.get("toolCallId", ""),
+                     phase, detail.get("elapsedMs", "-"))
+            self._show_read_phase(phase, ev.get("toolCallId", ""))
         if t == "extension_ui_request":
             if ev.get("method") == "confirm":
                 self._ack_timer.stop()
@@ -971,7 +979,6 @@ class PetApp(QObject):
                 # 未实现的 method 一律取消（rpc-contract §5.3）
                 self.client.respond_ui(ev.get("id"), cancelled=True)
         elif t == "tool_execution_start" and ev.get("toolName") == "read_screen":
-            self._perception_hint = self.bubble.add_perception_hint("准备读取当前屏幕")
             self._request_work_state(PetState.ACTING, "准备读取屏幕")
         elif t == "tool_execution_start":
             tool_name = str(ev.get("toolName") or "")
@@ -987,6 +994,31 @@ class PetApp(QObject):
             update = ev.get("assistantMessageEvent") or {}
             if update.get("type") == "text_delta":
                 self._request_work_state(PetState.COMPOSING, STATUS_LINE[PetState.COMPOSING])
+
+    def _show_read_phase(self, phase, tool_id):
+        from PyQt6.sip import isdeleted
+        hint = self._perception_hint
+        if phase == "binding" and tool_id != getattr(self, "_read_tool_id", None):
+            if hint is not None and not isdeleted(hint):
+                self.bubble.remove_widget(hint)
+            hint = None
+            self._read_tool_id = tool_id
+        if tool_id != getattr(self, "_read_tool_id", None):
+            return  # Late updates must not decorate another turn.
+        if hint is None or isdeleted(hint):
+            hint = ReadingStatus()
+            self._perception_hint = hint
+            self.bubble._append(hint)
+        hint.set_phase(phase)
+        self.bubble._set_mode(self.bubble._mode)
+        self.bubble._refresh_height()
+        if phase == "complete":
+            def dismiss():
+                if (self._perception_hint is hint and not isdeleted(hint)
+                        and hint.phase == "complete" and self._read_tool_id == tool_id):
+                    self.bubble.remove_widget(hint)
+                    self._perception_hint = None
+            QTimer.singleShot(2500, dismiss)
 
     def _on_confirm_resolved(self, ok: bool) -> None:
         if not ok:
@@ -1007,10 +1039,9 @@ class PetApp(QObject):
             return
         if self._status_block is not None:
             self._status_block.set_text("正在读取屏幕", animated=True, cancellable=True)
-        hint = getattr(self, "_perception_hint", None)
-        if hint is not None:
-            hint.label.setText("👀 已允许，正在读取当前屏幕")
-            self._perception_hint = None
+        self._show_read_phase("capturing", getattr(self, "_read_tool_id", ""))
+        self.bubble._set_mode("progress")
+        self.bubble._refresh_height()
         self._set_state(PetState.ACTING)
         self._resolve_confirm(confirmed=True)
         self.read_permission_requested.emit()
@@ -1097,7 +1128,7 @@ class PetApp(QObject):
         self._detail_open = True
         self.bubble.hide()
         # 详情是普通工作窗口；置顶桌宠继续显示会压住右下输入区。
-        self.pet.hide()
+        self.pet.show()
         self.detail_opener(rect)
 
     def restore_bubble(self) -> None:
@@ -1126,6 +1157,8 @@ class PetApp(QObject):
     # ── P4：supervisor 重启链路反馈 ───────────────────────────
 
     def _on_sup_restarting(self, attempt: int) -> None:
+        if getattr(self.supervisor, "restart_reason", "recovery") == "configuration":
+            return
         self.bubble.cancel_dismiss()
         self._status_block = self.bubble.present_status(
             f"连接中断，正在自动恢复（第 {attempt} 次）…", cancellable=False
@@ -1136,10 +1169,13 @@ class PetApp(QObject):
             self.bubble.summon()
 
     def _on_sup_restarted(self) -> None:
-        self._status_block = self.bubble.present_status("连接已恢复 ✓ 会话还在")
+        if getattr(self.supervisor, "restart_reason", "recovery") != "configuration":
+            self._status_block = self.bubble.present_status("连接已恢复 ✓ 会话还在")
         QTimer.singleShot(0, self._drain_queue)
 
     def _on_sup_restart_failed(self) -> None:
+        if getattr(self.supervisor, "restart_reason", "recovery") == "configuration":
+            return  # ConfigActivation reports the failure in the initiating form.
         self._status_block = None
         self.bubble.clear_flow()
         self.bubble.set_input_visible(False)

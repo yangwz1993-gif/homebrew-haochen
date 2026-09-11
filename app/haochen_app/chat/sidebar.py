@@ -46,7 +46,7 @@ class SessionSidebar(QWidget):
         self.setStyleSheet(f"""
             SessionSidebar {{
                 background: {C['surface']};
-                border-right: {BORDER}px solid {C['line']};
+                border-right: {BORDER}px solid {C['line_soft']};
             }}
         """)
         root = QVBoxLayout(self)

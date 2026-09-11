@@ -188,12 +188,10 @@ class BubbleRow(QWidget):
 class _BubbleFrame(QFrame):
     def __init__(self, bg: str, parent=None):
         super().__init__(parent)
-        # v0.1.7：详情页（大窗）加回清晰框线区分内容块（浅黄底看不清分隔）；
-        # 小对话窗气泡仍保持 v0.1.6 去描边，两处互不影响。
         self.setStyleSheet(f"""
             _BubbleFrame {{
                 background: {bg};
-                border: 1px solid {C['line']};
+                border: 1px solid {C['line_soft']};
                 border-radius: {RADIUS_CARD}px;
             }}
         """)
@@ -235,8 +233,8 @@ class AssistantBubble(_BubbleFrame):
             warning = kind == "partial"
             self.tag = QLabel(label)
             self.tag.setStyleSheet(f"""
-                color: {C['bg'] if highlighted else (C['warn'] if warning else C['ink_soft'])};
-                background: {C['accent'] if highlighted else C['bg']};
+                color: {C['accent'] if highlighted else (C['warn'] if warning else C['ink_soft'])};
+                background: transparent;
                 border-radius: 6px; padding: 1px 8px;
                 font-size: {FONT['body_sm']}px; font-weight: bold;
             """)
@@ -321,7 +319,7 @@ class ToolCard(QFrame):
         self.setStyleSheet(f"""
             ToolCard {{
                 background: {C['surface']};
-                border: 1px solid {C['line']};
+                border: 1px solid {C['line_soft']};
                 border-radius: {RADIUS_CARD}px;
             }}
         """)  # v0.1.7：与气泡一致加回清晰描边

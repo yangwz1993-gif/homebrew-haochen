@@ -9,6 +9,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from .app_tracking import capture_question_target
 from .secure_storage import atomic_write_private, ensure_private_directory, ensure_private_file
 
 
@@ -19,6 +20,7 @@ class QueueItem:
     source: str
     request_id: str | None = None
     needs_review: bool = False
+    screen_target: dict | None = None
 
 
 class SessionCoordinator(QObject):
@@ -102,7 +104,8 @@ class SessionCoordinator(QObject):
             raise ValueError("queued message must not be empty")
         if source not in {"chat", "pet"}:
             raise ValueError("unknown queue source")
-        item = QueueItem(id=uuid.uuid4().hex, text=text, source=source)
+        item = QueueItem(id=uuid.uuid4().hex, text=text, source=source,
+                         screen_target=capture_question_target(self.home))
         self._queue.append(item)
         self._persist()
         self.queue_changed.emit(list(self._queue))

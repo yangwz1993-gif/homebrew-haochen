@@ -42,7 +42,7 @@ def validate_api_key(provider: str, key: str, *, timeout: float = 10.0) -> Valid
     except (OSError, urllib.error.URLError):
         return ValidationResult(False, "网络连接失败，请检查网络后重试")
     if 200 <= status < 300:
-        return ValidationResult(True, "连接验证成功")
+        return ValidationResult(True, "凭据验证成功；模型可用性会在首次对话时确认")
     return ValidationResult(False, f"服务返回 HTTP {status}")
 
 
@@ -69,6 +69,7 @@ def validate_custom_model(
     key: str,
     *,
     timeout: float = 10.0,
+    api: str = "openai-completions",
 ) -> ValidationResult:
     """Probe an OpenAI-compatible endpoint before committing any local configuration."""
     try:
@@ -79,7 +80,7 @@ def validate_custom_model(
         return ValidationResult(False, "请输入模型 ID")
     if not key.strip():
         return ValidationResult(False, "请输入 API Key")
-    headers = {"User-Agent": "haochen/0.3.2", "Accept": "application/json"}
+    headers = {"User-Agent": "haochen/0.3.4", "Accept": "application/json"}
     if key.strip():
         headers["Authorization"] = f"Bearer {key.strip()}"
     request = urllib.request.Request(f"{normalized}/models", headers=headers)
@@ -92,6 +93,8 @@ def validate_custom_model(
                 if isinstance(raw_payload, bytes):
                     payload = raw_payload
     except urllib.error.HTTPError as exc:
+        if exc.code in (404, 405):
+            return _probe_completion(normalized, model_id, headers, timeout, api)
         if exc.code in (401, 403):
             return ValidationResult(False, "Key 无效或没有访问权限")
         return ValidationResult(False, f"模型服务返回 HTTP {exc.code}")
@@ -105,12 +108,49 @@ def validate_custom_model(
         except (UnicodeDecodeError, json.JSONDecodeError):
             data = None
         entries = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(entries, list) or not entries:
+            return ValidationResult(False, "该地址没有返回有效模型列表，请检查 API URL")
         ids = {
             item.get("id")
             for item in entries or []
             if isinstance(item, dict) and isinstance(item.get("id"), str)
         }
-        if ids and model_id.strip() not in ids:
+        if model_id.strip() not in ids:
             return ValidationResult(False, f"服务可连接，但没有找到模型 {model_id.strip()}")
-        return ValidationResult(True, "连接验证成功")
+        return _probe_completion(normalized, model_id, headers, timeout, api)
     return ValidationResult(False, f"模型服务返回 HTTP {status}")
+
+
+def _probe_completion(base_url: str, model_id: str, headers: dict, timeout: float, api: str) -> ValidationResult:
+    """Verify the selected model can answer, including services without /models."""
+    responses = api == "openai-responses"
+    body = ({"model": model_id, "input": "Reply OK.", "max_output_tokens": 32, "stream": False}
+            if responses else {"model": model_id, "messages": [{"role": "user", "content": "Reply OK."}],
+                               "max_tokens": 32, "stream": False})
+    request = urllib.request.Request(
+        base_url + ("/responses" if responses else "/chat/completions"),
+        data=json.dumps(body).encode(), headers={**headers, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read(1_000_001)
+        if len(raw) > 1_000_000:
+            return ValidationResult(False, "模型响应过大，未完成验证")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("invalid response")
+        if responses:
+            valid = isinstance(data.get("output"), list) and bool(data["output"]) and not data.get("error")
+        else:
+            choices = data.get("choices")
+            valid = (isinstance(choices, list) and bool(choices) and isinstance(choices[0], dict)
+                     and isinstance(choices[0].get("message"), dict) and not data.get("error"))
+        if valid:
+            return ValidationResult(True, "模型已完成试答，连接成功")
+        return ValidationResult(False, "服务返回了异常回答，请检查模型 ID 和协议")
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return ValidationResult(False, "Key 无效或没有访问该模型的权限")
+        return ValidationResult(False, f"模型试答失败（HTTP {exc.code}），请检查模型和协议")
+    except (OSError, ValueError, urllib.error.URLError):
+        return ValidationResult(False, "模型试答未完成，请检查连接后重试")

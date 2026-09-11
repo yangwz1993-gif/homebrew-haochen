@@ -97,6 +97,8 @@ class MockEngine:
             self.current = self._new_session()
             self._save_state()
         self.aborted = False
+        self.model_id = MOCK_MODEL.split("/", 1)[1]
+        self.model_provider = "mock"
         self.inbox: list[dict] = []  # 流式中收到的命令，回合间处理
         self._stdin = _StdinLines()
 
@@ -436,11 +438,18 @@ class MockEngine:
         elif t == "get_messages":
             self.respond(rid, "get_messages",
                          {"messages": list(self.current_history())})
+        elif t == "set_model":
+            if not cmd.get("provider") or not cmd.get("modelId"):
+                self.respond(rid, "set_model", error="provider and modelId are required")
+            else:
+                self.model_provider = str(cmd["provider"])
+                self.model_id = str(cmd["modelId"])
+                self.respond(rid, "set_model", {"provider": self.model_provider, "id": self.model_id})
         elif t == "get_state":
             sess = self.sessions[self.current]
             self.respond(rid, "get_state", {
-                "model": {"id": MOCK_MODEL.split("/", 1)[1], "name": "Mock Model",
-                          "api": "openai-completions", "provider": "mock",
+                "model": {"id": self.model_id, "name": "Mock Model",
+                          "api": "openai-completions", "provider": self.model_provider,
                           "baseUrl": "http://localhost/mock", "reasoning": True,
                           "input": ["text"], "cost": {"input": 0, "output": 0},
                           "contextWindow": 128000, "maxTokens": 8192},

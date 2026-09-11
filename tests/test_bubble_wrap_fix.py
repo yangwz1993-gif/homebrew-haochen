@@ -228,7 +228,7 @@ def test_humanize_error_hides_cli_help_and_internal_paths() -> None:
     )
     out = conversation.humanize_error(raw)
 
-    assert out == "当前模型还没有配置 API Key。请打开设置，保存并验证后再试。"
+    assert out == "当前模型还没有配置 API Key。请打开设置，填写 Key 并点击“连接模型”后再试。"
     assert "/private" not in out
     assert "/login" not in out
     assert ".md" not in out

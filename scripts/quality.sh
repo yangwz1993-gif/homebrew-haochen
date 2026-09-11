@@ -40,4 +40,8 @@ printf '\n==> unit tests + coverage report\n'
 QT_QPA_PLATFORM=offscreen uv run pytest \
   --cov --cov-report=term-missing --cov-report=xml
 
+printf '\n==> screen reader extension regressions\n'
+NODE_PATH="$ROOT/pi-source/node_modules" bun run app/ext/test-screen-target.ts
+NODE_PATH="$ROOT/pi-source/node_modules" bun run app/ext/test-visual-mode.ts
+
 printf '\nAll quality checks passed.\n'

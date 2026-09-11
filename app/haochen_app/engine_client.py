@@ -98,6 +98,7 @@ class EngineClient(QObject):
         if mock is None:
             mock = os.environ.get("HAOCHEN_MOCK") == "1"
         self._mock = mock
+        self.configuration_blocked = False
         self.credentials = credentials or (MemoryCredentialStore() if mock else KeychainStore())
         self._engine = Path(engine) if engine else (DEFAULT_MOCK if mock else DEFAULT_ENGINE)
         self._ext = None if mock else ext
@@ -350,6 +351,8 @@ class EngineClient(QObject):
             self._settle_request(request_id, error_code, error)
 
     def prompt(self, message: str) -> str:
+        if self.configuration_blocked:
+            raise RuntimeError("模型配置尚未就绪，请在设置中连接模型后重试。")
         return self._send({"type": "prompt", "message": message})
 
     def abort(self) -> str:

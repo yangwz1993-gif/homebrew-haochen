@@ -3,16 +3,16 @@
 haochen 是一款面向 macOS 的独立桌面 AI 伙伴：常驻桌面、按需读取当前窗口、调用本机工具，并用轻量气泡或完整工作台返回结果。
 
 [![CI](https://github.com/yangwz1993-gif/homebrew-haochen/actions/workflows/ci.yml/badge.svg)](https://github.com/yangwz1993-gif/homebrew-haochen/actions/workflows/ci.yml)
-[![version](https://img.shields.io/badge/version-0.3.2-3a7d5c)](https://github.com/yangwz1993-gif/homebrew-haochen/releases/tag/v0.3.2)
+[![version](https://img.shields.io/badge/version-0.3.4-3a7d5c)](https://github.com/yangwz1993-gif/homebrew-haochen/releases/tag/v0.3.4)
 [![platform](https://img.shields.io/badge/platform-macOS-2b2b22)](#系统要求)
 
 ## 当前状态
 
-- 稳定版本：`0.3.2`
-- 自动化测试：354 项，整体覆盖率 83%
+- 稳定版本：`0.3.4`（所有者验收通过的里程碑版）
+- 自动化测试：472 项，整体覆盖率 83%
 - 分发：GitHub Release + Homebrew Cask
 
-0.3.2 经所有者明确选择继续使用发布者自签名；Homebrew Cask 会移除该 App 的
+0.3.4 经所有者明确选择继续使用发布者自签名；Homebrew Cask 会移除该 App 的
 quarantine 属性。它没有经过 Apple Developer ID 签名或 Apple 公证，直接下载 DMG
 可能被 Gatekeeper 拦截，建议只使用下面的 Homebrew 安装方式。
 
@@ -23,6 +23,8 @@ brew tap yangwz1993-gif/haochen
 brew install --cask haochen
 open -a haochen
 ```
+
+已通过 Homebrew 安装的用户：`brew update && brew upgrade --cask haochen`。
 
 首次使用时，按向导确认 haochen 如何称呼你，并选择 DeepSeek 或填写自定义 OpenAI 兼容模型的 URL、模型 ID 和 API Key。Key 存储在 macOS Keychain；辅助功能和屏幕录制权限只在相关能力需要时申请。
 
@@ -69,6 +71,8 @@ v0.3.1 进一步修复并收敛了桌宠输入气泡的尺寸、留白和视觉�
 待机、思考和警示三态的全身角色动作，并保持既有像素形象与肤色风格。
 v0.3.2 为短气泡补齐关闭、发送与展开图标，悬停时暂停自动退场；同时明确
 haochen 与用户称呼的身份边界，并支持从首启向导或设置安全配置自定义模型。
+v0.3.4 汇总本轮验收：中性轻量气泡、统一模型连接生效流程、按提问绑定阅读目标、
+真实读取阶段提示及无需削减正文/原图的读取器提速。详见 [里程碑发布说明](docs/releases/v0.3.4.md)。
 
 ## 安全与隐私
 

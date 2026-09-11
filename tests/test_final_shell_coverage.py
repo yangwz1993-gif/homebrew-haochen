@@ -91,7 +91,7 @@ def test_first_run_setup_reopens_at_key_page_when_key_missing(qtbot, tmp_path: P
     saved = OnboardingState(shell.store.home)
     assert saved.completed is False
     assert saved.page == KEY_PAGE
-    assert "为避免旧版钥匙串弹窗" in shell.onboarding.key_page.status.text()
+    assert "连接模型" in shell.onboarding.key_page.status.text()
 
 
 def test_completed_onboarding_with_key_skips(qtbot, tmp_path: Path) -> None:
@@ -126,7 +126,7 @@ def test_onboarding_permission_requests_route_to_system(qtbot, tmp_path: Path, m
     shell._request_onboarding_permission("screen")
     shell._request_onboarding_permission("unknown")  # 未知值不抛
 
-    assert requested == ["ax", "sr"]
+    qtbot.waitUntil(lambda: requested == ["ax", "sr"])
 
 
 def test_show_chat_and_settings_raise_windows(qtbot, tmp_path: Path) -> None:
@@ -155,7 +155,7 @@ def test_shell_routes_pet_chat_and_new_session_actions(qtbot, tmp_path: Path) ->
     assert shell.chat.isVisible()
 
 
-def test_normal_chat_hides_pet_and_close_restores_it(qtbot, tmp_path: Path) -> None:
+def test_normal_chat_keeps_pet_and_close_restores_it(qtbot, tmp_path: Path) -> None:
     shell = AppShell(mock=True, home=tmp_path)
     qtbot.addWidget(shell.chat)
     qtbot.addWidget(shell.pet.pet)
@@ -164,7 +164,7 @@ def test_normal_chat_hides_pet_and_close_restores_it(qtbot, tmp_path: Path) -> N
 
     shell.show_chat()
     assert shell.chat.isVisible()
-    assert not shell.pet.pet.isVisible()
+    assert shell.pet.pet.isVisible()
 
     shell.chat.close()
     qtbot.wait(20)

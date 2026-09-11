@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""haochen 读屏执行体（独立单文件，PyInstaller --onefile 冻结为 haochen-reader）。
+"""haochen 读屏执行体（PyInstaller --onedir；--serve 复用进程）。
 
 通过 macOS Accessibility API 读取前台窗口真实内容（文字 + 图片），不截图。
 移植自 previous-version/haochen-app/haochen/reader.py + cli.py --json 路径，
@@ -19,9 +19,11 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
+import hashlib
 import ipaddress
 import json
 import os
+import select
 import socket
 import sys
 import time
@@ -58,9 +60,12 @@ from Quartz import (
     kCGScrollEventUnitLine,
     kCGWindowImageBoundsIgnoreFraming,
     kCGWindowListExcludeDesktopElements,
+    kCGWindowListOptionAll,
     kCGWindowListOptionIncludingWindow,
     kCGWindowListOptionOnScreenOnly,
 )
+from reader.document_source import IMAGE_SUFFIXES, DocumentSource
+from reader.screen_target import document_id, fingerprint, matching_ax_window, web_area
 
 TEXT_VALUE_ROLES = {"AXStaticText", "AXTextArea", "AXTextField", "AXHeading"}
 TITLE_ROLES = {"AXButton", "AXLink", "AXCheckBox", "AXRadioButton", "AXTab", "AXCell"}
@@ -81,6 +86,7 @@ class Block:
     y: float = 0.0
     w: float = 0.0
     h: float = 0.0
+    role: str = ""
 
     @property
     def area(self) -> float:
@@ -92,10 +98,18 @@ class WindowContent:
     app_name: str = ""
     window_title: str = ""
     blocks: list[Block] = field(default_factory=list)
+    window_bounds: tuple[float, float, float, float] | None = None
+    scope: str = "窗口当前可访问内容；未自动滚动，不保证整篇文档完整"
 
 
 class AXError(RuntimeError):
     pass
+
+
+class TargetError(AXError):
+    def __init__(self, code, message):
+        self.code = code
+        super().__init__(message)
 
 
 def check_accessibility(prompt: bool = True) -> bool:
@@ -114,6 +128,13 @@ def _geom(el) -> tuple[float, float]:
     try:
         return float(pos.x()), float(pos.y())
     except Exception:
+        try:
+            from ApplicationServices import AXValueGetValue, kAXValueCGPointType
+            ok, value = AXValueGetValue(pos, kAXValueCGPointType, None)
+            if ok:
+                return float(value.x), float(value.y)
+        except Exception:
+            pass
         return 0.0, 0.0
 
 
@@ -123,6 +144,13 @@ def _size(el) -> tuple[float, float]:
     try:
         return float(size.width()), float(size.height())
     except Exception:
+        try:
+            from ApplicationServices import AXValueGetValue, kAXValueCGSizeType
+            ok, value = AXValueGetValue(size, kAXValueCGSizeType, None)
+            if ok:
+                return float(value.width), float(value.height)
+        except Exception:
+            pass
         return 0.0, 0.0
 
 
@@ -138,27 +166,45 @@ def _walk(el, depth: int, out: list[Block]) -> None:
     role = _copy(el, "AXRole")
     if role is None:
         return
+    if _copy(el, "AXSubrole") == "AXSecureTextField":
+        return
+    if role == "AXHeading":
+        # Chromium's AXValue is the heading LEVEL (1/2/...), not its text.
+        title = _norm(_copy(el, "AXTitle"))
+        if title:
+            x, y = _geom(el)
+            out.append(Block("text", text=title, x=x, y=y, role="AXHeading"))
+        else:
+            children = []
+            for child in _copy(el, "AXChildren") or []:
+                _walk(child, depth + 1, children)
+            for block in children:
+                if block.kind == "text":
+                    block.role = "AXHeading"
+            out.extend(children)
+        return
 
     if role in TEXT_VALUE_ROLES:
         text = _norm(_copy(el, "AXValue")) or _norm(_copy(el, "AXTitle"))
         if text:
             x, y = _geom(el)
-            out.append(Block(kind="text", text=text, x=x, y=y))
+            out.append(Block(kind="text", text=text, x=x, y=y, role=str(role)))
         return  # 文本节点不必再深入
     if role in TITLE_ROLES:
         text = _norm(_copy(el, "AXTitle")) or _norm(_copy(el, "AXDescription"))
         if text:
             x, y = _geom(el)
-            out.append(Block(kind="text", text=text, x=x, y=y))
+            link = str(_copy(el, "AXURL") or "") if role == "AXLink" else None
+            out.append(Block(kind="text", text=text, x=x, y=y, role=str(role), url=link))
         # 链接/按钮里可能包图片，继续走子节点
     elif role in IMAGE_ROLES:
         url = _copy(el, "AXURL")
         url = str(url) if url else None
         alt = _norm(_copy(el, "AXDescription")) or _norm(_copy(el, "AXTitle"))
-        if url or alt:
-            x, y = _geom(el)
-            w, h = _size(el)
-            out.append(Block(kind="image", url=url, alt=alt, x=x, y=y, w=w, h=h))
+        # Canvas/unnamed images still need visual fallback.
+        x, y = _geom(el)
+        w, h = _size(el)
+        out.append(Block(kind="image", url=url, alt=alt, x=x, y=y, w=w, h=h))
 
     children = _copy(el, "AXChildren")
     if not children:
@@ -315,7 +361,9 @@ def read_window(pid: int, app_name: str, allow_wait: bool = True) -> WindowConte
             _walk(win, 0, blocks)
             if len(blocks) >= 20 or _has_webarea(win):
                 break
-    return WindowContent(app_name=app_name, window_title=title, blocks=_dedup_sort(blocks))
+    bounds = (*_geom(win), *_size(win))
+    return WindowContent(app_name=app_name, window_title=title, blocks=_dedup_sort(blocks),
+                         window_bounds=bounds if bounds[2] > 0 and bounds[3] > 0 else None)
 
 
 def _window_center(pid: int) -> tuple[float, float] | None:
@@ -368,6 +416,8 @@ def read_full(max_scrolls: int = 20, stagnant_rounds: int = 3,
         scroll_once(pid)
         time.sleep(0.4)
         snap = read_window(pid, app_name, allow_wait=False)
+        if (snap.window_title != first.window_title or snap.window_bounds != first.window_bounds):
+            break  # Never mix text from a newly focused window into the first one.
         new = [b for b in snap.blocks if (b.kind, b.text, b.url) not in seen]
         if new:
             stagnant = 0
@@ -381,7 +431,8 @@ def read_full(max_scrolls: int = 20, stagnant_rounds: int = 3,
         if stagnant >= stagnant_rounds:
             break
 
-    result = WindowContent(app_name=first.app_name, window_title=first.window_title)
+    result = WindowContent(app_name=first.app_name, window_title=first.window_title,
+                           window_bounds=first.window_bounds)
     result.blocks = _dedup_sort(all_blocks)
     return result
 
@@ -457,6 +508,19 @@ def _secure_urlopen(url: str):
 
 
 def _download_as_data_url(url: str) -> str | None:
+    # Embedded original image bytes need no network and must not be re-encoded.
+    if url.startswith("data:"):
+        try:
+            header, encoded = url.split(",", 1)
+            if not header.endswith(";base64") or len(encoded) > (MAX_REMOTE_IMAGE_BYTES * 4 // 3 + 4):
+                return None
+            mime = header[5:-7]
+            if mime not in _ALLOWED_REMOTE_IMAGE_MIMES:
+                return None
+            raw = base64.b64decode(encoded, validate=True)
+            return url if len(raw) <= MAX_REMOTE_IMAGE_BYTES and _validate_image(raw) == mime else None
+        except (ValueError, TypeError):
+            return None
     try:
         with _secure_urlopen(url) as resp:
             content_type = resp.headers.get_content_type().lower()
@@ -492,9 +556,122 @@ def prepare_images(content: WindowContent, max_images: int = MAX_IMAGES) -> dict
     img_idx = [i for i, _ in img_idx[:max_images]]
     if not img_idx:
         return {}
+    # Deduplicate only within THIS capture; no stale cross-turn image cache.
+    # Retain the same chosen blocks, original bytes, size limits and concurrency.
+    urls = list(dict.fromkeys(content.blocks[i].url for i in img_idx))
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = pool.map(lambda i: _download_as_data_url(content.blocks[i].url), img_idx)
-    return dict(zip(img_idx, results))
+        downloaded = dict(zip(urls, pool.map(_download_as_data_url, urls), strict=True))
+    return {i: downloaded[content.blocks[i].url] for i in img_idx}
+
+
+class BoundTarget:
+    """Metadata-only binding before consent; retain actual AX objects, not just PID."""
+    def __init__(self, target):
+        self.target = target
+        self.window = matching_ax_window(target["pid"], target["window_id"])
+        self.page = None
+        self.source = None
+        uri = target.get("document_uri", "")
+        if uri.startswith("file:"):
+            try:
+                self.source = DocumentSource(uri)
+            except (ValueError, OSError):
+                pass
+        if self.window is not None and self.matches_window():
+            self.page = web_area(self.window)
+            if self.page is not None:
+                self.page_uri = str(_copy(self.page, "AXURL") or "")
+        else:
+            self.window = None
+        if self.window is None and self.source is None:
+            code = getattr(self, "mismatch_code", "window_unresolved")
+            message = ("页面身份校验未通过；未读取正文。这不代表窗口已关闭，请重新确认目标。"
+                       if code == "page_identity_mismatch" else
+                       "暂时无法匹配目标窗口；未读取正文，不能据此判断窗口已关闭。")
+            raise TargetError(code, message)
+
+    def matches_window(self):
+        # Compatibility for old targets: strict fingerprint. New targets compare
+        # explicit metadata, distinguishing a missing URL from a changed URL.
+        if "document_uri" not in self.target:
+            return bool(self.target.get("fingerprint")) and fingerprint(self.window) == self.target["fingerprint"]
+        expected = self.target["document_uri"]
+        current = document_id(self.window)
+        if expected:
+            if expected != current:
+                self.mismatch_code = "page_identity_mismatch"
+                # Hash identity diagnostics: no page URLs, titles, body or keys in logs.
+                print(json.dumps({"event": "identity_mismatch", "pid": self.target["pid"],
+                                  "window_id": self.target["window_id"],
+                                  "expected": hashlib.sha256(expected.encode()).hexdigest()[:12],
+                                  "actual": hashlib.sha256(current.encode()).hexdigest()[:12]}), file=sys.stderr)
+            return expected == current
+        return str(_copy(self.window, "AXTitle") or "")[:180] == self.target.get("title", "")
+
+    def readable_root(self):
+        if self.page is not None:
+            if (_copy(self.page, "AXRole") == "AXWebArea"
+                    and str(_copy(self.page, "AXURL") or "") == self.page_uri):
+                return self.page
+            return None  # Never substitute the new tab's AXWebArea.
+        if self.window is not None and self.matches_window():
+            return self.window
+        return None
+
+    def file_snapshot(self):
+        if self.source is None:
+            raise AXError("原页面已不再提供可访问内容，且没有可读取的文档来源；未改读当前页面。")
+        kind, value = self.source.read()
+        block = Block(kind, text=value) if kind == "text" else Block(kind, url=value, alt=self.source.path.name)
+        content = WindowContent(app_name=self.target.get("app", ""), window_title=self.target.get("title", ""),
+                                blocks=[block], scope="已保存的本地文档版本；不包含未保存修改，并非当时屏幕快照")
+        return content, None, kind == "image"
+
+
+def read_bound_snapshot(target, binding=None):
+    """Capture text and optional pixels together, before slow original-image downloads."""
+    pid, wid = target.get("pid"), target.get("window_id")
+    if not isinstance(pid, int) or not isinstance(wid, int) or not target.get("fingerprint"):
+        raise AXError("尚未确认窗口身份。首次系统授权后，请回到目标页面重新提问。")
+    binding = binding or BoundTarget(target)
+    if binding.source is not None and binding.source.path.suffix.lower() in IMAGE_SUFFIXES:
+        return binding.file_snapshot()  # Exact original bytes, not a downscaled preview screenshot.
+    win = binding.readable_root()
+    if win is None:
+        return binding.file_snapshot()
+    blocks = []
+    _walk(win, 0, blocks)
+    if len(blocks) < 20 and not _has_webarea(win):
+        # Give an on-demand accessibility tree a bounded chance to populate.
+        # All iterations stay on the already-bound AX window, never the foreground.
+        for _ in range(4):
+            if binding.readable_root() is None:
+                raise AXError("页面已变化，请重新确认阅读目标。")
+            time.sleep(0.1)
+            blocks = []
+            _walk(win, 0, blocks)
+            if len(blocks) >= 20 or _has_webarea(win):
+                break
+    content = WindowContent(app_name=str(target.get("app", "")),
+                            window_title=str(target.get("title", "")),
+                            blocks=_dedup_sort(blocks), window_bounds=(*_geom(win), *_size(win)))
+    needs_visual = any(b.kind == "image" for b in blocks) or sum(len(b.text) for b in blocks) < 80
+    # A retained background page can be read, but its host window may show a new
+    # tab: never attach that new tab's screenshot to the old page's text.
+    same_visible_page = binding.matches_window()
+    screenshot = (capture_window_image(pid, content.window_title, content.window_bounds, window_id=wid)
+                  if needs_visual and same_visible_page else None)
+    # A tab can change without changing its title/URL; check the extracted body too.
+    after = []
+    _walk(win, 0, after)
+    def signature(values):
+        return [(b.kind, b.text, b.url, b.alt) for b in _dedup_sort(values)]
+    if (binding.readable_root() is None or signature(blocks) != signature(after)
+            or (screenshot is not None and not binding.matches_window())):
+        raise AXError("采集期间页面内容发生变化，本次内容已丢弃。请在页面稳定后重新阅读。")
+    if not blocks and binding.source is not None:
+        return binding.file_snapshot()
+    return content, screenshot, needs_visual
 
 
 # ── 视觉增强：截取目标窗口图像（P7，需屏幕录制权限）─────────────
@@ -569,34 +746,32 @@ def _cgimage_to_png_data_url(img) -> str | None:
         return None
 
 
-def capture_window_image(pid: int) -> str | None:
+def select_capture_window(windows, pid: int, title: str = "", bounds=None):
+    """Match the same AX window; never replace it with a larger unrelated one."""
+    candidates = [w for w in windows or [] if int(w.get("kCGWindowLayer", -1)) == 0
+                  and int(w.get("kCGWindowOwnerPID", -1)) == pid]
+    if bounds:
+        for window in candidates:
+            rect = window.get("kCGWindowBounds", {})
+            if all(abs(float(rect.get(name, -99999)) - value) <= 4
+                   for name, value in zip(("X", "Y", "Width", "Height"), bounds, strict=True)):
+                return window
+        return None  # Target moved/closed while images were fetched: do not substitute.
+    if title:
+        matches = [w for w in candidates if _norm(w.get("kCGWindowName")) == title]
+        return matches[0] if len(matches) == 1 else None
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def capture_window_image(pid: int, title: str = "", bounds=None, window_id=None) -> str | None:
     """截取目标窗口图像，返回 PNG data URL；无权限/失败返回 None。"""
     if not screen_capture_granted():
         return None  # 需要屏幕录制权限
     wins = CGWindowListCopyWindowInfo(
-        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, 0)
-    best = None
-    best_area = 0.0
-    # 优先：目标 pid 的最大普通窗口（layer 0）；若没有（如系统通知弹窗/宠物前台），
-    # 回退到屏幕最大普通窗口（用户的实际窗口），避免截到通知/宠物自身。
-    for w in wins or []:
-        if int(w.get("kCGWindowLayer", -1)) != 0:
-            continue
-        b = w.get("kCGWindowBounds", {})
-        area = float(b.get("Width", 0)) * float(b.get("Height", 0))
-        if int(w.get("kCGWindowOwnerPID", -1)) == pid:
-            if area > best_area:
-                best_area = area
-                best = w
-    if best is None:
-        for w in wins or []:
-            if int(w.get("kCGWindowLayer", -1)) != 0:
-                continue
-            b = w.get("kCGWindowBounds", {})
-            area = float(b.get("Width", 0)) * float(b.get("Height", 0))
-            if area > best_area:
-                best_area = area
-                best = w
+        kCGWindowListOptionAll | kCGWindowListExcludeDesktopElements, 0)
+    best = (next((w for w in wins or [] if int(w.get("kCGWindowNumber", -1)) == window_id
+                  and int(w.get("kCGWindowOwnerPID", -1)) == pid), None)
+            if window_id is not None else select_capture_window(wins, pid, title, bounds))
     if best is None:
         return None
     wid = int(best["kCGWindowNumber"])
@@ -607,14 +782,100 @@ def capture_window_image(pid: int) -> str | None:
     return _shrink_png_data_url(_cgimage_to_png_data_url(img))
 
 
+def serialize_snapshot(content, bound_shot, needs_visual, pid, *, bound=True):
+    """Finish all original-image fetches before declaring the reading complete."""
+    n_text = sum(1 for b in content.blocks if b.kind == "text")
+    n_img = sum(1 for b in content.blocks if b.kind == "image")
+    n_img_url = sum(1 for b in content.blocks if b.kind == "image" and b.url)
+    data_urls = prepare_images(content)
+    blocks = []
+    for i, b in enumerate(content.blocks):
+        if b.kind == "text":
+            blocks.append({"kind": "text", "text": b.text, "role": b.role, "url": b.url})
+        else:
+            blk = {"kind": "image", "url": b.url, "alt": b.alt,
+                   "area": b.area, "w": b.w, "h": b.h}
+            if data_urls.get(i):
+                blk["data_url"] = data_urls[i]
+            blocks.append(blk)
+    n_originals = sum(1 for b in data_urls.values() if b)
+    if bound:
+        screenshot = bound_shot if n_originals < n_img or n_img == 0 else None
+        need_sr = needs_visual and screenshot is None and n_originals < max(1, n_img) and not screen_capture_granted()
+    elif n_originals > 0:
+        screenshot, need_sr = None, False
+    else:
+        screenshot = capture_window_image(pid, content.window_title, content.window_bounds)
+        need_sr = screenshot is None and not screen_capture_granted()
+    return {
+        "app": content.app_name, "window_title": content.window_title,
+        "stats": {"text_blocks": n_text, "images": n_img, "images_with_url": n_img_url},
+        "screenshot": screenshot, "need_screen_recording": need_sr,
+        "scope": content.scope if bound else "窗口读取",
+        "images_original": n_originals, "images_unavailable": max(0, n_img - n_originals), "blocks": blocks,
+    }
+
+
+def serve():
+    """Private stdin/stdout worker owned by one engine; never listens on a socket.
+
+    Startup imports only. bind reads metadata only; read requires an explicit
+    command matching that binding. EOF/engine exit releases all native objects.
+    Cancellation during capture terminates this process from its owner.
+    """
+    def emit(request, event, **data):
+        print(json.dumps({"id": request, "event": event, **data}, ensure_ascii=False), flush=True)
+    emit(None, "ready")
+    binding = None
+    binding_id = None
+    bound_at = 0
+    for line in sys.stdin:
+        request = None
+        try:
+            command = json.loads(line)
+            request = command["id"]
+            op = command["op"]
+            start = time.monotonic()
+            if op == "bind":
+                binding, binding_id = None, None
+                if not check_accessibility(prompt=False):
+                    raise TargetError("permission_denied", "请在系统设置授予 haochen 辅助功能权限后重试。")
+                binding = BoundTarget(command["target"])
+                binding_id, bound_at = request, time.monotonic()
+                emit(request, "bound", elapsed_ms=round((bound_at - start) * 1000))
+            elif op == "read":
+                if binding is None or binding_id != request or time.monotonic() - bound_at > 125:
+                    raise TargetError("binding_expired", "阅读确认已失效；未读取其他窗口，请重新确认。")
+                content, shot, visual = read_bound_snapshot(binding.target, binding)
+                emit(request, "snapshot", elapsed_ms=round((time.monotonic() - start) * 1000))
+                payload = serialize_snapshot(content, shot, visual, binding.target["pid"])
+                emit(request, "result", data=payload, elapsed_ms=round((time.monotonic() - start) * 1000))
+                binding, binding_id = None, None
+            elif op == "cancel":
+                if binding_id == request:
+                    binding, binding_id = None, None
+                emit(request, "cancelled")
+            else:
+                raise ValueError("unknown reader command")
+        except (AXError, ValueError, KeyError, TypeError, OSError) as error:
+            binding, binding_id = None, None
+            emit(request, "error", code=getattr(error, "code", "capture_failed"), message=str(error))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="haochen-reader")
     ap.add_argument("--json", action="store_true", help="输出 JSON（必传，保持契约一致）")
     ap.add_argument("--check", action="store_true", help="仅检测辅助功能权限（退出码 0=已授权, 2=未授权）")
     ap.add_argument("--pid", type=int, default=None, help="锁定读取指定进程窗口")
+    ap.add_argument("--target-json", help="本轮固定窗口身份，仅由应用壳提供")
+    ap.add_argument("--bind", action="store_true", help="先绑定对象，等待 stdin 的 read 授权再采集")
+    ap.add_argument("--serve", action="store_true", help="复用进程；仅明确 read 命令后读取正文")
     ap.add_argument("--no-scroll", action="store_true", help="只读当前一屏")
     ap.add_argument("--max-scrolls", type=int, default=20, help="最多滚动屏数（默认 20）")
     args = ap.parse_args()
+    if args.serve:
+        return serve()
 
     if args.check:
         granted = check_accessibility(prompt=False)
@@ -631,7 +892,20 @@ def main() -> int:
         print(f"\r滚动第 {rounds} 屏，累计 {n} 个内容块...", end="", flush=True, file=sys.stderr)
 
     try:
-        if args.pid is not None:
+        bound_shot = None
+        needs_visual = False
+        if args.target_json:
+            target = json.loads(args.target_json)
+            pid = target["pid"]
+            binding = BoundTarget(target)
+            if args.bind:
+                print(json.dumps({"event": "bound"}), flush=True)
+                # A dead parent, refusal or abandoned dialog must never leave a
+                # worker reading or holding objects indefinitely.
+                if not select.select([sys.stdin], [], [], 125)[0] or sys.stdin.readline().strip() != "read":
+                    return 0
+            content, bound_shot, needs_visual = read_bound_snapshot(target, binding)
+        elif args.pid is not None:
             pid, app_name = args.pid, app_name_for_pid(args.pid)
             content = (read_window(pid, app_name) if args.no_scroll
                        else read_full(max_scrolls=args.max_scrolls,
@@ -643,44 +917,12 @@ def main() -> int:
                                       on_progress=progress, pid=pid, app_name=app_name))
         if not args.no_scroll:
             print(file=sys.stderr)
-    except AXError as e:
+    except (AXError, ValueError, KeyError, TypeError, OSError) as e:
         print(f"读取失败: {e}", file=sys.stderr)
         return 1
 
-    n_text = sum(1 for b in content.blocks if b.kind == "text")
-    n_img = sum(1 for b in content.blocks if b.kind == "image")
-    n_img_url = sum(1 for b in content.blocks if b.kind == "image" and b.url)
-    print(f"读到 {n_text} 段文本、{n_img} 张图片（其中 {n_img_url} 张带 URL）"
-          f"，来自 [{content.app_name}] {content.window_title}", file=sys.stderr)
-
-    data_urls = prepare_images(content)
-    blocks = []
-    for i, b in enumerate(content.blocks):
-        if b.kind == "text":
-            blocks.append({"kind": "text", "text": b.text})
-        else:
-            blk = {"kind": "image", "url": b.url, "alt": b.alt,
-                   "area": b.area, "w": b.w, "h": b.h}
-            if data_urls.get(i):
-                blk["data_url"] = data_urls[i]
-            blocks.append(blk)
-    # 口图策略（P7 优化）：优先喂「图片原图 URL 下载」最准；
-    # 截图仅在**无 URL 原图可下载**（动态图/canvas/图片型UI）时才截，作兜底。
-    n_originals = sum(1 for b in data_urls.values() if b)
-    if n_originals > 0:
-        screenshot = None
-        need_sr = False
-    else:
-        screenshot = capture_window_image(pid)
-        need_sr = screenshot is None and not screen_capture_granted()
-    print(json.dumps({
-        "app": content.app_name,
-        "window_title": content.window_title,
-        "stats": {"text_blocks": n_text, "images": n_img, "images_with_url": n_img_url},
-        "screenshot": screenshot,
-        "need_screen_recording": need_sr,
-        "blocks": blocks,
-    }, ensure_ascii=False))
+    print(json.dumps(serialize_snapshot(content, bound_shot, needs_visual, pid, bound=bool(args.target_json)),
+                     ensure_ascii=False))
     return 0
 
 

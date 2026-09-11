@@ -3,7 +3,7 @@
 冻结形态 Resources 布局（packaging/build.sh 保证）：
     Contents/Resources/
     ├── engine/haochen-engine      # Bun 单文件引擎
-    ├── haochen-reader             # 读屏执行体（PyInstaller onefile）
+    ├── haochen-reader             # 指向 reader/haochen-reader（onedir 常驻服务）
     ├── ext/index.ts               # 引擎扩展（read_screen + 分层结果协议）
     ├── config/                    # 配置模板（models/settings/auth.json.template）
     └── assets/pet/*.png           # 桌宠姿态图
@@ -54,7 +54,8 @@ def pet_assets() -> Path:
 
 def reader_binary() -> Path | None:
     """内嵌读屏执行体；不存在返回 None（扩展回退 ~/.local/bin/haochen 开发路径）。"""
-    p = resources_dir() / "haochen-reader"
+    p = (resources_dir() / "haochen-reader" if is_frozen()
+         else PROJECT_ROOT / "app" / "reader" / "reader-run.sh")
     return p if p.exists() else None
 
 

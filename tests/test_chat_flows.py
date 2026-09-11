@@ -356,7 +356,8 @@ def test_detail_mode_expand_and_collapse(qtbot, tmp_path: Path) -> None:
     assert window._detail_mode is False
     assert not window.isVisible()
     assert not window.sidebar.isHidden()
-    assert window.detail_header.isHidden()
+    assert window.detail_close_button.isHidden()
+    assert window.detail_title.text() == "haochen"
     assert window.width() >= 820
     assert window.height() >= 560
 
@@ -366,7 +367,7 @@ def test_detail_mode_expand_and_collapse(qtbot, tmp_path: Path) -> None:
     assert window.height() >= 560
 
 
-def test_detail_mode_opens_at_conversation_top_after_history_layout(
+def test_detail_mode_opens_at_latest_turn_after_history_layout(
     qtbot, tmp_path: Path,
 ) -> None:
     from PyQt6.QtCore import QRect
@@ -391,12 +392,36 @@ def test_detail_mode_opens_at_conversation_top_after_history_layout(
 
     window.open_from_bubble(QRect(100, 100, 320, 240))
     window._render_history({"success": True, "data": {"messages": messages}})
-    qtbot.wait(350)
-
     bar = window.scroll.verticalScrollBar()
+    # Qt delivers layout/range updates asynchronously; hosted offscreen runners
+    # need not finish them within one animation's nominal duration.
+    qtbot.waitUntil(lambda: bar.maximum() > 0 and bar.value() > bar.minimum(), timeout=5000)
+    qtbot.waitUntil(lambda: not window._detail_position_pending, timeout=5000)
     assert bar.maximum() > 0
-    assert bar.value() == bar.minimum() == 0
+    assert bar.value() > bar.minimum()
     assert window._follow_stream is False
+
+
+def test_detail_settle_waits_for_overflow_range(qtbot, tmp_path: Path) -> None:
+    window, _ = make_window(qtbot, tmp_path)
+    window.open_from_bubble(anchor_text="Question 40")
+    messages = [{"role": "user", "content": [{"type": "text", "text": f"Question {i}"}]}
+                for i in range(100)]
+    window._render_history({"success": True, "data": {"messages": messages}})
+    bar = window.scroll.verticalScrollBar()
+    qtbot.waitUntil(lambda: bar.maximum() > 1000, timeout=5000)
+    maximum = bar.maximum()
+
+    # Reproduce the observed timer-before-rangeChanged ordering explicitly.
+    window._detail_position_pending = True
+    bar.setRange(0, 0)
+    window._finish_detail_position()
+    assert window._detail_position_pending
+    assert window._anchor_settle.isActive()
+
+    bar.setRange(0, maximum)
+    qtbot.waitUntil(lambda: not window._detail_position_pending, timeout=5000)
+    assert 0 < bar.value() < bar.maximum()
 
 
 def test_unclosed_duplicate_short_answer_renders_once(qtbot, tmp_path: Path) -> None:
@@ -429,7 +454,7 @@ def test_detail_header_uses_current_topic_and_send_action_is_legible(qtbot, tmp_
     window._sessions = [{"path": "/s/topic.jsonl", "title": "东京夜游建议"}]
     window._current_path = "/s/topic.jsonl"
 
-    window._update_detail_title()
+    window.open_from_bubble()
 
     assert window.detail_title.text() == "东京夜游建议"
     assert "发送" in window.btn_send.text()

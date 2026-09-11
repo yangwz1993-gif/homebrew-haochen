@@ -34,6 +34,68 @@ def test_keychain_write_uses_native_backend_without_process_arguments() -> None:
     assert calls == [("test-service", "deepseek", secret)]
 
 
+def test_explicit_save_can_authorize_write_and_cache_readback(tmp_path: Path) -> None:
+    """Replacing an ACL-bound old key must not require a silent read first."""
+    calls = []
+
+    class Backend:
+        def get_without_ui(self, _service, _provider):
+            raise keychain.KeychainInteractionRequired("old item requires permission")
+
+        def set(self, *_args):
+            raise AssertionError("ordinary save must stay non-interactive")
+
+        def set_with_authorization(self, service, provider, secret):
+            calls.append((service, provider, secret))
+
+        def delete(self, *_args):
+            raise AssertionError("a failed old-key read must not delete it")
+
+    credentials = keychain.KeychainStore("test-service", backend=Backend())
+    store = config_module.ConfigStore(tmp_path / "home", keychain=credentials)
+    store.ensure_initialized()
+    (store.agent_dir / "auth.json").write_text(
+        json.dumps({"deepseek": {"type": "api_key", "key": "$HAOCHEN_DEEPSEEK_API_KEY"}}),
+        encoding="utf-8",
+    )
+
+    store.set_key(
+        "deepseek", "replacement-test-credential", allow_keychain_authorization=True
+    )
+
+    assert calls == [("test-service", "deepseek", "replacement-test-credential")]
+    assert credentials.get_without_ui("deepseek") == "replacement-test-credential"
+    saved = (store.agent_dir / "auth.json").read_text(encoding="utf-8")
+    assert "$HAOCHEN_DEEPSEEK_API_KEY" in saved
+    assert "replacement-test-credential" not in saved
+
+
+def test_default_save_never_requests_authorization(tmp_path: Path) -> None:
+    calls = []
+    values = {}
+
+    class Backend:
+        def get_without_ui(self, _service, provider):
+            return values.get(provider)
+
+        def set(self, service, provider, secret):
+            calls.append(("silent", service, provider, secret))
+            values[provider] = secret
+
+        def set_with_authorization(self, *_args):
+            calls.append(("interactive",))
+
+        def delete(self, *_args):
+            pass
+
+    credentials = keychain.KeychainStore("test-service", backend=Backend())
+    store = config_module.ConfigStore(tmp_path / "home", keychain=credentials)
+    store.ensure_initialized()
+    store.set_key("deepseek", "test-only-credential")
+
+    assert calls == [("silent", "test-service", "deepseek", "test-only-credential")]
+
+
 def test_keychain_service_can_be_isolated_for_development(monkeypatch) -> None:
     monkeypatch.setenv("HAOCHEN_KEYCHAIN_SERVICE", "com.haochen.app.development.api-key")
 
@@ -144,7 +206,7 @@ def test_key_status_turns_blocked_acl_into_in_app_reentry_message(tmp_path: Path
 
     assert store.key_status("deepseek") == (
         False,
-        "应用安全身份已更新，请重新输入 API Key",
+        "已有 Key 需要授权本版本读取",
     )
 
 

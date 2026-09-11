@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 
@@ -29,8 +31,44 @@ def make_pet(qtbot, tmp_path: Path):
     return pet, client
 
 
+def test_configuration_restart_never_summons_orphan_bubble(qtbot, tmp_path, monkeypatch):
+    pet, _client = make_pet(qtbot, tmp_path)
+    pet.supervisor = SimpleNamespace(restart_reason="configuration")
+    monkeypatch.setattr(pet, "_drain_queue", lambda: None)
+    monkeypatch.setattr(pet.bubble, "present_status", lambda *_a, **_k: pytest.fail("orphan recovery bubble"))
+    pet._on_sup_restarting(1)
+    pet._on_sup_restarted()
+    pet._on_sup_restart_failed()
+    assert not pet.bubble.summoned
+
+
 def user_message(text: str) -> dict:
     return {"role": "user", "content": [{"type": "text", "text": text}]}
+
+
+def test_reading_phases_route_to_bubble_and_ignore_old_turn(qtbot, tmp_path):
+    pet, client = make_pet(qtbot, tmp_path)
+    pet.bubble.summon()
+    pet.send("读一下当前页面")
+    client.event.emit({"type": "tool_execution_start", "toolName": "read_screen", "toolCallId": "current"})
+    for phase in ("bound", "capturing", "snapshot"):
+        client.event.emit({"type": "tool_execution_update", "toolName": "read_screen", "toolCallId": "current",
+                           "partialResult": {"details": {"readPhase": phase}}})
+        assert pet._perception_hint.phase == phase
+        assert "已读取" not in pet._perception_hint.label.text()
+    pet._show_read_phase("complete", "old")
+    assert pet._perception_hint.phase == "snapshot"
+    client.event.emit({"type": "tool_execution_end", "toolName": "read_screen", "toolCallId": "current",
+                       "result": {"details": {"readSuccess": True}}})
+    assert pet._perception_hint.phase == "complete"
+    for phase in ("capturing", "snapshot", "complete", "failed"):
+        pet._show_read_phase(phase, "current")
+        qtbot.wait(220)
+        assert pet.bubble.width() >= 420
+        assert pet._perception_hint.label.height() <= 42
+        shot = tmp_path / f"reading-{phase}.png"
+        assert pet.bubble.grab().save(str(shot))
+    print("visual QA", tmp_path)
 
 
 def assistant_message(text: str) -> dict:
@@ -179,7 +217,7 @@ def test_late_detail_collapse_does_not_hide_reopened_bubble(qtbot, tmp_path: Pat
     assert pet.bubble._input_visible()
 
 
-def test_detail_hides_topmost_pet_until_collapsed(qtbot, tmp_path: Path) -> None:
+def test_detail_keeps_pet_available_until_collapsed(qtbot, tmp_path: Path) -> None:
     pet, _client = make_pet(qtbot, tmp_path)
     opened: list = []
     pet.detail_opener = lambda rect: opened.append(rect)
@@ -190,7 +228,7 @@ def test_detail_hides_topmost_pet_until_collapsed(qtbot, tmp_path: Path) -> None
     pet._on_expand_detail()
 
     assert opened
-    assert not pet.pet.isVisible()
+    assert pet.pet.isVisible()
     pet.restore_bubble()
     assert pet.pet.isVisible()
 
@@ -548,7 +586,9 @@ def test_engine_events_drive_visible_work_phases(qtbot, tmp_path: Path) -> None:
     client.response.emit({"id": request_id, "success": True, "type": "response"})
     assert pet.state is PetState.ACKNOWLEDGING
     qtbot.waitUntil(lambda: pet.state is PetState.COMPOSING, timeout=1000)
-    assert pet._status_block.text == "正在组织回答"
+    assert pet._status_block.text == "我想想"
+    assert pet._status_block._lb.isHidden()
+    assert not pet._status_block.dots.isHidden()
 
     client.event.emit({"type": "tool_execution_start", "toolName": "bash"})
     assert pet.state is PetState.ACTING
@@ -583,11 +623,12 @@ def test_status_block_has_comic_pulse_without_exposing_reasoning(qtbot) -> None:
     block = StatusBlock("正在组织回答")
     qtbot.addWidget(block)
     block._pulse.setInterval(10)
-    before = block._lb.text()
-    qtbot.waitUntil(lambda: block._lb.text() != before, timeout=250)
+    before = block.dots.frame
+    qtbot.waitUntil(lambda: block.dots.frame != before, timeout=250)
+    assert block._lb.isHidden()
 
     assert block.text == "正在组织回答"
-    assert " ·" in block._lb.text()
+    assert not block.dots.isHidden()
     block.set_text("想好了 ✓", animated=False)
     assert not block._pulse.isActive()
 

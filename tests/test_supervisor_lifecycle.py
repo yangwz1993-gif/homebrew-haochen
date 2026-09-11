@@ -61,6 +61,7 @@ def test_start_emits_state_and_stores_session(qtbot, tmp_path: Path) -> None:
 
 def test_busy_except_arbitration() -> None:
     supervisor = EngineSupervisor.__new__(EngineSupervisor)
+    supervisor.client = SimpleNamespace(configuration_blocked=False)
     a = SimpleNamespace(busy=False)
     b = SimpleNamespace(busy=True)
     supervisor._ctrls = [a, b]

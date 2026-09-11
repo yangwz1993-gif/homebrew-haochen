@@ -58,6 +58,7 @@ class EngineSupervisor(QObject):
         self._ctrls: list = []
         self._attempt = 0
         self._restarting = False
+        self.restart_reason = "recovery"
         self._stopping = False
         self._started_once = False
         self._probe_timer: QTimer | None = None
@@ -82,7 +83,7 @@ class EngineSupervisor(QObject):
 
     def busy_except(self, ctrl) -> bool:
         """除 ctrl 自己外，是否有别的入口在一轮对话中。"""
-        return any(c.busy for c in self._ctrls if c is not ctrl)
+        return self.client.configuration_blocked or any(c.busy for c in self._ctrls if c is not ctrl)
 
     # ── 生命周期 ──────────────────────────────────────────────
 
@@ -114,10 +115,11 @@ class EngineSupervisor(QObject):
         self._pending.clear()
         self.client.stop()
 
-    def restart_now(self) -> None:
+    def restart_now(self, *, reason: str = "recovery") -> None:
         """手动重试（restart_failed 后的入口；或配置变更要求重启）。"""
         if self._restarting:
             return
+        self.restart_reason = reason
         self._attempt = 0
         self.client.stop()
         self._schedule_restart()
@@ -135,6 +137,7 @@ class EngineSupervisor(QObject):
             self._schedule_restart()
             return
         self.crashed.emit(code)
+        self.restart_reason = "recovery"
         self._attempt = 0
         self._schedule_restart()
 
@@ -270,6 +273,7 @@ class EngineSupervisor(QObject):
         log.error("engine heartbeat timed out")
         self.client.stop()
         self.crashed.emit(-1)
+        self.restart_reason = "recovery"
         self._attempt = 0
         self._schedule_restart()
 
