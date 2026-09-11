@@ -16,7 +16,19 @@ rc.7 固定原生对象、配置重启提示和当前读屏失败修复详见 [�
 
 ## 正式发布前的后续门禁
 
-当前 Cask 继续指向已发布版本，不把尚未验收的候选当作线上交付。
+发布源提交为 `438d538cd60af453b9c764c69bafa9b0de59062e`（PR #10，云端 CI 通过后合并）。最终包从该干净 main 构建；Homebrew 更新仅在 Release 资产可下载后合入 main。
+
+- [x] 本机 `make check`：472 项通过，覆盖率 83%。
+- [x] `make regressions`：6/6 通过。
+- [x] PR CI：macOS quality gate 通过（run `34609227251`）；未构建真实引擎的 CI 环境跳过 4 项，本机已实际执行。
+- [x] 干净 main 重建引擎与 legacy DMG；稳定身份 `haochen Local Signing`。
+- [x] `legacy-artifacts`：App 签名、DMG 完整性、版本、Cask SHA-256 一致。
+- [ ] 发布 GitHub Release 资产并验证公开下载。
+- [ ] 合入 Homebrew 更新并执行 `brew fetch --cask` 验证；不替换本机 App。
+
+最终资产：`haochen-0.3.4.dmg`，SHA-256：`07e201c2e262a930cb74032d04df25d20280b38e2f5cf2f91c8c95240fc12011`。
+
+发布检查额外修复的详情定位竞态：原事件顺序为定位计时器结束时滚动范围仍为 0，随后 `rangeChanged` 才给出完整历史范围。现在溢出内容未完成布局前保持定位待完成状态，保留后续定位；增加确定性回归。外观与交互功能未扩展。
 
 1. 所有者验收通过后，将候选稳定为正式版本，完成 PR / CI。
 2. 执行 make check、相关分层回归，构建最终 legacy 包。
