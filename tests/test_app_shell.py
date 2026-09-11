@@ -95,15 +95,11 @@ def test_restart_required_auto_mode_restarts(qtbot, tmp_path: Path) -> None:
     shell.stop()
 
 
-def test_restart_required_prompts_when_interactive(qtbot, tmp_path: Path, monkeypatch) -> None:
+def test_restart_required_is_automatic_when_interactive(qtbot, tmp_path: Path, monkeypatch) -> None:
     shell = make_shell(tmp_path)
     qtbot.addWidget(shell.chat)
     start_engine(shell)
     monkeypatch.delenv("HAOCHEN_AUTO_RESTART", raising=False)
-    monkeypatch.setattr(
-        "haochen_app.app_shell.QMessageBox.exec",
-        lambda self: int(app_shell_module.QMessageBox.StandardButton.Yes),  # 点「是」
-    )
     restarted: list[bool] = []
     shell.supervisor.restart_now = lambda: restarted.append(True)
     shell._on_restart_required("换 provider")
@@ -135,13 +131,18 @@ def test_menu_bar_installed_once(qtbot, tmp_path: Path) -> None:
     assert menu_bar_module.install_menu_bar(QApplication.instance(), shell) is bar
 
 
-def test_onboarding_trial_sends_via_pet(qtbot, tmp_path: Path) -> None:
+def test_onboarding_trial_waits_for_ready_before_sending(qtbot, tmp_path: Path) -> None:
     shell = make_shell(tmp_path)
     qtbot.addWidget(shell.chat)
     sent: list[str] = []
     shell.pet.send = lambda text: sent.append(text)
+    callbacks = []
+    shell.activation.ensure_ready = lambda p, m, done: callbacks.append(done)
     shell._send_onboarding_trial("你好")
+    assert sent == []
+    callbacks[0](True, "ready")
     assert sent == ["你好"]
+    shell.stop()
 
 
 def test_custom_onboarding_trial_restarts_then_applies_model(
@@ -168,6 +169,12 @@ def test_custom_onboarding_trial_restarts_then_applies_model(
     assert sent == []
     shell.supervisor.restarted.emit()
     assert selected == [(provider, "qa-local")]
+    assert sent == []
+    shell.supervisor.client.get_state = lambda: "state-ready"
+    shell.supervisor.client.response.emit({"id": "m-1", "success": True})
+    assert sent == []
+    shell.supervisor.client.response.emit({"id": "state-ready", "success": True,
+                                          "data": {"model": {"provider": provider, "id": "qa-local"}}})
     assert sent == ["你好"]
     shell.stop()
 
@@ -193,17 +200,14 @@ def test_settings_restart_applies_default_after_session_restore(
     shell.stop()
 
 
-def test_restart_failure_marks_current_connection_invalid_in_settings(qtbot, tmp_path: Path) -> None:
+def test_restart_failure_does_not_blame_key_and_keeps_chat_blocked(qtbot, tmp_path: Path) -> None:
     shell = make_shell(tmp_path)
     qtbot.addWidget(shell.chat)
     qtbot.addWidget(shell.settings)
 
+    shell.supervisor.restart_now = lambda: None
+    shell._on_restart_required("test")
     shell.supervisor.restart_failed.emit()
-
-    labels = shell.settings.findChildren(app_shell_module.QWidget)
-    badge_texts = [
-        widget.text() for widget in labels
-        if hasattr(widget, "text") and widget.objectName() == "badgeErr"
-    ]
-    assert "当前凭据验证失败" in badge_texts
-    assert "当前模型连接失败" in shell.settings._status.text()
+    assert "模型尚未就绪" in shell.settings._status.text()
+    assert shell.supervisor.client.configuration_blocked
+    shell.stop()

@@ -114,9 +114,11 @@ class KeyPage(QWizardPage):
         custom_verifier: Callable[[str, str, str], ValidationResult] = validate_custom_model,
         requires_key_reentry: bool = False,
         parent=None,
+        activate=None,
     ):
         super().__init__(parent)
         self.store = store
+        self.activate = activate
         self.verifier = verifier
         self.custom_verifier = custom_verifier
         self.provider = "deepseek"
@@ -343,17 +345,42 @@ class KeyPage(QWizardPage):
                     allow_keychain_authorization=True,
                 )
             if not existing:
-                return self.store.set_key(
+                self.store.set_key(
                     self.provider, candidate, allow_keychain_authorization=True
                 )
+            default_provider, model = self.store.default_model()
+            if default_provider != self.provider:
+                model = next(p.models[0]["id"] for p in self.store.providers() if p.id == self.provider)
+                self.store.set_default_model(self.provider, model)
             return None  # Reading an existing key never rewrites it or its ACL.
 
         def saved(_result, error):
             self._pending_custom = None
-            self._set_working(False)
             if error:
+                self._set_working(False)
                 self.verify_button.setText(CONNECT)
                 self.status.setText("连接成功，但保存未完成。再次点“连接模型”可重试，原 Key 未改变。")
+                return
+            # Persistence is only the first half of connecting. Keep this page
+            # incomplete until the actual runtime has acknowledged the model.
+            self.status.setText("配置已保存，正在让模型就绪；若有对话进行中，会等待它结束。")
+            provider, model = self.store.default_model()
+            if self.activate:
+                self.activate(provider, model, activated)
+            else:
+                activated(True, "")
+
+        def activated(ok, message):
+            from PyQt6.sip import isdeleted
+            if isdeleted(self):
+                return
+            self._set_working(False)
+            if not ok:
+                self._verified = self._connected = False
+                self.verify_button.setText(CONNECT)
+                self.verify_button.setEnabled(True)
+                self.status.setText(message)
+                self.completeChanged.emit()
                 return
             if pending:
                 self._configured_custom_signature = tuple(
@@ -464,6 +491,8 @@ class TrialPage(QWizardPage):
         layout.addWidget(QLabel("完成后会把下面这句话发送给 haochen："))
         self.prompt = QLineEdit("你好，请用一句话介绍你能帮我做什么")
         layout.addWidget(self.prompt)
+        self.status = QLabel("", wordWrap=True)
+        layout.addWidget(self.status)
 
 
 class OnboardingWizard(QWizard):
@@ -476,9 +505,13 @@ class OnboardingWizard(QWizard):
         verifier: Callable[[str, str], ValidationResult] = validate_api_key,
         requires_key_reentry: bool = False,
         parent=None,
+        activate=None,
+        prepare=None,
     ):
         super().__init__(parent)
         self.store = store
+        self.prepare = prepare
+        self._accept_pending = False
         self.state = OnboardingState(store.home)
         # The wizard uses our own styled controls in both a .app and test runners.
         # Native macOS wizard decorations require a bundle even in offscreen Qt.
@@ -511,6 +544,7 @@ class OnboardingWizard(QWizard):
             store,
             verifier,
             requires_key_reentry=requires_key_reentry,
+            activate=activate,
         )
         if self.state.page > PROFILE_PAGE and profile_needs_confirmation(store.home):
             self.state.page = PROFILE_PAGE
@@ -549,6 +583,40 @@ class OnboardingWizard(QWizard):
         return super().validateCurrentPage()
 
     def accept(self) -> None:
+        if self._accept_pending:
+            return
+        if self.prepare:
+            self._accept_pending = True
+            self.button(QWizard.WizardButton.FinishButton).setEnabled(False)
+            self.button(QWizard.WizardButton.BackButton).setEnabled(False)
+            self.trial_page.prompt.setEnabled(False)
+            self.trial_page.status.setText("正在确认模型就绪，请稍等…")
+            provider, model = self.store.default_model()
+            self.prepare(provider, model, self._prepared)
+            return
+        self._complete()
+
+    def _prepared(self, ok, message):
+        from PyQt6.sip import isdeleted
+        if isdeleted(self) or not self._accept_pending:
+            return
+        self._accept_pending = False
+        self.button(QWizard.WizardButton.FinishButton).setEnabled(True)
+        self.button(QWizard.WizardButton.BackButton).setEnabled(True)
+        self.trial_page.prompt.setEnabled(True)
+        if not ok:
+            self.trial_page.status.setText(message)
+            return
+        self._complete()
+
+    def reject(self) -> None:
+        self._accept_pending = False
+        self.button(QWizard.WizardButton.FinishButton).setEnabled(True)
+        self.button(QWizard.WizardButton.BackButton).setEnabled(True)
+        self.trial_page.prompt.setEnabled(True)
+        super().reject()
+
+    def _complete(self) -> None:
         self.state.page = TRIAL_PAGE
         self.state.completed = True
         self.state.save()

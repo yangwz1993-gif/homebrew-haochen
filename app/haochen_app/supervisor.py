@@ -82,7 +82,7 @@ class EngineSupervisor(QObject):
 
     def busy_except(self, ctrl) -> bool:
         """除 ctrl 自己外，是否有别的入口在一轮对话中。"""
-        return any(c.busy for c in self._ctrls if c is not ctrl)
+        return self.client.configuration_blocked or any(c.busy for c in self._ctrls if c is not ctrl)
 
     # ── 生命周期 ──────────────────────────────────────────────
 

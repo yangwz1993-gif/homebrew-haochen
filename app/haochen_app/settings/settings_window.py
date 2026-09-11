@@ -86,9 +86,11 @@ class SettingsWindow(QWidget):
         home: Path | None = None,
         parent: QWidget | None = None,
         store: ConfigStore | None = None,
+        activate=None,
     ):
         super().__init__(parent)
         self.store = store or ConfigStore(home)
+        self.activate = activate
         self._pending_key_validations: dict[str, tuple[str, QLineEdit, QLabel, QPushButton]] = {}
         self._pending_custom_model: dict | None = None
         self._editing_custom: tuple[str, str] | None = None
@@ -155,6 +157,7 @@ class SettingsWindow(QWidget):
         while self._body.count():
             item = self._body.takeAt(0)
             if w := item.widget():
+                w.hide()
                 w.deleteLater()
         try:
             providers = self.store.providers()
@@ -276,6 +279,9 @@ class SettingsWindow(QWidget):
             return
         effect = self.store.set_default_model(provider, model)
         self._announce("默认供应商", effect)
+        if self.activate:
+            self._set_working(True)
+            self._set_status("正在应用模型配置，完成后才能开始对话…", ok=False)
         self.restartRequired.emit(f"默认供应商已切换为 {provider}")
 
     def _on_model_changed(self) -> None:
@@ -285,6 +291,9 @@ class SettingsWindow(QWidget):
             return
         effect = self.store.set_default_model(provider, model)
         self._announce("默认模型", effect)
+        if self.activate:
+            self._set_working(True)
+            self._set_status("正在应用模型配置，完成后才能开始对话…", ok=False)
         if effect == EFFECT_IMMEDIATE:
             self.modelChanged.emit(provider, model)
         else:
@@ -521,21 +530,25 @@ class SettingsWindow(QWidget):
 
         def saved(result, error):
             self._pending_custom_model = None
-            self._finish_working()
-            self._custom_save_button.setEnabled(True)
-            self._custom_form_toggle.setEnabled(True)
-            self._custom_cancel_button.setEnabled(True)
             if error:
+                self._finish_working()
+                self._custom_save_button.setEnabled(True)
+                self._custom_form_toggle.setEnabled(True)
+                self._custom_cancel_button.setEnabled(True)
                 self._custom_save_button.setText(CONNECT)
                 self._set_status("保存未完成，原配置已保留。再次点“连接模型”可重试。", ok=False)
                 return
             provider, _effect = result
+            self._await_model(provider, lambda: connected(provider), self._custom_save_button)
+
+        def connected(provider):
             self._editing_custom = None
             self._runtime_key_validation[provider] = (True, message)
             self._connected_custom.add((provider, candidate["model_id"]))
             self._set_status(f"已安全保存并切换到 {candidate['model_id']}", ok=True)
             self._build()
-            self.restartRequired.emit("自定义模型配置已更新")
+            if not self.activate:
+                self.restartRequired.emit("自定义模型配置已更新")
 
         run_in_background(self, save, saved)
 
@@ -672,20 +685,52 @@ class SettingsWindow(QWidget):
             return validate_api_key(provider, key)
 
         def done(result, error):
-            self._finish_working()
             if error or not result.ok:
+                self._finish_working()
                 button.setText(CONNECT)
                 self._runtime_key_validation.pop(provider, None)
                 edit, badge, _ = self._key_widgets[provider]
                 self._update_key_badge(badge, False, "连接未完成 · 原 Key 保留")
                 self._set_status(connection_error(error) if error else result.message, ok=False)
                 return
+            self._await_model(provider, lambda: connected(result), button)
+
+        def connected(result):
             self._runtime_key_validation[provider] = (True, result.message)
             self._refresh_key_action(provider)
             self._set_status("已连接，继续使用已保存的 Key。", ok=True)
-            self.restartRequired.emit(f"{provider} 已连接")
+            if not self.activate:
+                self.restartRequired.emit(f"{provider} 已连接")
 
         run_in_background(self, connect, done)
+
+    def _await_model(self, provider, connected, button):
+        """Shared completion gate for new, saved, and custom credentials."""
+        self._set_status("配置已保存，正在让模型就绪；若有对话进行中，会等待它结束。", ok=False)
+        def ready(ok, message):
+            from PyQt6.sip import isdeleted
+            if isdeleted(self):
+                return
+            self._finish_working()
+            button.setEnabled(True)
+            if not ok:
+                button.setText(CONNECT)
+                self._runtime_key_validation.pop(provider, None)
+                if provider in self._key_widgets:
+                    self._refresh_key_action(provider)
+                self._custom_form_toggle.setEnabled(True)
+                self._custom_cancel_button.setEnabled(True)
+                self._set_status(message, ok=False)
+                return
+            connected()
+        if self.activate:
+            selected_provider, model = self.store.default_model()
+            if selected_provider != provider:
+                model = next(p.models[0]["id"] for p in self.store.providers() if p.id == provider)
+                self.store.set_default_model(provider, model)
+            self.activate(provider, model, ready)
+        else:
+            ready(True, "")
 
     def set_runtime_key_validation(self, provider: str, valid: bool, message: str) -> None:
         """记录本次运行的连接事实；Keychain 中“有值”不再冒充“验证成功”。"""
@@ -798,12 +843,15 @@ class SettingsWindow(QWidget):
 
         def saved(effect, error):
             self._pending_key_validations.pop(provider, None)
-            self._finish_working()
-            save.setEnabled(True)
             if error:
+                self._finish_working()
+                save.setEnabled(True)
                 save.setText(CONNECT)
                 self._set_status("连接成功，但保存未完成。再次点“连接模型”可重试，原 Key 未改变。", ok=False)
                 return
+            self._await_model(provider, lambda: connected(effect), save)
+
+        def connected(effect):
             self._runtime_key_validation[provider] = (True, message)
             if edit.text().strip() == candidate:
                 edit.clear()
@@ -812,9 +860,10 @@ class SettingsWindow(QWidget):
             self._update_key_badge(badge, True, "已连接 · 安全存储")
             if provider in self._key_delete_buttons:
                 self._key_delete_buttons[provider].setEnabled(True)
-            self._announce(f"{provider} 的 API Key", effect)
+            self._set_status("模型已就绪，可以开始对话。", ok=True)
             self._refresh_key_action(provider)
-            self.restartRequired.emit(f"{provider} 的 API Key 已更新")
+            if not self.activate:
+                self.restartRequired.emit(f"{provider} 的 API Key 已更新")
 
         run_in_background(
             self,

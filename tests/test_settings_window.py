@@ -139,12 +139,8 @@ def test_empty_save_preserves_keychain_entry(qtbot, tmp_path: Path, monkeypatch)
     monkeypatch.setattr(settings_module, "validate_api_key",
                         lambda *_: validation.ValidationResult(True, "ok"))
 
-    edits = window.findChildren(settings_module.QLineEdit)
-    provider_edit = edits[0]
+    provider_edit, _badge, save_button = window._key_widgets["deepseek"]
     provider_edit.setText("")  # 保存后的空输入不能解释为删除
-    save_button = next(
-        b for b in window.findChildren(settings_module.QPushButton) if b.text() == "连接模型"
-    )
     save_button.click()
 
     qtbot.waitUntil(lambda: not window._working)
