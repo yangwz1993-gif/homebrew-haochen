@@ -54,7 +54,8 @@ def pet_assets() -> Path:
 
 def reader_binary() -> Path | None:
     """内嵌读屏执行体；不存在返回 None（扩展回退 ~/.local/bin/haochen 开发路径）。"""
-    p = resources_dir() / "haochen-reader"
+    p = (resources_dir() / "haochen-reader" if is_frozen()
+         else PROJECT_ROOT / "app" / "reader" / "reader-run.sh")
     return p if p.exists() else None
 
 

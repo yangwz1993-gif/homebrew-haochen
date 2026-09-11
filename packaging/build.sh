@@ -73,6 +73,7 @@ test -f "$ENGINE_MANIFEST"
 echo "==> [2/6] 冻结读屏执行体 haochen-reader（onefile）"
 "$PYI" --noconfirm --clean --onefile \
     --name haochen-reader \
+    --paths "$APP_DIR" \
     --distpath "$DIST/reader" --workpath "$DIR/build/reader" --specpath "$DIR/build" \
     "$APP_DIR/reader/haochen_reader.py" >/dev/null
 test -x "$DIST/reader/haochen-reader"

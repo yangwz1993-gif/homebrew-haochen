@@ -61,6 +61,7 @@ from Quartz import (
     kCGWindowListOptionIncludingWindow,
     kCGWindowListOptionOnScreenOnly,
 )
+from reader.screen_target import fingerprint, matching_ax_window
 
 TEXT_VALUE_ROLES = {"AXStaticText", "AXTextArea", "AXTextField", "AXHeading"}
 TITLE_ROLES = {"AXButton", "AXLink", "AXCheckBox", "AXRadioButton", "AXTab", "AXCell"}
@@ -81,6 +82,7 @@ class Block:
     y: float = 0.0
     w: float = 0.0
     h: float = 0.0
+    role: str = ""
 
     @property
     def area(self) -> float:
@@ -158,22 +160,23 @@ def _walk(el, depth: int, out: list[Block]) -> None:
         text = _norm(_copy(el, "AXValue")) or _norm(_copy(el, "AXTitle"))
         if text:
             x, y = _geom(el)
-            out.append(Block(kind="text", text=text, x=x, y=y))
+            out.append(Block(kind="text", text=text, x=x, y=y, role=str(role)))
         return  # 文本节点不必再深入
     if role in TITLE_ROLES:
         text = _norm(_copy(el, "AXTitle")) or _norm(_copy(el, "AXDescription"))
         if text:
             x, y = _geom(el)
-            out.append(Block(kind="text", text=text, x=x, y=y))
+            link = str(_copy(el, "AXURL") or "") if role == "AXLink" else None
+            out.append(Block(kind="text", text=text, x=x, y=y, role=str(role), url=link))
         # 链接/按钮里可能包图片，继续走子节点
     elif role in IMAGE_ROLES:
         url = _copy(el, "AXURL")
         url = str(url) if url else None
         alt = _norm(_copy(el, "AXDescription")) or _norm(_copy(el, "AXTitle"))
-        if url or alt:
-            x, y = _geom(el)
-            w, h = _size(el)
-            out.append(Block(kind="image", url=url, alt=alt, x=x, y=y, w=w, h=h))
+        # Canvas/unnamed images still need visual fallback.
+        x, y = _geom(el)
+        w, h = _size(el)
+        out.append(Block(kind="image", url=url, alt=alt, x=x, y=y, w=w, h=h))
 
     children = _copy(el, "AXChildren")
     if not children:
@@ -477,6 +480,19 @@ def _secure_urlopen(url: str):
 
 
 def _download_as_data_url(url: str) -> str | None:
+    # Embedded original image bytes need no network and must not be re-encoded.
+    if url.startswith("data:"):
+        try:
+            header, encoded = url.split(",", 1)
+            if not header.endswith(";base64") or len(encoded) > (MAX_REMOTE_IMAGE_BYTES * 4 // 3 + 4):
+                return None
+            mime = header[5:-7]
+            if mime not in _ALLOWED_REMOTE_IMAGE_MIMES:
+                return None
+            raw = base64.b64decode(encoded, validate=True)
+            return url if len(raw) <= MAX_REMOTE_IMAGE_BYTES and _validate_image(raw) == mime else None
+        except (ValueError, TypeError):
+            return None
     try:
         with _secure_urlopen(url) as resp:
             content_type = resp.headers.get_content_type().lower()
@@ -515,6 +531,44 @@ def prepare_images(content: WindowContent, max_images: int = MAX_IMAGES) -> dict
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = pool.map(lambda i: _download_as_data_url(content.blocks[i].url), img_idx)
     return dict(zip(img_idx, results))
+
+
+def read_bound_snapshot(target):
+    """Capture text and optional pixels together, before slow original-image downloads."""
+    pid, wid = target.get("pid"), target.get("window_id")
+    if not isinstance(pid, int) or not isinstance(wid, int) or not target.get("fingerprint"):
+        raise AXError("尚未确认窗口身份。首次系统授权后，请回到目标页面重新提问。")
+    win = matching_ax_window(pid, wid)
+    if win is None or fingerprint(win) != target["fingerprint"]:
+        raise AXError("提问时的窗口已关闭、页面已变化或无法唯一确认。请回到目标页面重新提问；未读取其他窗口。")
+    blocks = []
+    _walk(win, 0, blocks)
+    if len(blocks) < 20 and not _has_webarea(win):
+        # Give an on-demand accessibility tree a bounded chance to populate.
+        # All iterations stay on the already-bound AX window, never the foreground.
+        for _ in range(4):
+            if fingerprint(win) != target["fingerprint"]:
+                raise AXError("页面已变化，请重新确认阅读目标。")
+            time.sleep(0.1)
+            blocks = []
+            _walk(win, 0, blocks)
+            if len(blocks) >= 20 or _has_webarea(win):
+                break
+    content = WindowContent(app_name=str(target.get("app", "")),
+                            window_title=_norm(_copy(win, "AXTitle")),
+                            blocks=_dedup_sort(blocks), window_bounds=(*_geom(win), *_size(win)))
+    needs_visual = any(b.kind == "image" for b in blocks) or sum(len(b.text) for b in blocks) < 80
+    screenshot = (capture_window_image(pid, content.window_title, content.window_bounds, window_id=wid)
+                  if needs_visual else None)
+    # A tab can change without changing its title/URL; check the extracted body too.
+    after = []
+    _walk(win, 0, after)
+    def signature(values):
+        return [(b.kind, b.text, b.url, b.alt) for b in _dedup_sort(values)]
+    if (matching_ax_window(pid, wid) is None or fingerprint(win) != target["fingerprint"]
+            or signature(blocks) != signature(after)):
+        raise AXError("采集期间页面内容发生变化，本次内容已丢弃。请在页面稳定后重新阅读。")
+    return content, screenshot, needs_visual
 
 
 # ── 视觉增强：截取目标窗口图像（P7，需屏幕录制权限）─────────────
@@ -606,13 +660,15 @@ def select_capture_window(windows, pid: int, title: str = "", bounds=None):
     return candidates[0] if len(candidates) == 1 else None
 
 
-def capture_window_image(pid: int, title: str = "", bounds=None) -> str | None:
+def capture_window_image(pid: int, title: str = "", bounds=None, window_id=None) -> str | None:
     """截取目标窗口图像，返回 PNG data URL；无权限/失败返回 None。"""
     if not screen_capture_granted():
         return None  # 需要屏幕录制权限
     wins = CGWindowListCopyWindowInfo(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, 0)
-    best = select_capture_window(wins, pid, title, bounds)
+    best = (next((w for w in wins or [] if int(w.get("kCGWindowNumber", -1)) == window_id
+                  and int(w.get("kCGWindowOwnerPID", -1)) == pid), None)
+            if window_id is not None else select_capture_window(wins, pid, title, bounds))
     if best is None:
         return None
     wid = int(best["kCGWindowNumber"])
@@ -628,6 +684,7 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="输出 JSON（必传，保持契约一致）")
     ap.add_argument("--check", action="store_true", help="仅检测辅助功能权限（退出码 0=已授权, 2=未授权）")
     ap.add_argument("--pid", type=int, default=None, help="锁定读取指定进程窗口")
+    ap.add_argument("--target-json", help="本轮固定窗口身份，仅由应用壳提供")
     ap.add_argument("--no-scroll", action="store_true", help="只读当前一屏")
     ap.add_argument("--max-scrolls", type=int, default=20, help="最多滚动屏数（默认 20）")
     args = ap.parse_args()
@@ -647,7 +704,13 @@ def main() -> int:
         print(f"\r滚动第 {rounds} 屏，累计 {n} 个内容块...", end="", flush=True, file=sys.stderr)
 
     try:
-        if args.pid is not None:
+        bound_shot = None
+        needs_visual = False
+        if args.target_json:
+            target = json.loads(args.target_json)
+            pid = target["pid"]
+            content, bound_shot, needs_visual = read_bound_snapshot(target)
+        elif args.pid is not None:
             pid, app_name = args.pid, app_name_for_pid(args.pid)
             content = (read_window(pid, app_name) if args.no_scroll
                        else read_full(max_scrolls=args.max_scrolls,
@@ -659,7 +722,7 @@ def main() -> int:
                                       on_progress=progress, pid=pid, app_name=app_name))
         if not args.no_scroll:
             print(file=sys.stderr)
-    except AXError as e:
+    except (AXError, ValueError, KeyError, TypeError) as e:
         print(f"读取失败: {e}", file=sys.stderr)
         return 1
 
@@ -673,7 +736,7 @@ def main() -> int:
     blocks = []
     for i, b in enumerate(content.blocks):
         if b.kind == "text":
-            blocks.append({"kind": "text", "text": b.text})
+            blocks.append({"kind": "text", "text": b.text, "role": b.role, "url": b.url})
         else:
             blk = {"kind": "image", "url": b.url, "alt": b.alt,
                    "area": b.area, "w": b.w, "h": b.h}
@@ -683,7 +746,11 @@ def main() -> int:
     # 口图策略（P7 优化）：优先喂「图片原图 URL 下载」最准；
     # 截图仅在**无 URL 原图可下载**（动态图/canvas/图片型UI）时才截，作兜底。
     n_originals = sum(1 for b in data_urls.values() if b)
-    if n_originals > 0:
+    if args.target_json:
+        # Missing one image must not be hidden by successfully fetching another.
+        screenshot = bound_shot if n_originals < n_img or n_img == 0 else None
+        need_sr = needs_visual and screenshot is None and n_originals < max(1, n_img) and not screen_capture_granted()
+    elif n_originals > 0:
         screenshot = None
         need_sr = False
     else:
@@ -695,6 +762,9 @@ def main() -> int:
         "stats": {"text_blocks": n_text, "images": n_img, "images_with_url": n_img_url},
         "screenshot": screenshot,
         "need_screen_recording": need_sr,
+        "scope": "窗口当前可访问内容；未自动滚动，不保证整篇文档完整" if args.target_json else "窗口读取",
+        "images_original": n_originals,
+        "images_unavailable": max(0, n_img - n_originals),
         "blocks": blocks,
     }, ensure_ascii=False))
     return 0

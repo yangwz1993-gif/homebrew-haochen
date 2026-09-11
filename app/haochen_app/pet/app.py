@@ -26,7 +26,7 @@ from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from ..app_tracking import write_last_user_text
+from ..app_tracking import publish_question_target, write_last_user_text
 from ..conversation import ConversationController, make_session_title, plain_visible_text
 from ..engine_client import EngineClient
 from ..secure_storage import atomic_write_private
@@ -533,6 +533,7 @@ class PetApp(QObject):
         self._perception_hint = None
         self._last_user_text = item.text
         write_last_user_text(self.client.home, item.text)
+        publish_question_target(self.client.home, item, self.coordinator.current_session)
         if self._session_needs_title:
             self._pending_session_title = make_session_title(item.text)
         status_text = (

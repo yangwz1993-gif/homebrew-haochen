@@ -57,6 +57,23 @@ def read_last_user_app(home) -> int:
     return 0
 
 
+def capture_question_target(home):
+    """Bind metadata at enqueue time, not after the model/consent wait."""
+    if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+        return None
+    try:
+        from reader.screen_target import current_target
+        return current_target(read_last_user_app(home))
+    except Exception:
+        return None  # Unknown must never silently select a different window.
+
+
+def publish_question_target(home, item, session):
+    atomic_write_private(Path(home) / "question-target.json", json.dumps({
+        "token": item.id, "session": session, "target": item.screen_target,
+    }, ensure_ascii=False))
+
+
 def write_last_user_text(home, text: str) -> None:
     """Persist only a derived visual-intent boolean; never persist the prompt text."""
     try:

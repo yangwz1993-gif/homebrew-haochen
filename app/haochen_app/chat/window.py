@@ -42,7 +42,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..a11y import screen_of
-from ..app_tracking import write_last_user_text
+from ..app_tracking import publish_question_target, write_last_user_text
 from ..conversation import (
     SUMMARY_KICK_PREFIX,
     ConversationController,
@@ -624,6 +624,7 @@ class ChatWindow(QWidget):
         self._last_user_text = item.text
         # 仅落盘派生的看图意图 boolean，绝不持久化用户原文
         write_last_user_text(self.client.home, item.text)
+        publish_question_target(self.client.home, item, self.coordinator.current_session)
         self._auto_title(item.text)
         request_id = self.ctrl.send(item.text)
         if request_id is None:
