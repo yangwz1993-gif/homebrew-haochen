@@ -187,12 +187,16 @@ def main() -> int:
 
     # ── S7 配置生效链 ──────────────────────────────────────────
     print("── S7 配置 → 引擎生效链 ──", flush=True)
-    with patch.object(sup.client, "set_model") as spy:
+    with patch.object(sup.client, "set_model", wraps=sup.client.set_model) as spy:
         shell._on_model_changed("deepseek", "deepseek-v4-flash-vision-exp")
-        check("S7 同 provider 换模型 → set_model 热切换", spy.call_count == 1)
-    with patch.object(sup, "restart_now") as spy_restart:
+        ready = wait_until(lambda: shell.activation._phase == "idle" and not sup.client.configuration_blocked,
+                           10, "模型切换完成并核对就绪")
+        check("S7 同 provider 换模型 → set_model 热切换", spy.call_count == 1 and ready)
+    with patch.object(sup, "restart_now", wraps=sup.restart_now) as spy_restart:
         shell._on_restart_required("测试：provider 已切换")  # AUTO_RESTART=1
-        check("S7 需重启的配置 → 触发引擎重启", spy_restart.call_count == 1)
+        ready = wait_until(lambda: shell.activation._phase == "idle" and not sup.client.configuration_blocked,
+                           10, "重启后恢复会话及模型就绪")
+        check("S7 需重启的配置 → 触发引擎重启", spy_restart.call_count == 1 and ready)
 
     # ── S8 重启失败兜底（坏引擎路径，3 次放弃）─────────────────
     print("── S8 引擎连续重启失败 → 明确报错 ──", flush=True)

@@ -30,7 +30,7 @@ from haochen_app.chat import ChatWindow
 from haochen_app.chat.widgets import AssistantBubble, ConfirmBar, ToolCard, UserBubble
 
 app = QApplication(sys.argv)
-from haochen_app.chat.theme import app_stylesheet
+from haochen_app.chat.theme import C, app_stylesheet
 app.setStyleSheet(app_stylesheet())
 
 
@@ -84,7 +84,7 @@ def main() -> int:
     # v0.1.7：详情页用户气泡浅绿（同小气泡），bot 气泡加回清晰框线
     ub = win.findChild(UserBubble)
     ab = win.findChild(AssistantBubble)
-    assert ub is not None and "#e4efe8" in ub.styleSheet(), "用户气泡应为浅绿 accent_tint"
+    assert ub is not None and C["accent_tint"] in ub.styleSheet(), "用户气泡应使用当前主题 accent_tint"
     assert ab is not None and "border: 1px solid" in ab.styleSheet(), "bot 气泡应有清晰框线"
     print("  ✓ 用户气泡浅绿 / bot 气泡有框线")
 
