@@ -48,6 +48,7 @@ class AppShell:
         self.settings = SettingsWindow(home=home, store=self.store)
         self._apply_default_model_after_restart = False
         self._pending_onboarding_trial: str | None = None
+        self._syncing_draft = False
         self._wire()
 
     # ── 接线 ──────────────────────────────────────────────────
@@ -62,6 +63,10 @@ class AppShell:
         self.pet.chat_requested.connect(self.show_chat)
         self.chat.detail_collapsed.connect(self.pet.restore_bubble)
         self.chat.normal_closed.connect(self._restore_pet_after_chat)
+        self.pet.bubble.input.textChanged.connect(
+            lambda: self._sync_draft(self.pet.bubble.input, self.chat.input))
+        self.chat.input.textChanged.connect(
+            lambda: self._sync_draft(self.chat.input, self.pet.bubble.input))
         self.pet.settings_requested.connect(self.show_settings)
         self.pet.credential_validation.connect(self._on_credential_validation)
         self.pet.read_permission_requested.connect(self._request_read_permission)
@@ -102,11 +107,6 @@ class AppShell:
         if not self._interaction_allowed():
             return
         self.pet._result_timer.stop()
-        # The compact composer is an alternate view of the same conversation.
-        # Preserve an unsent draft when the user taps its expand icon.
-        draft = self.pet.bubble.input.toPlainText()
-        if draft and not self.chat.input.toPlainText():
-            self.chat.input.setPlainText(draft)
         if self.pet.bubble.summoned:
             rect = self.pet.bubble.geometry()
             self.pet.bubble.hide()
@@ -117,21 +117,23 @@ class AppShell:
         self._keep_pet_beside_chat()
 
     def _open_pet_detail(self, rect) -> None:
-        self.chat.open_from_bubble(rect, self.pet._last_user_text)
+        self.chat.open_from_bubble(rect, self.pet._last_user_text, self.pet.pet.geometry())
         self._keep_pet_beside_chat()
-        self.chat._defer(250, self._keep_pet_beside_chat)
+
+    def _sync_draft(self, source, target) -> None:
+        if self._syncing_draft or source.toPlainText() == target.toPlainText():
+            return
+        self._syncing_draft = True
+        try:
+            target.setPlainText(source.toPlainText())
+        finally:
+            self._syncing_draft = False
 
     def _keep_pet_beside_chat(self) -> None:
-        from .a11y import screen_of
+        # The panel chooses free space around the pet, never the reverse.
         if not self.chat.isVisible():
             return
         pet = self.pet.pet
-        if self.chat.geometry().intersects(pet.geometry()):
-            screen = screen_of(pet).availableGeometry()
-            x = self.chat.x() + self.chat.width() + 10
-            if x + pet.width() > screen.right():
-                x = max(screen.left(), self.chat.x() - pet.width() - 10)
-            pet.move(x, max(screen.top(), min(pet.y(), screen.bottom() - pet.height())))
         pet.show()
         pet.raise_()
 

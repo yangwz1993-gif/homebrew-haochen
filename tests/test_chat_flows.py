@@ -356,7 +356,8 @@ def test_detail_mode_expand_and_collapse(qtbot, tmp_path: Path) -> None:
     assert window._detail_mode is False
     assert not window.isVisible()
     assert not window.sidebar.isHidden()
-    assert window.detail_header.isHidden()
+    assert window.detail_close_button.isHidden()
+    assert window.detail_title.text() == "haochen"
     assert window.width() >= 820
     assert window.height() >= 560
 
@@ -429,7 +430,7 @@ def test_detail_header_uses_current_topic_and_send_action_is_legible(qtbot, tmp_
     window._sessions = [{"path": "/s/topic.jsonl", "title": "东京夜游建议"}]
     window._current_path = "/s/topic.jsonl"
 
-    window._update_detail_title()
+    window.open_from_bubble()
 
     assert window.detail_title.text() == "东京夜游建议"
     assert "发送" in window.btn_send.text()

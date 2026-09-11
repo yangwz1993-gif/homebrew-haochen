@@ -18,12 +18,21 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import (
+    QEasingCurve,
+    QParallelAnimationGroup,
+    QPoint,
+    QPropertyAnimation,
+    QRect,
+    Qt,
+    QTimer,
+    pyqtSignal,
+    pyqtSlot,
+)
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
-    QLabel,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -49,6 +58,8 @@ from ..conversation import (
 from ..engine_client import EngineClient, delete_session, list_sessions, restore_session
 from ..secure_storage import atomic_write_private
 from ..session_coordinator import QueueItem, SessionCoordinator
+from .chrome import ConversationHeader, configure_native_chrome
+from .placement import detail_rect
 from .sidebar import SessionSidebar
 from .theme import FONT, RADIUS_INPUT, C, button_outline, button_solid
 from .widgets import (
@@ -77,7 +88,7 @@ class _InputBox(QPlainTextEdit):
         self.setStyleSheet(f"""
             QPlainTextEdit {{
                 background: {C['surface']};
-                border: none;
+                border: 1px solid {C['line_soft']};
                 border-radius: {RADIUS_INPUT}px;
                 padding: 8px 10px;
                 font-size: {FONT['body']}px;
@@ -113,9 +124,8 @@ class _InputBox(QPlainTextEdit):
 class ChatWindow(QWidget):
     """完整对话窗口。P4 集成：win = ChatWindow(engine_client) 后 show() 即可。
 
-    v0.1.4 hotfix：支持「从气泡展开」模式（open_from_bubble）——窗口从短会话
-    气泡的 rect 平滑扩展到正常尺寸；Esc / ⌘W / closeEvent 只收回气泡 rect 后
-    隐藏（detail_collapsed 通知 pet 侧恢复气泡），任何情况下不触发 app 退出。
+    从气泡展开时在人物周围的可用空间中以固定尺寸淡入；Esc / ⌘W / closeEvent
+    仅收起窗口（detail_collapsed 通知 pet 侧恢复），不移动人物、不退出 app。
     """
 
     STREAM_THROTTLE_MS = 50          # interaction-spec §3：流式重绘节流
@@ -128,6 +138,12 @@ class ChatWindow(QWidget):
     def __init__(self, client: EngineClient | None = None, supervisor=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("haochen")
+        if QApplication.platformName() == "cocoa":
+            self.setWindowFlags(self.windowFlags() | Qt.WindowType.ExpandedClientAreaHint
+                                | Qt.WindowType.NoTitleBarBackgroundHint)
+            # Our header reserves the actual traffic-light area itself.
+            self.setAttribute(Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea, False)
+            self.setAttribute(Qt.WidgetAttribute.WA_LayoutOnEntireRect, True)
         self.resize(980, 680)
         self.setMinimumSize(820, 560)
         # 防御性加固（v0.1.4 hotfix 问题4）：关窗永不退出 app
@@ -159,6 +175,7 @@ class ChatWindow(QWidget):
         # Use window-owned timers for deferred UI work. Static singleShot callbacks
         # can outlive a test/window and call into an already deleted Qt object.
         self._deferred_timers: set[QTimer] = set()
+        self._deferred_callbacks: dict[QTimer, callable] = {}
         self._follow_stream = True      # 用户是否在底部（决定是否自动跟随）
         self._thinking_row: BubbleRow | None = None
         self._status_row: BubbleRow | None = None   # 提炼结论等轻状态
@@ -170,6 +187,9 @@ class ChatWindow(QWidget):
         self._detail_mode = False
         self._detail_collapsing = False
         self._detail_source_rect = QRect()
+        self._detail_pet_rect = QRect()
+        self._detail_bookmarks: dict[tuple[str | None, str], int] = {}
+        self._detail_restore_scroll: int | None = None
         self._detail_anchor_text = ""
         self._detail_anchor_row = None
         self._detail_position_pending = False
@@ -178,7 +198,7 @@ class ChatWindow(QWidget):
         self._anchor_settle.setInterval(120)
         self._anchor_settle.timeout.connect(self._finish_detail_position)
         self._normal_geometry = QRect()
-        self._geom_anim: QPropertyAnimation | None = None
+        self._geom_anim: QParallelAnimationGroup | None = None
 
         self._build_ui()
         self._reload_persisted_sessions()
@@ -231,37 +251,28 @@ class ChatWindow(QWidget):
             log.warning("save chat geometry failed: %s", exc)
 
     def _build_ui(self) -> None:
-        root = QHBoxLayout(self)
+        root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        self.detail_header = ConversationHeader()
+        self.detail_title = self.detail_header.title
+        self.detail_close_button = self.detail_header.collapse
+        self.detail_close_button.clicked.connect(self.collapse_detail)
+        self.detail_close_button.hide()
+        root.addWidget(self.detail_header)
+        content = QHBoxLayout()
+        content.setContentsMargins(0, 0, 0, 0)
+        content.setSpacing(0)
+        root.addLayout(content, 1)
         self.sidebar = SessionSidebar()
-        root.addWidget(self.sidebar)
+        content.addWidget(self.sidebar)
 
         right = QWidget()
         rlay = QVBoxLayout(right)
         rlay.setContentsMargins(0, 0, 0, 10)
         rlay.setSpacing(0)
-        root.addWidget(right, 1)
-
-        self.detail_header = QWidget()
-        detail_header_layout = QHBoxLayout(self.detail_header)
-        detail_header_layout.setContentsMargins(18, 14, 18, 8)
-        detail_header_layout.setSpacing(8)
-        self.detail_title = QLabel("会话详情")
-        self.detail_title.setAccessibleName("会话详情")
-        self.detail_title.setStyleSheet(
-            f"font-size: {FONT['title']}px; font-weight: bold; color: {C['ink']};"
-        )
-        detail_header_layout.addWidget(self.detail_title)
-        detail_header_layout.addStretch(1)
-        self.detail_close_button = QPushButton("收起  Esc")
-        self.detail_close_button.setAccessibleName("收起会话详情")
-        self.detail_close_button.setStyleSheet(button_outline())
-        self.detail_close_button.clicked.connect(self.collapse_detail)
-        detail_header_layout.addWidget(self.detail_close_button)
-        self.detail_header.hide()
-        rlay.addWidget(self.detail_header)
+        content.addWidget(right, 1)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -299,7 +310,7 @@ class ChatWindow(QWidget):
         input_bar.setSpacing(8)
         self.input = _InputBox(self._on_send)
         input_bar.addWidget(self.input, 1)
-        self.btn_send = QPushButton("发送  ➤")
+        self.btn_send = QPushButton("发送")
         self.btn_send.setAccessibleName("发送")
         self.btn_send.setFixedWidth(92)
         self.btn_send.setStyleSheet(button_solid())
@@ -402,6 +413,10 @@ class ChatWindow(QWidget):
             self._refresh_sidebar()
             self._update_detail_title()
             if changed_session:
+                self._detail_restore_scroll = None
+                self._detail_anchor_text = ""
+                if self._detail_mode:
+                    self._detail_position_pending = True
                 self._rpc(self.client.get_messages, self._render_history)
 
     def _is_transient_startup_session(self, path: str, name: str) -> bool:
@@ -467,14 +482,30 @@ class ChatWindow(QWidget):
         timer = QTimer(self)
         timer.setSingleShot(True)
         self._deferred_timers.add(timer)
-
-        def run() -> None:
-            self._deferred_timers.discard(timer)
-            callback()
-            timer.deleteLater()
-
-        timer.timeout.connect(run)
+        self._deferred_callbacks[timer] = callback
+        # A Qt receiver-owned slot disconnects safely with the window. Avoid a
+        # self-referential timer/closure surviving Python garbage collection.
+        timer.timeout.connect(self._run_deferred)
         timer.start(delay_ms)
+
+    @pyqtSlot()
+    def _run_deferred(self) -> None:
+        timer = self.sender()
+        callback = self._deferred_callbacks.pop(timer, None)
+        self._deferred_timers.discard(timer)
+        if timer is not None:
+            timer.deleteLater()
+        if callback is not None:
+            callback()
+
+    def _cancel_deferred_work(self) -> None:
+        self._anchor_settle.stop()
+        self._detail_position_pending = False
+        for timer in self._deferred_timers:
+            timer.stop()
+            timer.deleteLater()
+        self._deferred_timers.clear()
+        self._deferred_callbacks.clear()
 
     def _scroll_bottom(self) -> None:
         sb = self.scroll.verticalScrollBar()
@@ -490,7 +521,12 @@ class ChatWindow(QWidget):
         self.jump_to_latest_button.hide()
 
     def _scroll_current_turn(self) -> None:
+        if not self._detail_mode or self._detail_collapsing:
+            return
         self._follow_stream = False
+        if self._detail_restore_scroll is not None:
+            self.scroll.verticalScrollBar().setValue(self._detail_restore_scroll)
+            return
         row = self._detail_anchor_row
         if row is not None:
             try:
@@ -627,66 +663,64 @@ class ChatWindow(QWidget):
             self.collapse_detail()
             return
         self._save_geometry()
+        self._cancel_deferred_work()
         ev.ignore()
         self.hide()
         self.normal_closed.emit()
 
     # ── 详情模式：从气泡展开 / 收回气泡 ─────────────────────────
 
-    def open_from_bubble(self, source_rect: QRect | None = None, anchor_text: str = "") -> None:
-        """「展开详细」：从短会话气泡 rect 平滑扩展（OutCubic ~220ms）到正常尺寸，
-        并从会话顶部开始阅读完整上下文。"""
+    def open_from_bubble(self, source_rect: QRect | None = None, anchor_text: str = "",
+                         pet_rect: QRect | None = None) -> None:
+        """Open beside the stationary character; lay out at final size before fading in."""
         self._remember_normal_geometry()
         self._detail_mode = True
         self._detail_collapsing = False
         self._follow_stream = False
         self._detail_source_rect = source_rect or QRect()
+        self._detail_pet_rect = pet_rect or QRect()
         self._detail_anchor_text = anchor_text
+        self._detail_restore_scroll = self._detail_bookmarks.get((self._current_path, anchor_text))
         self._detail_position_pending = True
         self._anchor_settle.start(350)
         self.sidebar.hide()
-        self.detail_header.show()
+        self.detail_close_button.show()
+        self._update_detail_title()
         self.input.setPlaceholderText("继续这个话题…（⏎ 发送，⌘⏎ 换行）")
         target = self._detail_target_rect()
-        if self._detail_source_rect.isValid() and not self._detail_source_rect.isNull():
-            # 动画期间放开最小尺寸，否则起点 rect 会被 minimumSize 钳大
-            self.setMinimumSize(1, 1)
-            self.setGeometry(self._detail_source_rect)
-            self.show()
-            self._animate_geom_to(target, finished=self._restore_min_size)
-        else:  # 无来源 rect → 直接落到目标位
-            self.setGeometry(target)
-            self.show()
+        self._stop_transition()
+        self.setMinimumSize(min(420, target.width()), min(300, target.height()))
+        self.setGeometry(target)
+        self.layout().activate()
+        self._animate_detail(True)
         self.raise_()
         self.activateWindow()
-        # showEvent 可能异步重绘历史；动画前后都钉在顶部，最终 _render_history
-        # 还会再按 detail mode 定位一次，覆盖布局/rangeChanged 竞态。
+        # Restore the current turn (or its saved reading offset) after layout.
         self._defer(0, self._scroll_current_turn)
         self._defer(300, self._scroll_current_turn)
         self.input.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def _restore_min_size(self) -> None:
         if self._detail_mode and not self._detail_collapsing:
-            self.setMinimumSize(720, 500)
+            self.setMinimumSize(min(420, self.width()), min(300, self.height()))
 
     def collapse_detail(self) -> None:
-        """Esc / ⌘W：反向收回气泡 rect，播完隐藏并发 detail_collapsed。"""
+        """Esc / ⌘W: remember reading position and gently dismiss at fixed size."""
         if not self._detail_mode or self._detail_collapsing:
             return
         self._detail_collapsing = True
-        rect = self._detail_source_rect
-        if rect.isValid() and not rect.isNull():
-            self.setMinimumSize(1, 1)   # 同样放开，窗口才能收回气泡大小
-            self._animate_geom_to(rect, finished=self._after_detail_collapse)
-        else:
-            self._after_detail_collapse()
+        self._detail_bookmarks[(self._current_path, self._detail_anchor_text)] = self.scroll.verticalScrollBar().value()
+        self._animate_detail(False, self._after_detail_collapse)
 
     def _after_detail_collapse(self) -> None:
+        self._cancel_deferred_work()
         self._detail_mode = False
         self._detail_collapsing = False
         self.hide()
+        self.setWindowOpacity(1)
         self.sidebar.show()
-        self.detail_header.hide()
+        self.detail_close_button.hide()
+        self._update_detail_title()
         self.input.setPlaceholderText("和 haochen 说点什么…（⏎ 发送，⌘⏎ 换行）")
         self.setMinimumSize(820, 560)
         self.setGeometry(self._normal_target_rect())
@@ -718,11 +752,14 @@ class ChatWindow(QWidget):
 
     def show_normal(self) -> None:
         """Open the full workspace with a sane geometry after any detail animation."""
+        self._stop_transition()
+        self.setWindowOpacity(1)
         self._detail_mode = False
         self._detail_collapsing = False
         self._follow_stream = True
         self.sidebar.show()
-        self.detail_header.hide()
+        self.detail_close_button.hide()
+        self._update_detail_title()
         self.input.setPlaceholderText("和 haochen 说点什么…（⏎ 发送，⌘⏎ 换行）")
         self.setMinimumSize(820, 560)
         self.setGeometry(self._normal_target_rect())
@@ -731,42 +768,53 @@ class ChatWindow(QWidget):
         self.activateWindow()
 
     def _detail_target_rect(self) -> QRect:
-        """从桌宠进入的详情工作台保持紧凑，并夹回气泡所在屏幕。"""
-        screen = screen_of(self).availableGeometry()
-        w = min(840, screen.width() - 16)
-        h = min(600, screen.height() - 16)
-        if self._detail_source_rect.isValid() and not self._detail_source_rect.isNull():
-            cx = self._detail_source_rect.center().x()
-            cy = self._detail_source_rect.center().y()
-        else:
-            cx, cy = screen.center().x(), screen.center().y()
-        x = max(screen.left() + 8, min(cx - w // 2, screen.right() - w - 8))
-        y = max(screen.top() + 8, min(cy - h // 2, screen.bottom() - h - 8))
-        return QRect(x, y, w, h)
+        anchor = self._detail_pet_rect if self._detail_pet_rect.isValid() else self._detail_source_rect
+        screen = QApplication.screenAt(anchor.center()) if anchor.isValid() else None
+        screen = screen or screen_of(self)
+        return detail_rect(screen.availableGeometry(), self._detail_pet_rect, self._detail_source_rect)
 
-    def _animate_geom_to(self, rect: QRect, finished=None) -> None:
-        from ..a11y import reduce_motion_enabled
+    def _stop_transition(self) -> None:
         old, self._geom_anim = self._geom_anim, None
         if old is not None:
             try:
                 old.stop()
+                old.deleteLater()
             except RuntimeError:
                 pass
+
+    def _animate_detail(self, opening: bool, finished=None) -> None:
+        from ..a11y import reduce_motion_enabled
+        self._stop_transition()
         if reduce_motion_enabled():
-            # 尊重系统设置：直接落位，不播几何动画
-            self.setGeometry(rect)
+            self.setWindowOpacity(1)
+            if opening:
+                self.show()
             if finished is not None:
                 finished()
             return
-        anim = QPropertyAnimation(self, b"geometry", self)
-        anim.setDuration(220)
-        anim.setStartValue(self.geometry())
-        anim.setEndValue(rect)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        target = self.pos()
+        dy = 8 if self._detail_source_rect.center().y() >= self.geometry().center().y() else -8
+        offset = QPoint(0, dy)
+        anim = QParallelAnimationGroup(self)
+        position = QPropertyAnimation(self, b"pos", anim)
+        position.setStartValue(target + offset if opening else target)
+        position.setEndValue(target if opening else target + offset)
+        position.setDuration(180 if opening else 130)
+        position.setEasingCurve(QEasingCurve.Type.OutCubic)
+        opacity = QPropertyAnimation(self, b"windowOpacity", anim)
+        opacity.setStartValue(0.0 if opening else self.windowOpacity())
+        opacity.setEndValue(1.0 if opening else 0.0)
+        opacity.setDuration(180 if opening else 130)
+        anim.addAnimation(position)
+        anim.addAnimation(opacity)
         if finished is not None:
             anim.finished.connect(finished)
-        anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
         self._geom_anim = anim
+        if opening:
+            self.setWindowOpacity(0)
+            self.move(target + offset)
+            self.show()
+        anim.start()
 
     def _auto_title(self, text: str) -> None:
         """首条用户消息自动命名会话（§6 标题自动/可重命名）。"""
@@ -789,8 +837,11 @@ class ChatWindow(QWidget):
             "",
         )
         text = title if title and title != "新会话" else "会话详情"
-        self.detail_title.setText(text)
-        self.detail_title.setAccessibleName(f"当前会话：{text}")
+        if text.startswith("你好，请用一句话介绍"):
+            text = "会话详情"
+        self.detail_header.set_title(text if self._detail_mode else "haochen")
+        if title:
+            self.detail_title.setToolTip(f"会话：{title}")
 
     # ── ConversationController 信号（单回合分层结果）────────────
 
@@ -1231,6 +1282,8 @@ class ChatWindow(QWidget):
     def _render_history(self, resp: dict) -> None:
         if not resp.get("success"):
             return
+        if self._detail_mode and not self._detail_position_pending:
+            self._detail_restore_scroll = self.scroll.verticalScrollBar().value()
         self._clear_flow()
         self._detail_anchor_row = None
         last_user_row = None
@@ -1386,6 +1439,7 @@ class ChatWindow(QWidget):
 
     def showEvent(self, ev) -> None:
         super().showEvent(ev)
+        configure_native_chrome(self)
         # P4：窗口重新可见时同步最新会话（气泡入口可能已推进历史/切会话）
         if self._supervisor is not None and self.client.alive and not self.ctrl.busy:
             self._rpc(self.client.get_state, self._on_state)
