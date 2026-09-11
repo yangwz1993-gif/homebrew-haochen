@@ -277,6 +277,11 @@ class AppShell:
     def _request_onboarding_permission(self, permission: str) -> None:
         from .permissions import open_permission_settings, request_accessibility, request_screen_recording
 
+        if permission in ("manage_accessibility", "manage_screen"):
+            if hasattr(self, "onboarding"):
+                self.onboarding.lower()
+            open_permission_settings(permission.removeprefix("manage_"))
+            return
         if permission not in ("accessibility", "screen"):
             return
         if hasattr(self, "onboarding"):

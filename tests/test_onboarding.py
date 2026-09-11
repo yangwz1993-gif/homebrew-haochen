@@ -56,12 +56,14 @@ def test_successful_validation_saves_keychain_reference_only(qtbot, tmp_path: Pa
     assert json.loads(auth_text)["deepseek"]["key"] == "$HAOCHEN_DEEPSEEK_API_KEY"
 
 
-def test_permissions_are_requested_only_by_separate_user_actions(qtbot, tmp_path: Path) -> None:
+def test_permissions_are_requested_only_by_separate_user_actions(qtbot, tmp_path: Path, monkeypatch) -> None:
     store, _credentials = make_store(tmp_path)
     wizard = onboarding.OnboardingWizard(store)
     qtbot.addWidget(wizard)
     requests: list[str] = []
     wizard.permission_requested.connect(requests.append)
+    monkeypatch.setattr("haochen_app.permissions.permission_status", lambda _: False)
+    wizard.permission_page.refresh_status()
     buttons = wizard.permission_page.findChildren(onboarding.QPushButton)
 
     assert requests == []
@@ -162,7 +164,7 @@ def test_upgrade_with_missing_custom_key_keeps_model_fields_and_explains_reentry
     assert wizard.key_page.model_id_edit.text() == "qa-local-upgrade"
     assert wizard.key_page.model_name_edit.text() == "QA Local Upgrade"
     assert not wizard.key_page.isComplete()
-    assert "授权已有 Key" in wizard.key_page.status.text()
+    assert "连接模型" in wizard.key_page.status.text()
 
 
 def test_resumed_trial_can_go_back_to_hydrated_custom_model(qtbot, tmp_path: Path) -> None:

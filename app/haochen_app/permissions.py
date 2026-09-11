@@ -38,26 +38,26 @@ _BUNDLE_ID_FALLBACK = "com.haochen.app"
 
 def accessibility_granted() -> bool:
     """是否已持有辅助功能权限（按调用进程的责任进程判定，不触发系统弹窗）。"""
-    try:
-        from ApplicationServices import AXIsProcessTrustedWithOptions
-        v = bool(AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": False}))
-        log.info("accessibility_granted -> %s", v)
-        return v
-    except Exception as exc:  # noqa: BLE001
-        log.warning("accessibility check error: %s", exc, exc_info=True)
-        return False
+    return permission_status("accessibility") is True
 
 
 def screen_recording_granted() -> bool:
     """是否已获屏幕录制权限（视觉读屏用，P7）。"""
+    return permission_status("screen") is True
+
+
+def permission_status(permission: str) -> bool | None:
+    """Read-only preflight: distinguish system denial from an unavailable check."""
     try:
-        from Quartz import CGPreflightScreenCaptureAccess
-        v = bool(CGPreflightScreenCaptureAccess())
-        log.info("screen_recording_granted -> %s", v)
-        return v
+        if permission == "accessibility":
+            from ApplicationServices import AXIsProcessTrustedWithOptions
+            return bool(AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": False}))
+        if permission == "screen":
+            from Quartz import CGPreflightScreenCaptureAccess
+            return bool(CGPreflightScreenCaptureAccess())
     except Exception as exc:  # noqa: BLE001
-        log.warning("screen recording check error: %s", exc, exc_info=True)
-        return False
+        log.warning("%s permission check unavailable: %s", permission, type(exc).__name__)
+    return None
 
 
 def request_accessibility() -> bool:

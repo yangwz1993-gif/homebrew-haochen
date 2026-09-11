@@ -4,16 +4,18 @@
 """
 
 # ── 色板（visual-spec §1）────────────────────────────────────
-COLOR_BG = "#fdf6e3"        # 主背景（米白）
-COLOR_SURFACE = "#fffaf0"   # 卡片表面
-COLOR_INK = "#2b2b22"       # 主文字 / 深描边
-COLOR_INK_SOFT = "#5c5c50"  # 次级文字
-COLOR_LINE = "#2b2b22"      # 描边（主）
-COLOR_LINE_SOFT = "#c8c0ac" # 分割线 / 弱描边
-COLOR_ACCENT = "#3a7d5c"    # 强调（成功/确认）
-COLOR_INFO = "#5b7db1"      # 信息
-COLOR_WARN = "#b8860b"      # 警告
-COLOR_DANGER = "#b04a3a"    # 错误
+from ..appearance import BUTTON_RADIUS, CARD_RADIUS, COLORS, FONTS, INPUT_RADIUS
+
+COLOR_BG = COLORS["bg"]
+COLOR_SURFACE = COLORS["surface"]
+COLOR_INK = COLORS["ink"]
+COLOR_INK_SOFT = COLORS["ink_soft"]
+COLOR_LINE = COLORS["line"]
+COLOR_LINE_SOFT = COLORS["line_soft"]
+COLOR_ACCENT = COLORS["accent"]
+COLOR_INFO = COLORS["info"]
+COLOR_WARN = COLORS["warn"]
+COLOR_DANGER = COLORS["danger"]
 
 # ── 字号（visual-spec §3）────────────────────────────────────
 FONT_TITLE = 15
@@ -22,19 +24,20 @@ FONT_BODY_SM = 12.5
 FONT_CODE = 13
 
 # ── 圆角 / 描边（visual-spec §2）─────────────────────────────
-RADIUS_CARD = 16
-RADIUS_BUTTON = 8
-RADIUS_INPUT = 12
-BORDER_MAIN = f"2px solid {COLOR_LINE}"
+RADIUS_CARD = CARD_RADIUS
+RADIUS_BUTTON = BUTTON_RADIUS
+RADIUS_INPUT = INPUT_RADIUS
+BORDER_MAIN = f"1px solid {COLOR_LINE_SOFT}"
 BORDER_SOFT = f"1px solid {COLOR_LINE_SOFT}"
 
 APP_QSS = f"""
 QWidget {{
     background: {COLOR_BG};
     color: {COLOR_INK};
-    font-family: -apple-system, "PingFang SC", "SF Pro", sans-serif;
+    font-family: {FONTS['family']};
     font-size: {FONT_BODY}px;
 }}
+QLabel {{ background: transparent; }}
 QFrame#card {{
     background: {COLOR_SURFACE};
     border: {BORDER_MAIN};
@@ -54,7 +57,7 @@ QLabel#badgeOk {{
     font-weight: 600;
 }}
 QLabel#badgeOff {{
-    color: {COLOR_WARN};
+    color: {COLOR_INK_SOFT};
     font-size: {FONT_BODY_SM}px;
     font-weight: 600;
 }}
@@ -97,14 +100,17 @@ QPushButton {{
     border-radius: {RADIUS_BUTTON}px;
     padding: 6px 14px;
 }}
-QPushButton:hover {{ background: {COLOR_BG}; }}
+QPushButton:hover {{ background: {COLORS['hover']}; }}
 QPushButton:pressed {{ background: {COLOR_LINE_SOFT}; }}
 QPushButton#primary, QPushButton#primaryBtn {{
     background: {COLOR_ACCENT};
     color: {COLOR_SURFACE};
     font-weight: 600;
+    border-color: transparent;
 }}
-QPushButton#primary:hover, QPushButton#primaryBtn:hover {{ background: #2f6b4d; }}
+QPushButton#primary:hover, QPushButton#primaryBtn:hover {{ background: {COLORS['accent_deep']}; }}
+QPushButton:disabled {{ color: {COLOR_INK_SOFT}; background: {COLORS['hover']}; }}
+QPushButton#connected {{ color: {COLOR_ACCENT}; background: {COLORS['accent_tint']}; border-color: transparent; }}
 QPushButton#danger {{
     color: {COLOR_DANGER};
     border-color: {COLOR_DANGER};
@@ -112,11 +118,30 @@ QPushButton#danger {{
 QToolButton {{
     background: transparent;
     border: none;
+}}
+QToolButton#moreButton {{
+    min-width: 30px;
+    max-width: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    padding: 0;
+    border-radius: 10px;
+    font-size: 20px;
+}}
+QToolButton#moreButton::menu-indicator {{ image: none; width: 0px; }}
+QToolButton#moreButton:hover {{ background: {COLORS['hover']}; }}
+QToolButton {{
     color: {COLOR_INK_SOFT};
     font-size: {FONT_BODY_SM}px;
 }}
 QToolButton:hover {{ color: {COLOR_INK}; }}
+QMenu {{ background: {COLOR_SURFACE}; border: {BORDER_SOFT}; padding: 4px; }}
+QMenu::item {{ padding: 7px 18px; }}
+QMenu::item:selected {{ background: {COLORS['hover']}; }}
 QScrollArea {{ border: none; }}
+QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: {COLOR_LINE_SOFT}; border-radius: 4px; min-height: 24px; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 /* v0.1.4 §2：原生对话框去系统灰，统一米白卡片化（按钮沿用上方 QPushButton 规则） */
 QMessageBox {{ background: {COLOR_BG}; }}
 QMessageBox QLabel {{ color: {COLOR_INK}; background: transparent; }}

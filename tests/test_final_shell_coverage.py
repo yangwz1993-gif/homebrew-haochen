@@ -91,7 +91,7 @@ def test_first_run_setup_reopens_at_key_page_when_key_missing(qtbot, tmp_path: P
     saved = OnboardingState(shell.store.home)
     assert saved.completed is False
     assert saved.page == KEY_PAGE
-    assert "授权已有 Key" in shell.onboarding.key_page.status.text()
+    assert "连接模型" in shell.onboarding.key_page.status.text()
 
 
 def test_completed_onboarding_with_key_skips(qtbot, tmp_path: Path) -> None:

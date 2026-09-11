@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from .background import run_in_background
 from .key_validation import ValidationResult, validate_api_key, validate_custom_model
+from .model_connection import CONNECT, CONNECTED, CONNECTING, connection_error, existing_key_for_connection
 from .pet.profile import load_name_candidate, profile_needs_confirmation, save_user_name
 from .secure_storage import atomic_write_private, ensure_private_file
 from .settings.config_store import ConfigStore
@@ -121,6 +122,8 @@ class KeyPage(QWizardPage):
         self.provider = "deepseek"
         self.requires_key_reentry = requires_key_reentry
         self._verified = store.key_status(self.provider)[0]
+        self._connected = False
+        self._connecting_existing = False
         self._configured_custom_signature: tuple[str, str, str] | None = None
         self._pending_custom: dict | None = None
         self._working = False
@@ -156,15 +159,11 @@ class KeyPage(QWizardPage):
         self.key_edit.setMinimumHeight(36)
         self.key_edit.setPlaceholderText("输入 DeepSeek API Key")
         layout.addWidget(self.key_edit)
-        self.verify_button = QPushButton("保存并验证")
+        self.verify_button = QPushButton(CONNECT)
         self.verify_button.setMinimumHeight(38)
         self.verify_button.setObjectName("primaryBtn")
         self.verify_button.clicked.connect(self._verify)
         layout.addWidget(self.verify_button)
-        self.authorize_button = QPushButton("授权已有 Key")
-        self.authorize_button.setToolTip("仅点击后才会请求 macOS 钥匙串授权；不会删除或替换已有 Key")
-        self.authorize_button.clicked.connect(self._authorize_existing_key)
-        layout.addWidget(self.authorize_button)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setTextVisible(False)
@@ -206,11 +205,14 @@ class KeyPage(QWizardPage):
         self.mode_combo.setCurrentIndex(self.mode_combo.findData("custom"))
 
     def _connection_status(self) -> str:
+        if self._connected:
+            return "连接成功，可以继续。"
         if self._verified:
-            return "已配置，可继续"
-        if self.requires_key_reentry:
-            return "已有 Key 若需要授权，请点“授权已有 Key”；没有保存过 Key 时再填写。"
-        return "尚未验证"
+            return "已有配置，可继续；点击“连接模型”可检查连接。"
+        provider = self._stored_provider()
+        if provider and self.store.get_key(provider):
+            return "已有保存的 Key，直接点“连接模型”；如需系统许可，会提示你确认。"
+        return "填写 API Key 后点“连接模型”，验证成功后会安全保存。"
 
     def _custom_signature(self) -> tuple[str, str, str]:
         return (
@@ -220,7 +222,9 @@ class KeyPage(QWizardPage):
         )
 
     def _custom_value_edited(self, _value: str) -> None:
-        self.verify_button.setText("保存并验证")
+        self._connected = False
+        self.verify_button.setText(CONNECT)
+        self.verify_button.setEnabled(not self._working)
         if self.mode_combo.currentData() != "custom":
             self._verified = False
             self.status.setText("修改后请重新验证")
@@ -238,9 +242,11 @@ class KeyPage(QWizardPage):
 
     def _set_working(self, working: bool) -> None:
         self._working = working
-        for widget in (self.verify_button, self.authorize_button, self.mode_combo, self.key_edit,
+        for widget in (self.verify_button, self.mode_combo, self.key_edit,
                        self.url_edit, self.model_id_edit, self.model_name_edit):
             widget.setEnabled(not working)
+        if self._connected:
+            self.verify_button.setEnabled(False)
         self.progress.setVisible(working)
         self.completeChanged.emit()
 
@@ -254,62 +260,59 @@ class KeyPage(QWizardPage):
                 return provider.id
         return None
 
-    def _authorize_existing_key(self) -> None:
-        provider = self._stored_provider()
-        if self._working or not provider:
-            return
-        self._set_working(True)
-        self.window().lower()
-        self.status.setText("请在 macOS 授权框中操作。“允许”用于本次运行，“始终允许”用于后续读取；也可以拒绝。")
-
-        def done(allowed, error):
-            self._set_working(False)
-            if error or not allowed:
-                self.status.setText("授权未完成，原 Key 未改变。可以再次点击“授权已有 Key”。")
-                return
-            self._verified = not self.key_edit.text()
-            if self.mode_combo.currentData() == "custom":
-                self._configured_custom_signature = self._custom_signature()
-            self.authorize_button.hide()
-            self.key_edit.setPlaceholderText("已有 Key 已授权 · 输入新 Key 可更换")
-            self.status.setText("已有 Key 已授权，可继续；模型连接将在实际对话时确认。")
-            self.completeChanged.emit()
-
-        run_in_background(self, lambda: self.store.authorize_key(provider), done)
-
     def _verify(self) -> None:
         if self._working:
             return
         candidate = self.key_edit.text().strip()
         mode = self.mode_combo.currentData()
-        if not candidate and mode != "custom":
-            self.status.setText("已安全保存，可继续；如需更换，请输入新 Key。" if self._verified else "请输入 API Key")
+        stored_provider = self._stored_provider()
+        self._connecting_existing = not bool(candidate)
+        if not candidate and (not stored_provider or not self.store.get_key(stored_provider)):
+            self.status.setText("请输入 API Key；已有 Key 只能用于原来的服务地址。")
             return
         if mode == "custom":
+            stored_model = next((p for p in self.store.providers() if p.id == stored_provider), None)
             self._pending_custom = {
                 "base_url": self.url_edit.text().strip(),
                 "model_id": self.model_id_edit.text().strip(),
                 "model_name": self.model_name_edit.text().strip(),
                 "key": candidate,
+                "provider_id": stored_provider,
+                "api": stored_model.api if stored_model else "openai-completions",
             }
             if not self._pending_custom["base_url"] or not self._pending_custom["model_id"]:
                 self.status.setText("请填写 API URL 和模型 ID")
                 return
         self._set_working(True)
-        self.verify_button.setText("连接验证中…")
-        self.status.setText("正在验证…")
+        self._verified = False
+        self.verify_button.setText(CONNECTING)
+        self.status.setText("正在连接；如弹出 macOS 钥匙串窗口，请确认许可，也可以取消。")
+        if not candidate and stored_provider and self.store.key_access_required(stored_provider):
+            self.window().lower()
         pending_custom = dict(self._pending_custom) if self._pending_custom is not None else None
 
         def run():
+            effective_key = candidate or existing_key_for_connection(self.store, stored_provider or "")
             if pending_custom is not None:
+                if self.custom_verifier is validate_custom_model:
+                    return validate_custom_model(
+                        pending_custom["base_url"], pending_custom["model_id"], effective_key,
+                        api=pending_custom["api"],
+                    )
                 return self.custom_verifier(
                     pending_custom["base_url"],
                     pending_custom["model_id"],
-                    candidate,
+                    effective_key,
                 )
-            return self.verifier(self.provider, candidate)
+            return self.verifier(self.provider, effective_key)
 
         def done(result, error):
+            if error:
+                self._set_working(False)
+                self.verify_button.setText(CONNECT)
+                self.status.setText(connection_error(error) if not candidate else "连接验证未完成，请重试。")
+                self._pending_custom = None
+                return
             self._finish_validation(candidate, error is None and result.ok,
                                     "连接验证未完成，请重试" if error else result.message)
 
@@ -318,14 +321,15 @@ class KeyPage(QWizardPage):
     def _finish_validation(self, candidate: str, ok: bool, message: str) -> None:
         if not ok:
             self._set_working(False)
-            self.verify_button.setText("重新验证")
+            self.verify_button.setText(CONNECT)
             self.status.setText(f"验证失败：{message}；原 Key 未更改")
             self._pending_custom = None
             return
         pending = dict(self._pending_custom) if self._pending_custom is not None else None
+        existing = self._connecting_existing
         self._set_working(True)
-        self.verify_button.setText("安全保存中…")
-        self.status.setText("连接成功，正在保存…")
+        self.verify_button.setText(CONNECTING)
+        self.status.setText("连接成功，正在完成配置…")
 
         def save():
             if pending is not None:
@@ -334,18 +338,22 @@ class KeyPage(QWizardPage):
                     model_id=pending["model_id"],
                     model_name=pending["model_name"],
                     key=candidate or None,
+                    provider_id=pending["provider_id"],
+                    api=pending["api"],
                     allow_keychain_authorization=True,
                 )
-            return self.store.set_key(
-                self.provider, candidate, allow_keychain_authorization=True
-            )
+            if not existing:
+                return self.store.set_key(
+                    self.provider, candidate, allow_keychain_authorization=True
+                )
+            return None  # Reading an existing key never rewrites it or its ACL.
 
         def saved(_result, error):
             self._pending_custom = None
             self._set_working(False)
             if error:
-                self.verify_button.setText("重新保存")
-                self.status.setText("连接成功，但未能保存。请点击“重新保存”并在 macOS 授权框中允许。")
+                self.verify_button.setText(CONNECT)
+                self.status.setText("连接成功，但保存未完成。再次点“连接模型”可重试，原 Key 未改变。")
                 return
             if pending:
                 self._configured_custom_signature = tuple(
@@ -356,8 +364,10 @@ class KeyPage(QWizardPage):
             self._verified = not self.key_edit.text() and (
                 pending is None or self._configured_custom_signature == self._custom_signature()
             )
+            self._connected = self._verified
             self.key_edit.setPlaceholderText("已安全保存 · 输入新 Key 可更换")
-            self.verify_button.setText("已连接 ✓")
+            self.verify_button.setText(CONNECTED if self._connected else CONNECT)
+            self.verify_button.setEnabled(not self._connected)
             self.status.setText("验证成功，已安全保存。可以点“下一步”了。" if self._verified
                                 else "原配置已保存，修改后的内容请重新验证。")
             self.completeChanged.emit()
@@ -365,6 +375,9 @@ class KeyPage(QWizardPage):
         run_in_background(self, save, saved)
 
     def _mode_changed(self) -> None:
+        self._connected = False
+        self.verify_button.setText(CONNECT)
+        self.verify_button.setEnabled(not self._working)
         custom = self.mode_combo.currentData() == "custom"
         self.custom_panel.setVisible(custom)
         self.key_edit.setPlaceholderText("输入 API Key" if custom else "输入 DeepSeek API Key")
@@ -379,8 +392,6 @@ class KeyPage(QWizardPage):
             else self.store.key_status(self.provider)[0]
         )
         self.status.setText(self._connection_status())
-        provider = self._stored_provider()
-        self.authorize_button.setVisible(bool(provider and self.store.key_access_required(provider)))
         self.completeChanged.emit()
 
 
@@ -394,12 +405,15 @@ class PermissionPage(QWizardPage):
         note = QLabel("权限不是使用聊天的前提。只有需要读屏或看图时再授权，并且一次只打开一个系统页面。")
         note.setWordWrap(True)
         layout.addWidget(note)
-        accessibility = QPushButton("授权辅助功能（读文字）")
-        accessibility.clicked.connect(lambda: self.permission_requested.emit("accessibility"))
-        layout.addWidget(accessibility)
-        screen = QPushButton("授权屏幕录制（看图片，可稍后）")
-        screen.clicked.connect(lambda: self.permission_requested.emit("screen"))
-        layout.addWidget(screen)
+        self._permission_states: dict[str, bool | None] = {}
+        self.permission_buttons: dict[str, QPushButton] = {}
+        for permission, label in (("accessibility", "读文字 · 辅助功能"), ("screen", "看图片 · 屏幕录制")):
+            layout.addWidget(QLabel(label))
+            button = QPushButton("检查权限中…")
+            button.setAccessibleName(label)
+            button.clicked.connect(lambda _checked=False, p=permission: self._act(p))
+            self.permission_buttons[permission] = button
+            layout.addWidget(button)
         layout.addWidget(QLabel("可直接点“下一步”，稍后在真正使用相关能力时再授权。"))
         self.status = QLabel("尚未检查权限；聊天可直接使用。")
         self.status.setWordWrap(True)
@@ -408,12 +422,29 @@ class PermissionPage(QWizardPage):
         self._poll.setInterval(1500)
         self._poll.timeout.connect(self.refresh_status)
 
+    def _act(self, permission: str) -> None:
+        state = self._permission_states.get(permission)
+        if state is None:
+            self.refresh_status()
+        elif state:
+            self.permission_requested.emit(f"manage_{permission}")
+        else:
+            self.permission_requested.emit(permission)
+
     def refresh_status(self) -> None:
-        from .permissions import accessibility_granted, screen_recording_granted
-        self.status.setText(
-            f"读文字：{'已授权' if accessibility_granted() else '未授权'}  ·  "
-            f"看图片：{'已授权' if screen_recording_granted() else '未授权'}"
-        )
+        from .permissions import permission_status
+        notes = []
+        for permission, label in (("accessibility", "读文字"), ("screen", "看图片")):
+            state = permission_status(permission)
+            self._permission_states[permission] = state
+            self.permission_buttons[permission].setText(
+                "管理权限" if state is True else "去开启" if state is False else "重新检查")
+            description = ("系统已授权，无需重复操作" if state is True else
+                           "未授权，可稍后开启" if state is False else "暂时无法确认权限")
+            notes.append(f"{label}：{description}")
+        if any(state is True for state in self._permission_states.values()):
+            notes.append("重装应用可能保留系统之前的授权。")
+        self.status.setText("\n".join(notes))
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -455,7 +486,8 @@ class OnboardingWizard(QWizard):
         wizard_style.setParent(self)
         self.setStyle(wizard_style)
         self.setWindowTitle("欢迎使用 haochen")
-        self.setMinimumSize(680, 580)
+        self.setMinimumSize(560, 400)
+        self.resize(600, 460)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setStyleSheet(APP_QSS)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage, True)
@@ -465,6 +497,7 @@ class OnboardingWizard(QWizard):
         self.setButtonText(QWizard.WizardButton.CancelButton, "稍后继续")
         self.button(QWizard.WizardButton.NextButton).setObjectName("primaryBtn")
         self.button(QWizard.WizardButton.FinishButton).setObjectName("primaryBtn")
+        self.setStyleSheet(APP_QSS)  # Re-polish the footer after assigning its primary roles.
 
         welcome = QWizardPage()
         welcome.setTitle("欢迎使用 haochen")

@@ -74,7 +74,7 @@ def humanize_error(text: str) -> str:
     if any(token in low for token in (
         "no api key found", "api key not found", "missing api key", "use /login",
     )):
-        return "当前模型还没有配置 API Key。请打开设置，保存并验证后再试。"
+        return "当前模型还没有配置 API Key。请打开设置，填写 Key 并点击“连接模型”后再试。"
     if any(token in low for token in (
         "authorization", "invalid api key", "incorrect api key", "authentication",
         "unauthorized", "bearer sk-",

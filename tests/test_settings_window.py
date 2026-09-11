@@ -66,9 +66,9 @@ def test_stored_key_is_not_presented_as_runtime_validated(qtbot, tmp_path: Path)
     window._build()
 
     labels = window.findChildren(settings_module.QLabel)
-    badge = next(label for label in labels if "已存储" in label.text())
+    badge = next(label for label in labels if "已保存 · 点击连接模型" in label.text())
 
-    assert badge.text() == "已存储 · 尚未验证"
+    assert badge.text() == "已保存 · 点击连接模型"
     assert badge.objectName() == "badgeOff"
 
 
@@ -102,7 +102,7 @@ def test_key_save_flow_validate_fail_keeps_old(qtbot, tmp_path: Path, monkeypatc
     provider_edit = edits[0]
     provider_edit.setText("bad-candidate")
     save_button = window.findChildren(settings_module.QPushButton)
-    target = next((b for b in save_button if b.text() == "保存并验证"), None)
+    target = next((b for b in save_button if b.text() == "连接模型"), None)
     assert target is not None
     target.click()
 
@@ -120,7 +120,7 @@ def test_key_save_flow_validate_success_saves(qtbot, tmp_path: Path, monkeypatch
     provider_edit = edits[0]
     provider_edit.setText("new-good-secret")
     save_button = next(
-        b for b in window.findChildren(settings_module.QPushButton) if b.text() == "保存并验证"
+        b for b in window.findChildren(settings_module.QPushButton) if b.text() == "连接模型"
     )
     save_button.click()
 
@@ -131,22 +131,25 @@ def test_key_save_flow_validate_success_saves(qtbot, tmp_path: Path, monkeypatch
     assert "已安全存储" in window._status.text() or credentials.get("deepseek") == "new-good-secret"
 
 
-def test_empty_save_preserves_keychain_entry(qtbot, tmp_path: Path) -> None:
+def test_empty_save_preserves_keychain_entry(qtbot, tmp_path: Path, monkeypatch) -> None:
     window, store, credentials = make_window(qtbot, tmp_path)
     credentials.set("deepseek", "existing")
     store.set_key("deepseek", "existing")
     window._build()
+    monkeypatch.setattr(settings_module, "validate_api_key",
+                        lambda *_: validation.ValidationResult(True, "ok"))
 
     edits = window.findChildren(settings_module.QLineEdit)
     provider_edit = edits[0]
     provider_edit.setText("")  # 保存后的空输入不能解释为删除
     save_button = next(
-        b for b in window.findChildren(settings_module.QPushButton) if b.text() == "保存并验证"
+        b for b in window.findChildren(settings_module.QPushButton) if b.text() == "连接模型"
     )
     save_button.click()
 
+    qtbot.waitUntil(lambda: not window._working)
     assert credentials.get("deepseek") == "existing"
-    assert "保持不变" in window._status.text()
+    assert "继续使用已保存的 Key" in window._status.text()
 
 
 def test_corrupt_config_shows_recovery_card(qtbot, tmp_path: Path) -> None:

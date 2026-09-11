@@ -56,14 +56,15 @@ def test_key_authorization_is_explicit_retryable_and_session_scoped(qtbot, tmp_p
     page = KeyPage(store, lambda *_: key_validation.ValidationResult(True, "ok"))
     qtbot.addWidget(page)
     page.show()
-    assert page.authorize_button.isVisible()
+    assert page.verify_button.text() == "连接模型"
+    assert not hasattr(page, "authorize_button")
     assert backend.calls == 0  # No system prompt during initialization/status reads.
-    page.authorize_button.click()
+    page.verify_button.click()
     qtbot.waitUntil(lambda: not page._working)
     assert not page.isComplete()
     assert "原 Key 未改变" in page.status.text()
     backend.allowed = True
-    page.authorize_button.click()
+    page.verify_button.click()
     qtbot.waitUntil(page.isComplete)
     assert backend.calls == 2
     assert store.key_status("deepseek")[0]  # One-time Allow is enough for this process.
@@ -72,8 +73,7 @@ def test_key_authorization_is_explicit_retryable_and_session_scoped(qtbot, tmp_p
     assert KeychainStore("test-only-service", backend=backend)._authorized == {}
 
 
-def test_settings_existing_key_authorization_preserves_draft(qtbot, tmp_path):
-    from PyQt6.QtWidgets import QPushButton
+def test_settings_new_key_validation_never_authorizes_old_key(qtbot, tmp_path, monkeypatch):
     backend = LockedTestBackend()
     backend.allowed = True
     store = ConfigStore(tmp_path, keychain=KeychainStore("test-only-service", backend=backend))
@@ -81,14 +81,19 @@ def test_settings_existing_key_authorization_preserves_draft(qtbot, tmp_path):
     store._save("auth.json", {"deepseek": {"type": "api_key", "key": "$HAOCHEN_DEEPSEEK_API_KEY"}})
     window = SettingsWindow(store=store)
     qtbot.addWidget(window)
-    edit, _badge, _save = window._key_widgets["deepseek"]
+    calls = []
+    def validate(provider, key):
+        calls.append((provider, key))
+        return key_validation.ValidationResult(False, "test rejection")
+    monkeypatch.setattr(settings_module, "validate_api_key", validate)
+    edit, _badge, button = window._key_widgets["deepseek"]
     edit.setText("unsaved-test-draft")
-    button = next(b for b in window.findChildren(QPushButton) if b.text() == "授权已有 Key")
     button.click()
     qtbot.waitUntil(lambda: not window._working)
-    assert backend.calls == 1
+    assert backend.calls == 0
+    assert calls == [("deepseek", "unsaved-test-draft")]
     assert edit.text() == "unsaved-test-draft"
-    assert store.key_status("deepseek")[0]
+    assert store.get_key("deepseek") == "$HAOCHEN_DEEPSEEK_API_KEY"
 
 
 def test_onboarding_save_explicitly_allows_keychain_authorization(qtbot, tmp_path, monkeypatch):
