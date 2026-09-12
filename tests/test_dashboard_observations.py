@@ -36,6 +36,31 @@ def test_initial_baselines_are_independent_for_each_source(store):
     assert [(item["id"], item["changeType"]) for item in history] == [("pane", "appeared")]
 
 
+def test_unknown_otty_hooks_do_not_hide_real_known_pane_changes_or_removal(store):
+    unknown = event("unknown-pane", state="unknown")
+    running = event("real-pane", state="processing")
+    store.observe("otty", snapshot(unknown, running, status="partial", presenceComplete=True))
+    assert all(not row["incomplete"] for row in store.snapshot()["events"])
+    store.observe("otty", snapshot(unknown, {**running, "state": "idle"},
+                                   status="partial", presenceComplete=True))
+    assert store.snapshot()["history"][-1]["changeType"] == "changed"
+    store.observe("otty", snapshot(unknown, status="partial", presenceComplete=True))
+    assert [row["id"] for row in store.snapshot()["events"]] == ["unknown-pane"]
+    assert store.snapshot()["history"][-1]["changeType"] == "removed"
+
+
+def test_other_connector_cannot_claim_otty_presence_contract(store):
+    store.observe("browser", snapshot(event("browser-page"), status="connected"))
+    store.observe("browser", snapshot(status="partial", presenceComplete=True))
+    assert store.snapshot()["events"][0]["stale"] is True
+
+
+def test_truncated_otty_presence_claim_does_not_remove_existing_rows(store):
+    store.observe("otty", snapshot(event("keep")))
+    store.observe("otty", snapshot(status="partial", presenceComplete=True, truncated=True))
+    assert store.snapshot()["events"][0]["stale"] is True
+
+
 def test_partial_known_updates_are_recorded_once_without_losing_presence(store):
     first, second = event(), event("two")
     store.observe("otty", snapshot(first, second))

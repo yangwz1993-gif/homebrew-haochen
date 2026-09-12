@@ -12,10 +12,12 @@ from ..background import run_in_background
 from .adapters.browser import BrowserAdapter
 from .adapters.calendar import CalendarAdapter
 from .adapters.otty import OttyAdapter
+from .adapters.wechat import WeChatAdapter
+from .attention import activity
 from .store import FREQUENCIES, DashboardStore, now
 from .tracking import SummaryWorker, daily_report, refresh_track
 
-NAMES = {"otty": "Otty", "browser": "Chrome", "calendar": "日历"}
+NAMES = {"otty": "Otty", "browser": "Chrome", "calendar": "日历", "wechat": "微信"}
 
 
 class DashboardService(QObject):
@@ -27,10 +29,12 @@ class DashboardService(QObject):
         self.store = DashboardStore(config.home)
         settings = self.store.snapshot()["settings"]
         self.adapters = {"otty": OttyAdapter(), "browser": BrowserAdapter(config.home),
-                         "calendar": CalendarAdapter(settings.get("calendarIds"))}
+                         "calendar": CalendarAdapter(settings.get("calendarIds")), "wechat": WeChatAdapter()}
         self.adapters["browser"].set_enabled(settings["connectors"].get("browser", False))
         self.summarizer = SummaryWorker(config)
         self.connectors = {}
+        self.otty_diagnostics = {}
+        self._seen_connected = set()
         self.active = set()
         self.last_poll = {}
         self.generations = dict.fromkeys(self.adapters, 0)
@@ -65,7 +69,7 @@ class DashboardService(QObject):
             return
         snapshot = self.store.snapshot()
         for identifier in self.adapters:
-            interval = 120 if identifier == "calendar" else (3 if self.visible else 20)
+            interval = 120 if identifier == "calendar" else (3 if self.visible or identifier == "otty" else 20)
             if time.monotonic() - self.last_poll.get(identifier, 0) >= interval:
                 self._collect(identifier)
         if not self._track_busy:
@@ -98,7 +102,25 @@ class DashboardService(QObject):
         source_revision = self.store.source_revision(identifier)
 
         def work():
-            result = self.adapters[identifier].snapshot()
+            try:
+                result = self.adapters[identifier].snapshot()
+            except Exception:
+                result = {"status": "error", "message": "来源检查失败，旧信息已标记失效，稍后会重试",
+                          "checkedAt": now(), "events": []}
+            if identifier == "browser":
+                try:
+                    result["setup"] = self.adapters["browser"].setup_state()
+                except Exception:
+                    result["setup"] = {"stage": "bridge", "message": "连接诊断暂不可用，请重试"}
+            if (identifier == "otty" and not self.otty_diagnostics and not self.stopped
+                    and generation == self.generations[identifier]):
+                diagnostic = getattr(self.adapters["otty"], "diagnostic", None)
+                if diagnostic:
+                    try:
+                        result["diagnostics"] = diagnostic()
+                    except Exception:
+                        # Setup guidance must not discard a successful live snapshot.
+                        result["diagnostics"] = {"message": "集成检查暂不可用，请重试", "agents": []}
             # Disabled/revoked sources cannot be repopulated by an old worker.
             if (not self.stopped and generation == self.generations[identifier]
                     and self.store.snapshot()["settings"]["connectors"].get(identifier)):
@@ -120,7 +142,12 @@ class DashboardService(QObject):
                 self._collect(identifier)
                 return
             self.connectors[identifier] = result if error is None else {
-                "status": "unavailable", "message": "连接暂不可用，请稍后重试", "checkedAt": now()}
+                "status": "error", "message": "连接暂不可用，请稍后重试", "checkedAt": now()}
+            if result and (result.get("status") in {"ready", "connected"}
+                           or result.get("status") == "partial" and result.get("events")):
+                self._seen_connected.add(identifier)
+            if identifier == "otty" and result and result.get("diagnostics"):
+                self.otty_diagnostics = result["diagnostics"]
             self.changed.emit()
 
         run_in_background(self, work, done)
@@ -139,25 +166,35 @@ class DashboardService(QObject):
             message = raw.get("message", "准备连接" if enabled else "尚未连接；点击后按需授权")
             connector = {"id": identifier, "name": NAMES[identifier], "enabled": enabled,
                          "status": status, "summary": message, "checkedAt": raw.get("checkedAt"),
+                         "hasConnected": identifier in self._seen_connected,
                          "checking": identifier in self.active or (
                              identifier == "calendar" and self._calendar_selection_generation is not None)}
             if identifier == "otty":
+                connector["diagnostics"] = self.otty_diagnostics
                 connector["helpUrl"] = "https://docs.otty.sh/agents/setup"
-                connector["capabilities"] = ["官方 CLI 实时元数据", "精确跳转 Agent", "生命周期需安装 Otty 官方集成"]
+                connector["capabilities"] = ["官方 CLI 约每 3 秒状态快照，不是完整事件流", "精确跳转 Agent",
+                                             "生命周期需安装 Otty 官方集成；极短状态可能处于两次检查之间"]
             if identifier == "browser":
+                connector["setup"] = raw.get("setup", {"stage": "extension", "message": "正在检查 Chrome 连接"})
                 connector["capabilities"] = ["扩展中明确选择追踪的页面", "逐站授权", "登录态 DOM 正文"]
+            if identifier == "wechat":
+                connector["reasonCode"] = raw.get("reasonCode")
+                connector["capabilities"] = ["仅公开 Dock 未读标记", "打开微信，不定位单聊",
+                                             "不读取聊天正文或私人数据库"]
+                if not enabled:
+                    connector["summary"] = "可按需观察微信 Dock 未读标记；不含聊天正文，未暴露标记时明确显示未知。"
             connectors.append(connector)
         connectors.extend([
-            {"id": "wechat", "name": "微信", "enabled": False, "status": "limited",
-             "summary": "个人微信暂无可靠公开后台消息接口，本版不读取私人数据库或伪造未读数。"},
             {"id": "lark", "name": "飞书", "enabled": False, "status": "disabled", "summary": "按计划延期接入。"},
         ])
         state["connectors"] = connectors
+        state["activity"] = activity(state["events"], connectors)
         state["calendar"] = [self._calendar_view(e) for e in state["events"] if e.get("source") == "calendar"]
         state["events"] = [e for e in state["events"] if e.get("source") != "calendar"]
         state["updatedAt"] = now()
         state.pop("history", None)
         state.pop("schema", None)
+        state.pop("readVersions", None)
         # Local file references and selected evidence only; never configuration credentials.
         return state
 
@@ -174,6 +211,7 @@ class DashboardService(QObject):
             self._calendar_selection_generation = None
             self._calendar_selection_error = True  # Reapply desired scope on reconnect.
         if not enabled:
+            self._seen_connected.discard(identifier)
             self._cancel_for_source(identifier)
         self.store.enable(identifier, enabled)
         if identifier == "browser":

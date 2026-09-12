@@ -122,6 +122,11 @@ class AppShell:
         if self._ensure_dashboard():
             self.dashboard.show()
 
+    def collapse_dashboard(self) -> None:
+        """The native Cmd-M menu only collapses an active overview window."""
+        if self.dashboard is not None and not self._stopped:
+            self.dashboard.window.collapse_if_active()
+
     def show_daily_report(self) -> None:
         if self._stopped or not self._interaction_allowed():
             return

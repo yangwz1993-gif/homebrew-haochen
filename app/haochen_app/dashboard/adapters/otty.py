@@ -18,6 +18,8 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from haochen_app.dashboard.adapters.otty_setup import LABELS, OttyIntegrationSetup, agent_kind
+
 BUNDLE_ID = "io.appmakes.otty"
 HOOKS_HELP_URL = "https://docs.otty.sh/agents/setup"
 _ID = re.compile(r"[ptw]_[A-Za-z0-9_-]{1,160}\Z")
@@ -27,7 +29,7 @@ _STATE_TEXT = {
     "processing": "正在处理",
     "awaiting": "等待你输入或授权",
     "idle": "当前空闲（不代表事项已完成）",
-    "unknown": "已发现会话，尚未收到可用的 Agent 状态",
+    "unknown": "已找到这个终端，但 Agent 尚未上报运行状态；请检查 Otty 的 Agent 集成。",
 }
 
 
@@ -101,13 +103,14 @@ def _bounded_process(argv: list[str], *, timeout: float = 2.0, max_output: int =
 
 
 class OttyAdapter:
-    def __init__(self, cli_path: str | Path | None = None):
+    def __init__(self, cli_path: str | Path | None = None, *, user_home: Path | None = None):
         self._explicit_cli = Path(cli_path) if cli_path is not None else None
         self._cli: Path | None = None
         self._previous: dict[str, dict] = {}
         self._baseline_valid = False
         self._last_success: str | None = None
         self._lock = threading.RLock()
+        self._user_home = user_home
 
     def _find_cli(self) -> Path | None:
         if self._explicit_cli is not None:
@@ -141,6 +144,50 @@ class OttyAdapter:
         with self._lock:
             self._cli = self._find_cli()
             return {"installed": self._cli is not None, "running": self._is_running()}
+
+    def diagnostic(self, snapshot: dict | None = None) -> dict:
+        """Explicit/background check; never return terminal titles or transcripts."""
+        if snapshot is None:
+            # Checking setup must not consume lifecycle transitions which belong
+            # to the service's next observation/history update.
+            with self._lock:
+                previous, baseline, success = self._previous, self._baseline_valid, self._last_success
+                try:
+                    snapshot = self.snapshot()
+                finally:
+                    self._previous, self._baseline_valid, self._last_success = previous, baseline, success
+        groups: dict[str, list[dict]] = {}
+        unrecognized = 0
+        for event in snapshot.get("events", []):
+            if not event.get("agent"):
+                continue
+            kind = agent_kind(event["agent"])
+            if kind is None:
+                unrecognized += 1
+            else:
+                groups.setdefault(kind, []).append(event)
+        setup = OttyIntegrationSetup(self._cli, self._user_home)
+        agents = []
+        for kind, events in sorted(groups.items()):
+            result = setup.inspect(kind)
+            reporting = sum(bool(e.get("sessionId")) and e.get("state") in {"processing", "idle", "awaiting"}
+                            and not e.get("stale") for e in events)
+            result.update(panes=len(events), reportingCount=reporting)
+            if reporting == len(events):
+                result.update(reasonCode="reporting", message=f"{LABELS[kind]} 已实际上报运行状态。",
+                              nextAction="none", canInstall=False, needsRestart=False)
+            elif result["integrationStatus"] == "present":
+                result["reasonCode"] = "installed_but_not_reporting"
+            agents.append(result)
+        return {"status": snapshot["status"], "checkedAt": snapshot["checkedAt"],
+                "message": snapshot["message"], "agents": agents, "unrecognizedAgents": unrecognized,
+                "paneCount": len(snapshot.get("events", [])), "helpUrl": HOOKS_HELP_URL}
+
+    def setup(self, kind: str, *, apply: bool = False) -> dict:
+        """Plan first; only an explicit confirmed click may request apply=True."""
+        with self._lock:
+            self._cli = self._find_cli()
+            return OttyIntegrationSetup(self._cli, self._user_home).setup(kind, apply=apply)
 
     def _run_cli(self, *args: str):
         if args not in (("pane", "list"), ("tab", "list"), ("window", "list")):
@@ -260,6 +307,9 @@ class OttyAdapter:
                     "isWindowFocused": focused if isinstance(focused, bool) else None,
                     "observedAt": checked, "updatedAt": checked, "stale": False,
                     "stateSource": "otty_hook" if state != "unknown" else "unavailable",
+                    "agentKind": agent_kind(pane["agent"]),
+                    "reasonCode": "lifecycle_not_reported" if state == "unknown" and pane["agent"] else None,
+                    "nextAction": "check_otty_integration" if state == "unknown" and pane["agent"] else None,
                     "target": {"kind": "otty", **{key: pane[key] for key in ("paneId", "tabId", "windowId")}},
                     "evidence": [
                         {"label": "来源", "text": "Otty 本地 CLI 的终端元数据（不含会话正文）"},
@@ -306,6 +356,9 @@ class OttyAdapter:
                 "lastSuccessAt": checked, "events": list(current.values()), "changes": changes,
                 "removedIds": removed, "stale": incomplete, "hooksHelpURL": HOOKS_HELP_URL,
                 "unknownStateCount": unknown_count,
+                # A missing hook is not a missing pane. The complete CLI list
+                # remains authoritative for presence even if lifecycle is unknown.
+                "presenceComplete": not incomplete,
             }
 
     def focus(self, target: dict) -> None:

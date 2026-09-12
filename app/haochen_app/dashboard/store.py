@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..secure_storage import atomic_write_private, ensure_private_directory, ensure_private_file
+from .attention import ERRORS, WAITING, decorate, version
 
 FREQUENCIES = {"manual": 0, "quarter": 900, "hourly": 3600, "daily": 86400}
 PALETTES = {"sage", "stone", "mist", "carbon"}
@@ -53,9 +54,11 @@ class DashboardStore:
         self._revoked_sources = set()
         self.data = {
             "schema": 1, "events": [], "history": [], "tracks": [], "files": [], "reports": [],
-            "settings": {"palette": "sage", "motion": "system", "dock": "side", "aiDaily": False,
-                         "connectors": {"otty": True, "browser": True, "calendar": False}},
+            "readVersions": {}, "entranceRevision": 2,
+            "settings": {"palette": "sage", "motion": "system", "dock": "notch", "aiDaily": False,
+                         "connectors": {"otty": True, "browser": True, "calendar": False, "wechat": False}},
         }
+        migrate_reads = False
         if self.path.exists():
             ensure_private_file(self.path)
             if self.path.stat().st_size > MAX_STATE_BYTES:
@@ -66,7 +69,19 @@ class DashboardStore:
             for key in ("events", "history", "tracks", "files", "reports"):
                 if not isinstance(loaded.get(key), list):
                     raise ValueError("总览数据不完整，原文件未改变")
+            migrate_reads = "readVersions" not in loaded
             self.data.update(loaded)
+            # beta.1 defaulted to a side button; migrate that initial UI once.
+            # Subsequent explicit choices (including pet-only) remain intact.
+            if loaded.get("entranceRevision", 0) < 2:
+                self.data["settings"]["dock"] = "notch"
+                self.data["entranceRevision"] = 2
+        if not isinstance(self.data.get("readVersions"), dict):
+            self.data["readVersions"] = {}
+        if migrate_reads:
+            for event in self.data["events"]:
+                if event.get("status") not in WAITING | ERRORS:
+                    self.data["readVersions"].setdefault(event["id"], version(event))
         for track in self.data["tracks"]:
             track.setdefault("revision", uuid.uuid4().hex)
             if track.get("status") == "checking":
@@ -91,13 +106,36 @@ class DashboardStore:
 
     def snapshot(self):
         with self.lock:
-            return copy.deepcopy(self.data)
+            result = copy.deepcopy(self.data)
+            result["events"] = decorate(result["events"], result["readVersions"])
+            return result
+
+    def mark_read(self, identifier, expected_version):
+        with self.lock:
+            event = next((item for item in self.data["events"] if item["id"] == identifier), None)
+            if event is None or not isinstance(expected_version, str):
+                raise ValueError("这条动态已不可用，请刷新后查看")
+            current = version(event)
+            if current != expected_version:
+                return {"acknowledged": False, "reason": "动态已更新，未将新内容误标已读"}
+            if self.data["readVersions"].get(identifier) != current:
+                previous = self.data["readVersions"].get(identifier)
+                self.data["readVersions"][identifier] = current
+                try:
+                    self._save()
+                except Exception:
+                    if previous is None:
+                        self.data["readVersions"].pop(identifier, None)
+                    else:
+                        self.data["readVersions"][identifier] = previous
+                    raise
+            return {"acknowledged": True}
 
     def settings_update(self, payload):
         with self.lock:
             settings = self.data["settings"]
             for field, allowed in (("palette", PALETTES), ("motion", {"system", "reduced"}),
-                                   ("dock", {"side", "notch"})):
+                                   ("dock", {"side", "notch", "pet"})):
                 if field in payload:
                     if payload[field] not in allowed:
                         raise ValueError("不支持的显示设置")
@@ -107,7 +145,7 @@ class DashboardStore:
             self._save()
 
     def enable(self, connector, enabled):
-        if connector not in ("otty", "browser", "calendar"):
+        if connector not in ("otty", "browser", "calendar", "wechat"):
             raise ValueError("此来源尚无可靠连接器")
         with self.lock:
             self._source_versions[connector] = self._source_versions.get(connector, 0) + 1
@@ -126,6 +164,8 @@ class DashboardStore:
         identifiers = {value for e in self.data["events"] if e.get("source") == connector
                        for value in (e["id"], e.get("sourceId")) if value}
         self.data["events"] = [e for e in self.data["events"] if e.get("source") != connector]
+        for identifier in identifiers:
+            self.data["readVersions"].pop(identifier, None)
         self.data["history"] = [e for e in self.data["history"] if e.get("source") != connector]
         # Reports are derived snapshots, not user-authored documents. Regenerate
         # only from still-authorized sources after disconnect/revocation.
@@ -190,7 +230,9 @@ class DashboardStore:
             baseline = self._observation_baselines.get(source)
             old = {e["id"]: e for e in self.data["events"] if e.get("source") == source}
             incoming_events = result.get("events")
-            complete = (status in {"ready", "connected"} and isinstance(incoming_events, list)
+            authoritative = (status in {"ready", "connected"}
+                             or source == "otty" and status == "partial" and result.get("presenceComplete") is True)
+            complete = (authoritative and isinstance(incoming_events, list)
                         and len(incoming_events) <= 200 and not result.get("incomplete")
                         and not result.get("truncated") and not result.get("error"))
             valid_events = []
@@ -230,7 +272,8 @@ class DashboardStore:
                 # A partial snapshot can update an already-known item's actual
                 # content, but cannot replace the complete presence ID set.
                 changed = reliable and previous and any(previous.get(k) != event.get(k)
-                                           for k in ("title", "summary", "status", "fingerprint"))
+                                           for k in ("title", "summary", "status", "fingerprint",
+                                                     "startAt", "endAt", "allDay", "calendarId", "location"))
                 if changed:
                     self._record_observation(event, "changed")
                     substantive_change = True
@@ -257,6 +300,14 @@ class DashboardStore:
                               for identifier, event in old.items() if identifier not in seen)
             others = [e for e in self.data["events"] if e.get("source") != source]
             self.data["events"] = others + events
+            reads = self.data["readVersions"]
+            if baseline is None:
+                for event in events:
+                    if event.get("status") not in WAITING | ERRORS and not event.get("unreadCount"):
+                        reads.setdefault(event["id"], version(event))
+            # Bound bookkeeping to current events; no growing tombstone map.
+            current_ids = {event["id"] for event in self.data["events"]}
+            self.data["readVersions"] = {key: value for key, value in reads.items() if key in current_ids}
             cutoff = (datetime.now().astimezone() - timedelta(days=31)).isoformat()
             self.data["history"] = [e for e in self.data["history"]
                                     if e.get("observedAt", "") > cutoff][-1500:]

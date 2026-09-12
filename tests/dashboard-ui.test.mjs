@@ -12,8 +12,112 @@ const draft = overrides => ({title:'发布准备',goal:'确认反馈中的问题
 test('empty state contains no demonstration data and safe appearance defaults',() => {
   const state = ui.normalizeState(null);
   for (const field of ['events','tracks','files','connectors','calendar','reports']) assert.deepEqual(state[field],[]);
-  assert.equal(state.settings.palette,'sage'); assert.equal(state.settings.dock,'side'); assert.equal(state.settings.motion,'system');
+  assert.equal(state.settings.palette,'sage'); assert.equal(state.settings.dock,'notch'); assert.equal(state.settings.motion,'system');
   assert.equal(state.updatedAt,'');
+});
+
+test('notch is default while explicit pet-only and side modes are preserved',() => {
+  for (const dock of ['notch','pet','side']) assert.equal(ui.normalizeState({settings:{dock}}).settings.dock,dock);
+  assert.equal(ui.normalizeState({settings:{dock:'unknown'}}).settings.dock,'notch');
+});
+
+test('connection overview keeps unavailable providers visible without inventing events',() => {
+  const connectors=[{id:'otty',status:'unknown'},{id:'browser',status:'disabled'},{id:'wechat',status:'limited'},{id:'calendar',status:'permission_required'},{id:'feishu',status:'unsupported'}];
+  assert.deepEqual(ui.visibleConnectors(connectors).map(item=>item.id),['otty','browser','wechat','calendar']);
+  assert.equal(ui.connectorLabel({id:'browser',enabled:true,setup:{stage:'extension'}}),'待确认扩展连接');
+  assert.notEqual(ui.connectorLabel({id:'browser',enabled:true,setup:{stage:'ready'},status:'error'}),'已连接');
+  assert.equal(ui.connectorLabel({id:'browser',enabled:false,status:'connected',setup:{stage:'ready'}}),'未开启');
+});
+
+test('Chrome checklist only completes steps with explicit observed evidence',() => {
+  assert.ok(ui.browserSteps({id:'browser',enabled:true,status:'connected'}).every(step=>!step.done));
+  const steps=ui.browserSteps({setup:{stage:'authorization',stepResults:[{id:'extension',status:'complete'},{id:'bridge',status:'complete'},{id:'authorization',status:'attention'},{id:'ready',status:'pending'}]}});
+  assert.deepEqual(steps.map(step=>step.done),[true,true,false,false]);
+  assert.equal(steps[2].current,true); assert.equal(steps[2].status,'attention');
+  assert.ok(ui.browserSteps({setup:{stage:'ready'}}).every(step=>!step.done));
+});
+
+test('Otty unknown run state explains missing telemetry rather than lost content',() => {
+  const warning=ui.eventCoverage({source:'otty',status:'unknown',incomplete:true},{});
+  assert.match(warning.copy,/运行状态/); assert.match(warning.copy,/不代表会话内容丢失/); assert.equal(warning.action,'otty-check');
+  assert.equal(ui.eventCoverage({source:'otty',status:'unknown',diagnostics:{message:'当前会话未加载状态集成'}}).copy,'当前会话未加载状态集成');
+  assert.doesNotMatch(ui.eventCoverage({source:'otty',status:'unknown'},{diagnostics:{message:'别的 Agent 没上报'}}).copy,/别的 Agent/);
+  assert.equal(ui.eventCoverage({source:'Chrome',status:'changed',incomplete:false},{}),null);
+});
+
+test('reporting Otty panes never inherit an incomplete collector or another pane warning',() => {
+  for (const status of ['processing','idle','awaiting']) {
+    const event={id:'otty:current',source:'otty',status,incomplete:true,reasonCode:null,stale:false};
+    assert.equal(ui.eventCoverage(event,{status:'partial',diagnostics:{message:'另外两个 Agent 未上报'}}),null);
+    assert.equal(ui.eventDetailState(event).coverage,null);
+  }
+  const unknown=ui.eventCoverage({source:'otty',status:'unknown',reasonCode:'lifecycle_not_reported'});
+  assert.equal(unknown.action,'otty-check');
+  const stale=ui.eventCoverage({source:'otty',status:'idle',stale:true,incomplete:true});
+  assert.equal(stale.action,'connection-refresh'); assert.match(stale.copy,/已过期/);
+  assert.equal(ui.eventStateLabel({source:'otty',status:'idle',stale:true}),'状态已过期（上次：就绪）');
+  assert.equal(ui.eventStateLabel({source:'otty',status:'unknown',stale:true}),'状态已过期');
+  assert.equal(ui.eventStateLabel({source:'otty',status:'processing',stale:false}),'处理中');
+});
+
+test('detail semantic signature ignores poll timestamps and other panes, not real changes',() => {
+  const event={id:'otty:current',source:'otty',status:'processing',title:'当前 Agent',summary:'正在处理',incomplete:true,
+    updatedAt:'2026-09-13T01:00:00Z',observedAt:'2026-09-13T01:00:00Z',unread:true,attentionVersion:'A',
+    target:{kind:'otty',paneId:'p:1'},evidence:[{label:'状态',text:'真实状态',capturedAt:'2026-09-13T01:00:00Z'}]};
+  const view={kind:'event',id:event.id}, state={events:[event],connectors:[{id:'otty',status:'partial',checkedAt:'old'}]};
+  const signature=ui.modalStateSignature(state,view), poll=structuredClone(state);
+  poll.events[0].updatedAt='2026-09-13T02:00:00Z'; poll.events[0].observedAt='new';
+  poll.events[0].evidence[0].capturedAt='new'; poll.events[0].unread=false; poll.events[0].attentionVersion='B';
+  poll.events[0].incomplete=false; poll.events.push({id:'otty:other',status:'unknown'});
+  poll.connectors[0].checkedAt='new'; poll.connectors[0].diagnostics={message:'其他 Agent 未上报'};
+  assert.equal(ui.modalStateSignature(poll,view),signature);
+  for (const patch of [{status:'idle'},{summary:'处理结束'},{error:'当前来源失联'},{stale:true},{status:'permission_required'},{authorized:false},{target:{kind:'otty',paneId:'p:2'}}]) {
+    assert.notEqual(ui.modalStateSignature({...state,events:[{...event,...patch}]},view),signature);
+  }
+  assert.notEqual(ui.modalStateSignature({...state,events:[{...event,evidence:[{label:'状态',text:'新的真实内容'}]}]},view),signature);
+  assert.notEqual(ui.modalStateSignature({...state,events:[]},view),signature);
+});
+
+test('WeChat connection labels describe Dock badge scope rather than full messages',() => {
+  assert.equal(ui.connectorLabel({id:'wechat',enabled:false,status:'connected'}),'未开启');
+  assert.equal(ui.connectorLabel({id:'wechat',enabled:true,status:'connected'}),'未读标记可读');
+  assert.equal(ui.connectorLabel({id:'wechat',enabled:true,status:'ready'}),'未读标记可读');
+  for (const status of ['limited','partial']) assert.equal(ui.connectorLabel({id:'wechat',enabled:true,status}),'标记暂不可读');
+  assert.equal(ui.connectorLabel({id:'wechat',enabled:true,status:'permission_required'}),'需辅助功能授权');
+  assert.equal(ui.connectorLabel({id:'wechat',enabled:true,status:'not_running'}),'应用未运行');
+});
+
+test('WeChat Dock-only events never imply full chat access or missing badge means zero',() => {
+  const coverage=ui.eventCoverage({source:'wechat',reasonCode:'dock_badge_only',status:'changed'},{});
+  assert.match(coverage.copy,/Dock/); assert.match(coverage.copy,/不是聊天正文/);
+  assert.match(coverage.copy,/不会当作 0 条/); assert.match(coverage.copy,/不会定位某个聊天/);
+});
+
+test('WeChat has an app jump and only missing AX grants get a manual settings entry',() => {
+  assert.deepEqual(ui.wechatControls({status:'permission_required'}).map(item=>item.action),['wechat-open','wechat-permission']);
+  for (const status of ['disabled','connected','limited','not_running','error']) assert.deepEqual(ui.wechatControls({status}).map(item=>item.action),['wechat-open']);
+  assert.match(asset('dashboard.js'),/perform\('openSource',\{connectorId:'wechat'\},el\)/);
+  assert.match(asset('dashboard.js'),/perform\('openSource',\{permission:'accessibility'\},el\)/);
+});
+
+test('read receipts require server unread state and the exact displayed revision',() => {
+  assert.deepEqual(ui.eventReceipt({id:'e1',attentionVersion:'revision-A',unread:true}),{eventId:'e1',version:'revision-A'});
+  assert.deepEqual(ui.eventReceipt({id:'e1',attentionVersion:'revision-B',unread:true}),{eventId:'e1',version:'revision-B'});
+  for(const event of [{id:'e1',attentionVersion:'A',unread:false},{id:'e1',unread:true},{attentionVersion:'A',unread:true},{id:'e1',attentionVersion:'A',unread:'true'}]) assert.equal(ui.eventReceipt(event),null);
+  assert.equal(ui.ACTIONS.has('eventRead'),true); assert.equal(ui.ACTIONS.has('ottyCheck'),true);
+});
+
+test('calendar details acknowledge the exact displayed calendar event, not a different event projection',() => {
+  const calendar={id:'calendar:original-id',attentionVersion:'calendar-revision-A',unread:true};
+  const otherProjection={...calendar,attentionVersion:'older-event-revision'};
+  const state={calendar:[calendar],events:[otherProjection]};
+  assert.equal(ui.detailEvent(state,{kind:'calendar',id:calendar.id}),calendar);
+  assert.deepEqual(ui.eventReceipt(ui.detailEvent(state,{kind:'calendar',id:calendar.id})),{eventId:'calendar:original-id',version:'calendar-revision-A'});
+  assert.equal(ui.detailEvent(state,{kind:'event',id:calendar.id}),otherProjection);
+  assert.equal(ui.detailEvent(state,{kind:'report',id:calendar.id}),null);
+  assert.equal(ui.detailEvent(state,{kind:'calendar',id:'missing'}),null);
+  assert.equal(ui.detailEvent({events:[calendar]},{kind:'calendar',id:calendar.id}),calendar);
+  assert.equal(ui.eventReceipt(ui.detailEvent({calendar:[{...calendar,unread:false}]},{kind:'calendar',id:calendar.id})),null);
 });
 
 test('unknown settings and malformed collections never become valid connections',() => {

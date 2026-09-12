@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import select
 import shlex
 import sqlite3
+import stat
 import sys
 import time
 import uuid
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -38,6 +41,41 @@ MESSAGES = {
     "error": "本次页面采集失败，可在 Chrome 扩展中重试",
 }
 
+# Public manifest key in browser-extension/manifest.json fixes the unpacked ID
+# across install directories. This is not a credential or a Web Store claim.
+BUNDLED_EXTENSION_ID = "hjbiopmhlpcnpaojialipdhdemnafecb"
+
+
+def _runtime_command() -> list[str]:
+    return (
+        [str(Path(sys.executable).resolve()), "--browser-host"]
+        if getattr(sys, "frozen", False)
+        else [str(Path(sys.executable).resolve()), str(Path(__file__).resolve().parents[3] / "run_app.py"),
+              "--browser-host"]
+    )
+
+
+def _launcher_text(home: Path, command: list[str]) -> str:
+    return "#!/bin/sh\numask 077\nexport HAOCHEN_HOME=" + shlex.quote(str(home.expanduser().absolute())) + \
+        "\nexec " + shlex.join(command) + ' "$@"\n'
+
+
+def _read_setup(path: Path) -> str | None:
+    if any(item.is_symlink() for item in (path, *path.parents)):
+        raise ValueError("浏览器桥接路径异常，请重新配置。")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 64_000:
+            raise ValueError("浏览器桥接配置不可用。")
+        content = handle.read(64_001)
+        if len(content) > 64_000:
+            raise ValueError("浏览器桥接配置过大。")
+        return content.decode("utf-8")
+
 
 def iso_time(value: float) -> str:
     return datetime.fromtimestamp(value, UTC).isoformat().replace("+00:00", "Z")
@@ -46,6 +84,97 @@ def iso_time(value: float) -> str:
 class BrowserAdapter:
     def __init__(self, home: Path):
         self.home = Path(home)
+
+    def setup_state(self, *, chrome_home: Path | None = None, command: list[str] | None = None) -> dict:
+        """Read-only setup chain. Never creates storage or reads Chrome profiles.
+
+        Missing host connectivity cannot prove that the extension is absent.
+        Only a fresh native handshake establishes the extension step as complete.
+        """
+        directory = self.home / "dashboard/browser-bridge"
+        chrome_home = chrome_home or Path.home() / "Library/Application Support/Google/Chrome"
+        manifest_path = chrome_home / "NativeMessagingHosts" / (HOST_NAME + ".json")
+        launcher = directory / "native-host-launcher"
+        steps = [{"id": identifier, "status": "unknown" if identifier == "extension" else "pending"}
+                 for identifier in ("extension", "bridge", "authorization", "ready")]
+        result = {"stage": "extension", "reasonCode": "bridge_missing", "stepResults": steps,
+                  "extensionId": BUNDLED_EXTENSION_ID, "extensionInstalled": "unknown",
+                  "extensionConnected": False, "bridgeInstalled": False, "runtimeValid": False,
+                  "sourceCount": 0, "availableSourceCount": 0, "missingPermissionCount": 0,
+                  "message": "尚未建立 Chrome 连接。先加载配套扩展，再完成本机连接；不会自动读取网页。"}
+        try:
+            texts = [_read_setup(p) for p in (manifest_path, directory / "host-config.json", launcher)]
+            if not all(texts):
+                if any(texts):
+                    result.update(stage="bridge", reasonCode="bridge_incomplete",
+                                  message="本机桥接配置不完整，请点击完成本机连接进行修复。")
+                    steps[1]["status"] = "attention"
+                return result
+            manifest, config = json.loads(texts[0] or "{}"), json.loads(texts[1] or "{}")
+            extension_id = config.get("extensionId")
+            if (not isinstance(extension_id, str) or not EXTENSION_ID.fullmatch(extension_id)
+                    or manifest.get("name") != HOST_NAME or manifest.get("type") != "stdio"
+                    or manifest.get("path") != str(launcher)
+                    or manifest.get("allowed_origins") != [f"chrome-extension://{extension_id}/"]
+                    or config.get("launcherPath") != str(launcher)
+                    or config.get("manifestPath") != str(manifest_path)):
+                raise ValueError("inconsistent host configuration")
+            result.update(extensionId=extension_id, bridgeInstalled=True, stage="bridge")
+            runtime = command or _runtime_command()
+            if (texts[2] != _launcher_text(self.home, runtime) or not os.access(launcher, os.X_OK)
+                    or not Path(runtime[0]).is_file()):
+                result.update(reasonCode="bridge_runtime_changed",
+                              message="应用位置或桥接启动程序已变化，请重新完成本机连接。")
+                steps[1]["status"] = "attention"
+                return result
+            result["runtimeValid"] = True
+            steps[1]["status"] = "complete"
+            result.update(reasonCode="extension_not_connected",
+                          message="本机桥接已就绪，尚未收到扩展连接。请在 Chrome 加载扩展并点击重新连接。")
+            database = directory / "observations.sqlite3"
+            if not database.is_file():
+                return result
+            if any(p.is_symlink() for p in (database, *database.parents)):
+                raise ValueError("invalid storage path")
+            with closing(sqlite3.connect(database.absolute().as_uri() + "?mode=ro", uri=True, timeout=0.2)) as db:
+                enabled = db.execute("SELECT value FROM options WHERE key='enabled'").fetchone()
+                if enabled and not enabled[0]:
+                    result.update(reasonCode="connector_disabled", message="Chrome 连接已关闭，请先在 haochen 中开启。")
+                    return result
+                now = time.time()
+                fresh = db.execute("SELECT COUNT(*) FROM sessions WHERE connected=1 AND seen>?",
+                                   (now - STALE_AFTER,)).fetchone()[0]
+                rows = db.execute(
+                    "SELECT sources.status, COUNT(*) FROM sources JOIN sessions ON sessions.id=sources.session "
+                    "WHERE sessions.connected=1 AND sessions.seen>? AND sources.checked>? "
+                    "GROUP BY sources.status", (now - STALE_AFTER, now - STALE_AFTER),
+                ).fetchall()
+            if not fresh:
+                return result
+            counts = dict(rows)
+            total, available = sum(counts.values()), counts.get("available", 0)
+            result.update(extensionInstalled="confirmed", extensionConnected=True, sourceCount=total,
+                          availableSourceCount=available, missingPermissionCount=counts.get("permission_required", 0))
+            steps[0]["status"] = "complete"
+            result.update(stage="authorization", reasonCode="page_not_selected",
+                          message="Chrome 已连接。打开要关注的网页，在扩展中授权该网站并选择追踪此页。")
+            if available:
+                steps[2]["status"] = steps[3]["status"] = "complete"
+                result.update(stage="ready", reasonCode="observing", message=f"已实际读取 {available} 个授权页面。")
+            elif counts.get("permission_required"):
+                steps[2]["status"] = "attention"
+                result.update(reasonCode="site_permission_required",
+                              message="已有追踪页面需要网站授权，请在扩展中重新授权。")
+            elif total:
+                steps[3]["status"] = "attention"
+                result.update(reasonCode="source_not_readable",
+                              message="Chrome 已连接，但还没有新鲜可读的页面；请在扩展中检查页面是否关闭、切换或休眠。")
+            return result
+        except (OSError, ValueError, UnicodeError, sqlite3.Error, AttributeError, IndexError):
+            result.update(stage="bridge", reasonCode="bridge_invalid",
+                          message="本机桥接配置暂不可用，请重新完成本机连接；不会读取其他浏览器数据。")
+            steps[1]["status"] = "attention"
+            return result
 
     def _load(self):
         store = BrowserStore(self.home)
@@ -182,23 +311,19 @@ class BrowserAdapter:
         directory = bridge_directory(self.home)
         launcher = directory / "native-host-launcher"
         if command is None:
-            command = (
-                [str(Path(sys.executable).resolve()), "--browser-host"]
-                if getattr(sys, "frozen", False)
-                else [
-                    str(Path(sys.executable).resolve()),
-                    str(Path(__file__).resolve().parents[3] / "run_app.py"),
-                    "--browser-host",
-                ]
-            )
+            command = _runtime_command()
         if not command or not Path(command[0]).is_absolute() or not Path(command[0]).is_file():
             raise ValueError("无法定位 haochen 的浏览器桥接启动程序")
         chrome_home = Path(chrome_home) if chrome_home else Path.home() / "Library/Application Support/Google/Chrome"
         manifest = chrome_home / "NativeMessagingHosts" / (HOST_NAME + ".json")
         if manifest.is_symlink():
             raise ValueError("不能覆盖符号链接形式的浏览器配置")
-        text = "#!/bin/sh\numask 077\nexport HAOCHEN_HOME=" + shlex.quote(str(self.home.expanduser().absolute()))
-        text += "\nexec " + shlex.join(command) + ' "$@"\n'
+        existing = _read_setup(manifest)
+        if existing:
+            prior = json.loads(existing)
+            if prior.get("name") != HOST_NAME or prior.get("path") != str(launcher):
+                raise ValueError("现有 Chrome 桥接属于另一个安装位置，未覆盖；请先从原应用移除连接。")
+        text = _launcher_text(self.home, command)
         atomic_write_private(launcher, text)
         launcher.chmod(0o700)
         atomic_write_private(

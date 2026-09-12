@@ -12,12 +12,14 @@ from PyQt6.QtGui import QDesktopServices
 
 from .. import paths
 from ..background import run_in_background
+from .adapters.browser import BUNDLED_EXTENSION_ID
 from .service import DashboardService
 
 ACTIONS = {
     "ready", "refresh", "openSource", "trackCreate", "trackUpdate", "trackPause", "trackRefresh", "trackDelete",
     "reportGet", "pickFolder", "fileRemove", "askHaochen", "openSettings", "collapse", "connectorEnable",
     "settingsUpdate", "browserInstall", "browserExtensionFolder", "calendarList", "calendarSelect",
+    "eventRead", "ottyCheck", "ottySetup",
 }
 HELP_URLS = {"https://docs.otty.sh/agents/setup", "https://docs.otty.sh/reference/cli"}
 
@@ -76,15 +78,20 @@ class DashboardController(QObject):
 
     def push(self):
         if not self.service.stopped:
-            self.window.send({"state": self.service.state()})
+            state = self.service.state()
+            self.window.set_activity(state["activity"])
+            self.window.send({"state": state})
 
     def handle(self, message):
-        identifier = message.get("id")
+        identifier = message.get("id") if isinstance(message, dict) else None
         try:
             action, payload = validate_message(message)
             if identifier in self._seen:
                 return
             self._seen = (self._seen + [identifier])[-256:]
+            if action in {"ottyCheck", "ottySetup"}:
+                self._otty_action(identifier, action, payload)
+                return
             result = self._dispatch(action, payload)
             self.window.send({"id": identifier, "ok": True, "result": result, "state": self.service.state()})
         except (ValueError, OSError) as error:
@@ -98,6 +105,10 @@ class DashboardController(QObject):
         store = self.service.store
         if action == "ready":
             self.push()
+        elif action == "eventRead":
+            result = store.mark_read(payload.get("eventId"), payload.get("version"))
+            self.push()
+            return result
         elif action == "refresh":
             self.service.refresh()
         elif action == "collapse":
@@ -136,15 +147,55 @@ class DashboardController(QObject):
         elif action == "askHaochen":
             self.ask(payload)
         elif action == "browserInstall":
-            return self.service.adapters["browser"].install_host(payload.get("extensionId", ""))
+            result = self.service.adapters["browser"].install_host(payload.get("extensionId") or BUNDLED_EXTENSION_ID)
+            self.service._collect("browser")
+            return result
         elif action == "browserExtensionFolder":
             location = (paths.resources_dir() / "browser-extension" if paths.is_frozen()
                         else paths.PROJECT_ROOT / "browser-extension")
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(location)))
+            self._open_external(QUrl.fromLocalFile(str(location)))
         elif action == "calendarList":
             self._async_calendars()
         elif action == "calendarSelect":
             self.service.select_calendars(payload.get("ids"))
+
+    def _otty_action(self, identifier, action, payload):
+        adapter = self.service.adapters["otty"]
+
+        def work():
+            if action == "ottyCheck":
+                return adapter.diagnostic()
+            return adapter.setup(payload.get("agentKind", ""), apply=payload.get("confirmed") is True)
+
+        def done(result, error):
+            if self.service.stopped:
+                return
+            if error:
+                self.window.send({"id": identifier, "ok": False, "error": "状态集成操作未完成，请检查 Otty 后重试"})
+                return
+            if action == "ottyCheck":
+                self.service.otty_diagnostics = result
+            else:
+                self.service.otty_diagnostics = {}
+            self.service._collect("otty")
+            self.window.send({"id": identifier, "ok": True, "result": result, "state": self.service.state()})
+
+        run_in_background(self, work, done)
+
+    def _open_external(self, url):
+        if not QDesktopServices.openUrl(url):
+            raise ValueError("无法打开来源，请确认对应应用或文件仍可用")
+        self.window.hide()
+
+    def _open_wechat(self):
+        import AppKit as AK
+
+        from .adapters.wechat import BUNDLE_ID
+        workspace = AK.NSWorkspace.sharedWorkspace()
+        application = workspace.URLForApplicationWithBundleIdentifier_(BUNDLE_ID)
+        if not application or not workspace.openURL_(application):
+            raise ValueError("微信未能打开，请确认已安装微信")
+        self.window.hide()
 
     def _async_calendars(self):
         def done(result, error):
@@ -178,12 +229,18 @@ class DashboardController(QObject):
         picker.beginSheetModalForWindow_completionHandler_(self.window.panel, done)
 
     def open_source(self, payload):
+        if payload.get("connectorId") == "wechat":
+            self._open_wechat()
+            return
+        if payload.get("permission") == "accessibility":
+            self._open_external(QUrl("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"))
+            return
         snapshot = self.service.store.snapshot()
         if payload.get("fileId"):
             item = next((f for f in snapshot["files"] if f["id"] == payload["fileId"]), None)
             if not item or not Path(item["path"]).exists():
                 raise ValueError("文件入口已失效，请重新选择")
-            QDesktopServices.openUrl(QUrl.fromLocalFile(item["path"]))
+            self._open_external(QUrl.fromLocalFile(item["path"]))
             return
         identifier = payload.get("eventId") or payload.get("sourceId")
         event = next((e for e in snapshot["events"] if identifier in (e["id"], e.get("sourceId"))), None)
@@ -201,10 +258,12 @@ class DashboardController(QObject):
                 from Foundation import NSURL
                 application = AK.NSWorkspace.sharedWorkspace().URLForApplicationWithBundleIdentifier_("com.apple.iCal")
                 if application:
-                    AK.NSWorkspace.sharedWorkspace().openURL_(application)
+                    opened = AK.NSWorkspace.sharedWorkspace().openURL_(application)
                 else:
-                    AK.NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_("ical://"))
-                self.window.send({"ok": True, "message": "已打开日历应用，请按日程标题定位"})
+                    opened = AK.NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_("ical://"))
+                if not opened:
+                    raise ValueError("日历应用未能打开")
+                self.window.hide()
             elif target.get("kind") == "browser":
                 def focused(result, error):
                     if error or not result or not result.get("ok"):
@@ -214,9 +273,11 @@ class DashboardController(QObject):
                     else:
                         self.window.hide()
                 run_in_background(self, lambda: self.service.adapters["browser"].focus(target), focused)
+            elif target.get("kind") == "wechat":
+                self._open_wechat()
             return
         if payload.get("url") in HELP_URLS:
-            QDesktopServices.openUrl(QUrl(payload["url"]))
+            self._open_external(QUrl(payload["url"]))
             return
         url = payload.get("url")
         if isinstance(url, str) and QUrl(url).scheme() in ("https", "http"):
@@ -224,7 +285,7 @@ class DashboardController(QObject):
             items = snapshot["events"] + snapshot["tracks"]
             allowed = {e.get("url") for item in items for e in item.get("evidence", []) if isinstance(e, dict)}
             if url in allowed:
-                QDesktopServices.openUrl(QUrl(url))
+                self._open_external(QUrl(url))
                 return
         raise ValueError("来源已失效，请先刷新总览")
 

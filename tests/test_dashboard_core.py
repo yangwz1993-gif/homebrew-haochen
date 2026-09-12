@@ -934,6 +934,37 @@ def service_setup(monkeypatch, tmp_path):
     return controller, jobs, service_module
 
 
+def test_collector_exception_invalidates_old_running_state(service_setup):
+    controller, jobs, _ = service_setup
+    controller.store.observe("otty", {"status": "ready", "events": [
+        {**event("otty"), "state": "processing"}]})
+
+    def broken():
+        raise OSError("SYNTHETIC-PRIVATE-ERROR")
+
+    controller.adapters["otty"] = SimpleNamespace(snapshot=broken)
+    controller._collect("otty")
+    result = jobs[0][0]()
+    jobs[0][1](result, None)
+    assert controller.store.snapshot()["events"][0]["stale"] is True
+    assert result["status"] == "error"
+    assert "SYNTHETIC-PRIVATE-ERROR" not in str(result)
+    assert controller.state()["activity"]["kind"] == "error"
+
+
+def test_lost_connector_remembers_was_connected_until_explicit_disconnect(service_setup):
+    controller, jobs, _ = service_setup
+    controller.adapters["otty"] = SimpleNamespace(snapshot=lambda: {"status": "ready", "events": []})
+    controller._collect("otty")
+    jobs[0][1](jobs[0][0](), None)
+    controller.adapters["otty"] = SimpleNamespace(snapshot=lambda: {"status": "not_running", "events": []})
+    controller._collect("otty")
+    jobs[1][1](jobs[1][0](), None)
+    assert controller.state()["activity"]["kind"] == "error"
+    controller.enable("otty", False)
+    assert controller.state()["activity"]["kind"] == "idle"
+
+
 def test_disabled_source_drops_inflight_collection(service_setup):
     controller, jobs, _ = service_setup
 

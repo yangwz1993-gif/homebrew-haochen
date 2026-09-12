@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         check("memory-credentials", isinstance(shell.store.keychain, MemoryCredentialStore))
         controller = DashboardController(shell)
         shell.dashboard = controller
-        for name in ("otty", "browser", "calendar"):
+        for name in ("otty", "browser", "calendar", "wechat"):
             controller.service.enable(name, False)
         controller.service.store.settings_update({"motion": "reduced", "dock": "side", "aiDaily": False})
         fixture = output / "SELF-CHECK-fixture.md"

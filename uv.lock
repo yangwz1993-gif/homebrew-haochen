@@ -46,7 +46,7 @@ wheels = [
 
 [[package]]
 name = "haochen"
-version = "0.5.0b1"
+version = "0.5.0b2"
 source = { virtual = "." }
 dependencies = [
     { name = "pillow" },

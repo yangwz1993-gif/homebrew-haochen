@@ -9,9 +9,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PyQt6.QtCore import QEasingCurve, QObject, Qt, QVariantAnimation, pyqtSignal
-from PyQt6.QtGui import QCursor
-from PyQt6.QtWidgets import QApplication, QPushButton
+from PyQt6.QtCore import QEasingCurve, QObject, QVariantAnimation, pyqtSignal
+from PyQt6.QtWidgets import QApplication
+
+from .notch import NativeEntrance, command_m, entrance_geometry
 
 
 def _native_classes():
@@ -26,6 +27,19 @@ def _native_classes():
 
         def canBecomeMainWindow(self):
             return False
+
+        def performKeyEquivalent_(self, event):
+            if self.owner is not None and self.owner.command_event(event):
+                return True
+            return objc.super(HaochenOverviewPanel, self).performKeyEquivalent_(event)
+
+        def performMiniaturize_(self, sender):
+            if self.owner is not None:
+                self.owner.collapse_if_active()
+
+        def miniaturize_(self, sender):
+            if self.owner is not None:
+                self.owner.collapse_if_active()
 
     class HaochenOverviewHandler(NSObject, protocols=[objc.protocolNamed("WKScriptMessageHandler"),
                                                      objc.protocolNamed("WKNavigationDelegate")]):
@@ -80,8 +94,34 @@ def _native_classes():
         policy_method.callable, selector=policy_method.selector, signature=policy_method.signature)])
 
     class HaochenOverviewWebView(WK.WKWebView):
+        def setMarkedText_selectedRange_replacementRange_(self, text, selected, replacement):
+            if self.owner is not None:
+                # WKWebView's public hasMarkedText can lag/return false even
+                # after this NSTextInputClient method accepted composition.
+                # Remember the actual native input lifecycle as well, rather
+                # than collapsing while a Chinese input candidate is open.
+                length = text.length() if hasattr(text, "length") else len(str(text))
+                self.owner._native_composing = length > 0
+            objc.super(HaochenOverviewWebView, self).setMarkedText_selectedRange_replacementRange_(
+                text, selected, replacement)
+
+        def insertText_replacementRange_(self, text, replacement):
+            objc.super(HaochenOverviewWebView, self).insertText_replacementRange_(text, replacement)
+            if self.owner is not None:
+                self.owner._native_composing = False
+
+        def unmarkText(self):
+            objc.super(HaochenOverviewWebView, self).unmarkText()
+            if self.owner is not None:
+                self.owner._native_composing = False
+
+        def performKeyEquivalent_(self, event):
+            if self.owner is not None and self.owner.command_event(event):
+                return True
+            return objc.super(HaochenOverviewWebView, self).performKeyEquivalent_(event)
+
         def cancelOperation_(self, sender):
-            if self.hasMarkedText():
+            if self.hasMarkedText() or (self.owner is not None and self.owner._native_composing):
                 objc.super(HaochenOverviewWebView, self).cancelOperation_(sender)
             elif self.owner is not None:
                 self.owner.evaluate("window.haochenNativeEscape?.()")
@@ -149,8 +189,10 @@ class NativeDashboard(QObject):
         self.closed = False
         self.expanded = False
         self.settings = {}
+        self._screen_id = None
         self._animation = None
         self._generation = 0
+        self._native_composing = False
         self.handler = Handler.alloc().init()
         self.handler.owner = self
         config = WK.WKWebViewConfiguration.alloc().init()
@@ -179,35 +221,31 @@ class NativeDashboard(QObject):
             AK.NSMakeRect(100, 100, 1020, 700), AK.NSWindowStyleMaskBorderless,
             AK.NSBackingStoreBuffered, False)
         self.panel.setReleasedWhenClosed_(False)
+        self.panel.owner = self
         self.panel.setOpaque_(False)
         self.panel.setBackgroundColor_(AK.NSColor.clearColor())
         self.panel.setHasShadow_(True)
-        self.panel.setLevel_(AK.NSFloatingWindowLevel)
-        self.panel.setCollectionBehavior_(AK.NSWindowCollectionBehaviorCanJoinAllSpaces
-                                          | AK.NSWindowCollectionBehaviorFullScreenAuxiliary)
+        # Only the bounded entrance floats. An expanded work surface behaves
+        # like an ordinary app window and must yield to Finder, browsers, etc.
+        self.panel.setLevel_(AK.NSNormalWindowLevel)
+        self.panel.setCollectionBehavior_(AK.NSWindowCollectionBehaviorManaged
+                                          | AK.NSWindowCollectionBehaviorMoveToActiveSpace)
         self.panel.setHidesOnDeactivate_(False)
         self.panel.setTitle_("haochen · 桌面总览")
         self.panel.setContentView_(self.viewport)
-        self.handle = QPushButton("h  ·")
-        self.handle.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
-                                   | Qt.WindowType.WindowStaysOnTopHint)
-        self.handle.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.handle.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.handle.setAccessibleName("打开 haochen 桌面总览")
-        self.handle.setToolTip("haochen · 桌面总览\n也可通过桌宠右键打开")
-        self.handle.setStyleSheet("QPushButton{background:#eaf0e7;color:#334638;border:1px solid #b6c4b2;"
-                                 "border-radius:17px;font:20px Georgia;padding:4px;}"
-                                 "QPushButton:hover{background:#f8faf5;}")
-        self.handle.clicked.connect(self.summon_requested)
+        self.handle = NativeEntrance(self)
         app = QApplication.instance()
         app.screenRemoved.connect(self._screens_changed)
         app.screenAdded.connect(self._screens_changed)
+        self._screen_connections = []
+        self._connect_screen_geometry()
         self.webview.loadFileURL_allowingReadAccessToURL_(
             NSURL.fileURLWithPath_(str(self.document)), NSURL.fileURLWithPath_(str(assets.resolve())))
 
     def _screens_changed(self, *_args):
         if self.closed:
             return
+        self._connect_screen_geometry()
         self._place_handle()
         if self.expanded:
             self._generation += 1
@@ -218,34 +256,69 @@ class NativeDashboard(QObject):
             self._set_frame(target)
             self.panel.setAlphaValue_(1)
 
-    def _screen(self):
-        return QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+    def _connect_screen_geometry(self):
+        for screen in QApplication.screens():
+            if screen not in self._screen_connections:
+                screen.geometryChanged.connect(self._screens_changed)
+                screen.availableGeometryChanged.connect(self._screens_changed)
+                self._screen_connections.append(screen)
+
+    def _reduced_motion(self):
+        import AppKit as AK
+        return self.settings.get("motion") == "reduced" or (
+            AK.NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceMotion())
+
+    @staticmethod
+    def _rect(rect):
+        return (rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
+
+    def _entrance_geometry(self):
+        screen = self._ns_screen()
+        safe_top, left, right = 0, None, None
+        if screen.respondsToSelector_("safeAreaInsets"):
+            safe_top = screen.safeAreaInsets().top
+            left = self._rect(screen.auxiliaryTopLeftArea())
+            right = self._rect(screen.auxiliaryTopRightArea())
+        return entrance_geometry(self._rect(screen.frame()), self._rect(screen.visibleFrame()),
+                                 safe_top, left, right, self.settings.get("dock", "notch"))
 
     def _place_handle(self):
-        rect = self._screen().availableGeometry()
-        if self.settings.get("dock") == "notch":
-            self.handle.setFixedSize(74, 34)
-            # Below visibleFrame: never covers the hardware notch or macOS menus.
-            self.handle.move(rect.center().x() - 37, rect.top() + 4)
+        frame, attached = self._entrance_geometry()
+        self.handle.place(frame, attached, self._reduced_motion())
+
+    def _show_handle(self):
+        if self.settings.get("dock") != "pet":
+            self.handle.show()
         else:
-            self.handle.setFixedSize(46, 66)
-            self.handle.move(rect.right() - 51, rect.top() + rect.height() // 3)
+            self.handle.hide()
 
     def start(self):
         self._place_handle()
-        self.handle.show()
+        self._show_handle()
 
     def set_settings(self, settings):
         self.settings = dict(settings)
         self._place_handle()
+        if not self.expanded:
+            self._show_handle()
+
+    def set_activity(self, activity):
+        self.handle.set_activity(activity)
 
     def _ns_screen(self):
         import AppKit as AK
-        mouse = AK.NSEvent.mouseLocation()
-        for screen in AK.NSScreen.screens():
-            if AK.NSPointInRect(mouse, screen.frame()):
+        screens = AK.NSScreen.screens()
+        for screen in screens:
+            if screen.deviceDescription().get("NSScreenNumber") == self._screen_id:
                 return screen
-        return AK.NSScreen.mainScreen() or AK.NSScreen.screens()[0]
+        # Use the physical notch if present; otherwise the main screen. Retain
+        # that display for the life of the entrance instead of following mouse
+        # movement, including a close/open reversal on another display.
+        chosen = next((screen for screen in screens if screen.respondsToSelector_("safeAreaInsets")
+                       and screen.safeAreaInsets().top > 0), None)
+        chosen = chosen or AK.NSScreen.mainScreen() or screens[0]
+        self._screen_id = chosen.deviceDescription().get("NSScreenNumber")
+        return chosen
 
     def _open_frame(self):
         area = self._ns_screen().visibleFrame()
@@ -254,12 +327,25 @@ class NativeDashboard(QObject):
                 area.origin.y + (area.size.height - height) / 2, width, height)
 
     def _closed_frame(self):
-        area = self._ns_screen().visibleFrame()
-        if self.settings.get("dock") == "notch":
-            return (area.origin.x + area.size.width / 2 - 37,
-                    area.origin.y + area.size.height - 38, 74, 34)
-        return (area.origin.x + area.size.width - 52,
-                area.origin.y + area.size.height * 2 / 3 - 66, 46, 66)
+        return self._entrance_geometry()[0]
+
+    def collapse_if_active(self):
+        import AppKit as AK
+        if not self.expanded or not self.panel.isKeyWindow() or not AK.NSApp.isActive():
+            return False
+        # A native menu equivalent can arrive before WebKit handles composition.
+        # Consume it without closing until the input method has committed.
+        if not self.webview.hasMarkedText() and not self._native_composing:
+            self.hide()
+        return True
+
+    def command_event(self, event):
+        import AppKit as AK
+        if command_m(event.charactersIgnoringModifiers(), event.modifierFlags(),
+                     AK.NSEventModifierFlagCommand, AK.NSEventModifierFlagShift,
+                     AK.NSEventModifierFlagOption, AK.NSEventModifierFlagControl):
+            return self.collapse_if_active()
+        return False
 
     def _set_frame(self, frame):
         import AppKit as AK
@@ -275,7 +361,6 @@ class NativeDashboard(QObject):
             self.webview.setFrameSize_(AK.NSMakeSize(*size))
 
     def _animate(self, target, opening):
-        import AppKit as AK
         self._generation += 1
         generation = self._generation
         if self._animation:
@@ -284,8 +369,7 @@ class NativeDashboard(QObject):
         current = self.panel.frame()
         start = (current.origin.x, current.origin.y, current.size.width, current.size.height)
         start_alpha = self.panel.alphaValue()
-        reduced = self.settings.get("motion") == "reduced" or (
-            AK.NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceMotion())
+        reduced = self._reduced_motion()
         animation = QVariantAnimation(self)
         animation.setStartValue(0.0)
         animation.setEndValue(1.0)
@@ -303,7 +387,7 @@ class NativeDashboard(QObject):
                 return
             if not opening:
                 self.panel.orderOut_(None)
-                self.handle.show()
+                self._show_handle()
             else:
                 self.panel.setAlphaValue_(1)
 
@@ -334,6 +418,7 @@ class NativeDashboard(QObject):
             self.visibility_changed.emit(True)
         else:
             self.panel.makeKeyAndOrderFront_(None)
+            AK.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
 
     def hide(self):
         if self.closed or not self.expanded:
@@ -359,11 +444,11 @@ class NativeDashboard(QObject):
         if self._animation:
             self._animation.stop()
         self.handle.close()
-        self.handle.deleteLater()
         self.webview.stopLoading()
         self.webview.configuration().userContentController().removeScriptMessageHandlerForName_("haochen")
         self.webview.setNavigationDelegate_(None)
         self.webview.disconnect_owner()
         self.handler.owner = None
+        self.panel.owner = None
         self.panel.orderOut_(None)
         self.panel.close()

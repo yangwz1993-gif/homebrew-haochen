@@ -40,6 +40,7 @@ def test_menu_bar_provides_required_native_entries(qtbot) -> None:
     calls: list[str] = []
     shell = SimpleNamespace(
         show_dashboard=lambda: calls.append("dashboard"),
+        collapse_dashboard=lambda: calls.append("collapse"),
         show_daily_report=lambda: calls.append("report"),
         show_chat=lambda: calls.append("chat"),
         show_settings=lambda: calls.append("settings"),
@@ -64,6 +65,7 @@ def test_menu_bar_provides_required_native_entries(qtbot) -> None:
         find(label)
 
     assert find("打开对话").shortcut().toString() == "Ctrl+1"
+    assert find("收回总览").shortcut().toString() == "Ctrl+M"
     assert find("打开对话").shortcutContext() == Qt.ShortcutContext.ApplicationShortcut
     assert find("设置…").menuRole() == QAction.MenuRole.PreferencesRole
     assert find("设置…").shortcut() == menu_module._standard_shortcut(

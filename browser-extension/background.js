@@ -4,6 +4,7 @@ const MAX_SOURCES = 32;
 const MAX_CONTENT = 60000;
 let sources = {}, clientId, port = null, connecting = false, connected = false;
 let bridgeMessage = "尚未连接 haochen。请先在应用中安装桥接。";
+let bridgeReason = "not_connected", connectionTimer = null;
 let pendingForgets = [];
 let sessionId = null, focusBusy = false;
 const ready = chrome.storage.local.get(["sources", "clientId", "pendingForgets"]).then(saved => {
@@ -40,15 +41,26 @@ async function connect() {
   await ready;
   if (port || connecting) return;
   connecting = true;
+  bridgeReason = "connecting";
+  bridgeMessage = "正在连接本机 haochen…";
   try {
     const next = chrome.runtime.connectNative(HOST);
     port = next;
     next.onMessage.addListener(message => {
       if (port !== next) return;
       if (message.type === "ack" && message.operation === "hello") {
-        sessionId = typeof message.sessionId === "string" ? message.sessionId : null;
+        if (typeof message.sessionId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(message.sessionId)) {
+          next.disconnect(); port = null; connected = false; connecting = false; sessionId = null;
+          clearTimeout(connectionTimer); connectionTimer = null;
+          bridgeReason = "protocol_mismatch";
+          bridgeMessage = "本机桥接版本不匹配。请在 haochen 重新完成本机连接后重试。";
+          return;
+        }
+        sessionId = message.sessionId;
         connected = true;
         connecting = false;
+        clearTimeout(connectionTimer); connectionTimer = null;
+        bridgeReason = "connected";
         bridgeMessage = "已连接 haochen · 只在本机传递你选择的网页文字";
         for (const sourceId of pendingForgets) send({type: "forget", sourceId});
         for (const source of Object.values(sources)) refresh(source);
@@ -71,15 +83,31 @@ async function connect() {
     });
     next.onDisconnect.addListener(() => {
       // Consume Chrome's runtime error without logging potentially sensitive values.
-      const failed = !!chrome.runtime.lastError;
+      const error = chrome.runtime.lastError?.message || "";
       if (port !== next) return;
+      clearTimeout(connectionTimer); connectionTimer = null;
       port = null; connected = false; connecting = false; sessionId = null;
-      bridgeMessage = failed ? "桥接未连接。请检查应用中的扩展 ID，并点击重新连接。" : "haochen 桥接已断开";
+      if (/not found/i.test(error)) {
+        bridgeReason = "host_missing"; bridgeMessage = "扩展已安装，但本机桥接还没配置。请回到 haochen 完成本机连接。";
+      } else if (/forbidden|access.*denied/i.test(error)) {
+        bridgeReason = "origin_mismatch"; bridgeMessage = "桥接绑定的扩展 ID 不匹配。请用下方 ID 在 haochen 重新完成本机连接。";
+      } else if (/failed to start|exited/i.test(error)) {
+        bridgeReason = "runtime_unavailable"; bridgeMessage = "桥接程序未能启动。若刚升级或移动了应用，请在 haochen 重新完成本机连接。";
+      } else {
+        bridgeReason = "disconnected";
+        bridgeMessage = error ? "连接未成功，请确认 haochen 中的 Chrome 连接已开启，再点击重新连接。" : "haochen 桥接已断开";
+      }
     });
     next.postMessage({type: "hello", version: 1, clientId});
+    connectionTimer = setTimeout(() => {
+      if (port !== next || connected) return;
+      next.disconnect(); port = null; connecting = false; sessionId = null;
+      bridgeReason = "timeout"; bridgeMessage = "本机连接超过 5 秒未响应，请确认应用可运行并重新连接。";
+    }, 5000);
   } catch (_) {
     port = null; connecting = false; connected = false;
-    bridgeMessage = "无法连接 haochen 本机桥接";
+    clearTimeout(connectionTimer); connectionTimer = null;
+    bridgeReason = "connection_failed"; bridgeMessage = "无法连接 haochen 本机桥接";
   }
 }
 
@@ -223,7 +251,7 @@ async function handle(message, sender) {
   // Control commands only come from our popup, never a content script/web page.
   if (sender.url !== chrome.runtime.getURL("popup.html")) return {ok: false};
   if (message.type === "state") return {ok: true, sources: Object.values(sources), connected,
-    bridgeMessage, extensionId: chrome.runtime.id};
+    connecting, bridgeReason, bridgeMessage, extensionId: chrome.runtime.id};
   if (message.type === "reconnect") {
     if (port) port.disconnect(); port = null; connecting = false; connected = false;
     await connect(); return {ok: true};

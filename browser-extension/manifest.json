@@ -3,6 +3,7 @@
   "name": "haochen · 已授权网页追踪",
   "description": "仅在你选择追踪并授权的网站读取主框架文字，通过本机桥接交给 haochen。",
   "version": "0.5.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6hOB/hnjUOz87VPa04N4TM/z2eZTvlu+h18cpZM8KpqHmFtNeWAkPhgAR4XCGsqyooZzNvt8G1mPnkFb0cSI3Auld9A57GM2VlZgUhi7vzNmcbr1DLhBC54H66utQlSKjMT4lY0HV4ZK7gEColZeW/nFij1eB6/RWxbbivzyAFxOiQ8jPQzfMzuU2qRpZtVOrevaCCiJnNliubF/jmEvDjIWXtVwuqN7KR9S1peA3SFLx/bT2/BlJcMr5T1tbGxCDslxxU0UqqRc2IRlnXuOep8SflTVvqGXYY7jKJE54yBBsI/VEApmtRIpj29Q1u6wuglqGaukTqKUt5E0uKAg+wIDAQAB",
   "minimum_chrome_version": "120",
   "permissions": ["activeTab", "scripting", "storage", "nativeMessaging", "alarms"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
