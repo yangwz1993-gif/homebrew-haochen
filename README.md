@@ -9,8 +9,10 @@ haochen 是一款面向 macOS 的独立桌面 AI 伙伴：常驻桌面、按需�
 ## 当前状态
 
 - 稳定版本：`0.3.4`（所有者验收通过的里程碑版）
-- 自动化测试：472 项，整体覆盖率 83%
+- 稳定版验收记录：472 项自动化测试，整体覆盖率 83%
 - 分发：GitHub Release + Homebrew Cask
+
+当前功能分支正在准备 `0.5.0-beta.1` 本地验收：原生桌面总览、Otty Agent 动态、授权网页追踪、日历、文件条、自建事项和日报。它**尚未公开发布**，下面的 Homebrew 命令仍安装稳定版本。连接启用与本机验收步骤见 [0.5 本地说明](docs/releases/v0.5.0-beta.1-local.md)。
 
 0.3.4 经所有者明确选择继续使用发布者自签名；Homebrew Cask 会移除该 App 的
 quarantine 属性。它没有经过 Apple Developer ID 签名或 Apple 公证，直接下载 DMG
@@ -61,6 +63,15 @@ HAOCHEN_MOCK=1 HAOCHEN_SKIP_ONBOARDING=1 \
 - `make regressions`：协议、配置、视觉、对话、桌宠及壳层回归
 - `make engine`：构建独立引擎
 - `make package`：Developer ID 正式打包；legacy 分发需显式设置 `HAOCHEN_BUILD_MODE=legacy`
+
+0.5 总览的原生检查需在 macOS 图形会话运行（不是 offscreen WebView）：
+
+```bash
+app/.venv/bin/python scripts/verify_dashboard_native.py
+app/.venv/bin/python scripts/verify_dashboard_ui.py
+```
+
+冻结包的隔离自检入口为 `haochen.app/Contents/MacOS/haochen --dashboard-check --dashboard-check-output /tmp/haochen-dashboard-check-001`。输出目录必须尚不存在；自检只用自己创建的临时文件，不授予权限、启动引擎或读取用户资料。它是工程验证，不能代替用户实际连接后的验收。
 
 ## 仓库与版本
 

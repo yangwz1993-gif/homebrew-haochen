@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "haochen · 已授权网页追踪",
+  "description": "仅在你选择追踪并授权的网站读取主框架文字，通过本机桥接交给 haochen。",
+  "version": "0.5.0",
+  "minimum_chrome_version": "120",
+  "permissions": ["activeTab", "scripting", "storage", "nativeMessaging", "alarms"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "action": {"default_title": "haochen 网页追踪", "default_popup": "popup.html"},
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'; connect-src 'none'"}
+}

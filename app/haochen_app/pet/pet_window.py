@@ -46,6 +46,7 @@ class PetWindow(QWidget):
     open_chat_requested = pyqtSignal()   # 直接打开完整对话窗口
     new_session_requested = pyqtSignal()
     settings_requested = pyqtSignal()    # 设置占位（P4 接配置面板）
+    dashboard_requested = pyqtSignal()
     quit_requested = pyqtSignal()
     moved = pyqtSignal(int, int)         # v0.1.6：拖动中（外层联动气泡跟随）
 
@@ -299,6 +300,10 @@ class PetWindow(QWidget):
             self._context_menu.raise_()
             return
         menu = QMenu(self)
+        act_dashboard = QAction("打开桌面总览", self)
+        act_dashboard.triggered.connect(self.dashboard_requested.emit)
+        menu.addAction(act_dashboard)
+        menu.addSeparator()
         act_key = QAction(f"唤起气泡 {self._hotkey_hint}", self)
         act_key.setEnabled(False)
         menu.addAction(act_key)

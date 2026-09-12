@@ -5,9 +5,9 @@
     MOCK_TICK_MS=20 .venv/bin/python haochen_app/pet/verification/run_scenarios.py
 
 场景（对应验收清单）：
-  S0 首启问称呼  → 首次唤起即锚定人物正上方（可见间隙 8px）+ 问候块 → 输入称呼落盘不再问（v0.1.7）
+  S0 称呼与锚定  → 首次唤起不拦截问称呼（已移向导）；独立验证称呼落盘 + 可见间隙约 8px
   S1 普通问答    → 输入退场/思考状态/单轮结果卡，姿态 idle→thinking→idle
-  S2 读屏确认    → 感知提示（单行不折行）+「读吧/不读」确认条 → 回车=「读吧」→ 短结（v0.1.7）
+  S2 读屏确认    → 真实协议驱动的阅读阶段提示 +「读吧/不读」确认条 → 回车=「读吧」→ mock 短结
   S3 错误路径    → 错误块 + alert(angry) 姿态
   S4 Esc 打断    → abort，已产内容保留，状态条标「已停止」
   S5 Esc 收起    → 气泡淡出，状态回 IDLE（失焦不收起由 changeEvent 保证，人工可验）
@@ -17,6 +17,7 @@
 
 截图：pet/bubble 各自 widget.grab()（不依赖屏幕坐标、不拍用户桌面）。
 日志：state-transitions.log（状态机迁移）+ results.log（断言结果）。
+产物与用户档案均写入独立临时目录；启动时打印路径，不覆盖仓库内历史证据。
 """
 
 from __future__ import annotations
@@ -27,13 +28,14 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 APP_DIR = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(APP_DIR))
-OUT = Path(__file__).resolve().parent
+OUT = Path(tempfile.mkdtemp(prefix="haochen-pet-scenarios-"))
 
 # v0.1.6 位置记忆写 haochen_home()/pet-pos.json：验证隔离到临时目录，不碰真实数据目录
-os.environ.setdefault("HAOCHEN_HOME", tempfile.mkdtemp(prefix="haochen-pet-verify-"))
+os.environ["HAOCHEN_HOME"] = tempfile.mkdtemp(prefix="haochen-pet-verify-")
 # 留出足够时间让 ACK 卡完成淡入；只影响本视觉证据进程，mock 默认仍为零延迟。
 os.environ.setdefault("MOCK_ACCEPT_DELAY_MS", "240")
 os.environ.setdefault("MOCK_ACTION_DELAY_MS", "240")
@@ -45,22 +47,49 @@ from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
 
 from haochen_app.pet import PetApp, PetState
 from haochen_app.pet import theme as T
-from haochen_app.pet.bubble import GreetBlock, HintBlock, SummaryBlock
+from haochen_app.pet.bubble import SummaryBlock
 from haochen_app.pet.pet_window import PetWindow
 from haochen_app.pet.profile import should_ask_name
+from haochen_app.reading_status import LABELS as READING_LABELS, ReadingStatus
 
 LOG: list[str] = []
 VISUAL_EVIDENCE: list[dict] = []
 
 
-def visible_bubble_pet_gap(pa: PetApp) -> int:
+def visible_bubble_pet_gap(pa: PetApp) -> float:
     """Measure painted tail-tip to the first visible row of the pet asset."""
     b, p = pa.bubble, pa.pet
-    if b.y() + b.height() <= p.y():
+    # Current full-body assets have transparent headroom; their window bounds
+    # overlap the tail window by 2px without their painted pixels overlapping.
+    # The actual tail direction, not disjoint widget rectangles, identifies sides.
+    if b.tail_side == "bottom":
         tail_tip_y = b.y() + b.height() - T.TAIL_TIP_BOTTOM_INSET
         pet_visible_top = p.y() + T.PET_VISIBLE_TOP_INSET
         return pet_visible_top - tail_tip_y
-    return b.y() - (p.y() + p.height())
+    return painted_bubble_pet_gap(pa)
+
+
+def painted_bubble_pet_gap(pa: PetApp) -> float:
+    """Independent pixel evidence, ignoring nearly transparent antialias fringes."""
+    def bounds(widget):
+        pixmap = widget.grab()
+        image = pixmap.toImage()
+        dpr = pixmap.devicePixelRatio()
+        rows = [y for y in range(image.height())
+                if any(image.pixelColor(x, y).alpha() > 32 for x in range(image.width()))]
+        if not rows:
+            raise AssertionError("Expected visible painted widget pixels")
+        return widget.y() + rows[0] / dpr, widget.y() + rows[-1] / dpr
+    bubble_top, bubble_bottom = bounds(pa.bubble)
+    pet_top, pet_bottom = bounds(pa.pet)
+    return pet_top - bubble_bottom if pa.bubble.tail_side == "bottom" else bubble_top - pet_bottom
+
+
+def white_contrast(background: str) -> float:
+    channels = QColor(background).getRgbF()[:3]
+    linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in channels]
+    luminance = sum(v * weight for v, weight in zip(linear, (0.2126, 0.7152, 0.0722), strict=True))
+    return 1.05 / (luminance + 0.05)
 
 
 def note(msg: str) -> None:
@@ -94,6 +123,7 @@ def shot_pair(pa: PetApp, name: str) -> None:
         "bubble": {"x": b.x(), "y": b.y(), "width": b.width(), "height": b.height()},
         "pet": {"x": p.x(), "y": p.y(), "width": p.width(), "height": p.height()},
         "bubble_pet_gap": visible_bubble_pet_gap(pa),
+        "painted_bubble_pet_gap": painted_bubble_pet_gap(pa),
         "tail_center_delta_x": tail_x - pet_center_x,
         "layout": b.layout_metrics(),
     })
@@ -110,6 +140,7 @@ class Runner:
                       self.s7_expand_cmd_w, self.s8_geometry_drag_persist, self.finish]
         self.results: list[str] = []
         self.app_quit = False
+        self.completed = False
         self._captured_transitions: set[str] = set()
         QApplication.instance().aboutToQuit.connect(self._mark_quit)
         # v0.1.4 hotfix：详情改走 ChatWindow「从气泡展开」模式。
@@ -171,10 +202,13 @@ class Runner:
         b, p = pa.bubble, pa.pet
         # 默认锚定：唤起后气泡即在人物正上方（可见间隙 8px，尾巴对中心），不用拖
         gap = visible_bubble_pet_gap(pa)
-        self.check("S0 首次唤起气泡在人物正上方", b.y() + b.height() <= p.y(),
-                   f"b.bottom={b.y() + b.height()} p.top={p.y()}")
+        self.check("S0 首次唤起气泡在人物正上方", b.tail_side == "bottom" and b.y() < p.y(),
+                   f"tail_side={b.tail_side} b.bottom={b.y() + b.height()} p.top={p.y()}")
         self.check("S0 尾尖到人物可见发顶为 8px", gap == 8, f"gap={gap}")
-        tail_x = b.x() + b.width() - 34
+        painted_gap = painted_bubble_pet_gap(pa)
+        self.check("S0 实际绘制像素互不重叠且保持 6~10px 间距", 6 <= painted_gap <= 10,
+                   f"painted_gap={painted_gap}")
+        tail_x = b.tail_tip_global_x
         self.check("S0 尾巴尖对准人物中心", abs(tail_x - (p.x() + p.width() // 2)) <= 2,
                    f"tail={tail_x} center={p.x() + p.width() // 2}")
         # v0.2.0：称呼由首启向导询问，气泡唤起不再自动拦截
@@ -274,22 +308,23 @@ class Runner:
                    pa.state.value)
         shot(pa.bubble, "05-read-screen-confirm.png")
         shot_pair(pa, "evidence-perceiving.png")
-        # v0.1.7：感知提示单行不折行
-        hint = pa.bubble.findChild(HintBlock)
-        if hint:
-            lb = hint.label
-            self.check("S2 感知提示单行不折行",
-                       lb.sizeHint().height() <= lb.fontMetrics().lineSpacing() + 6,
-                       f"hintH={lb.sizeHint().height()} line={lb.fontMetrics().lineSpacing()}")
-        else:
-            self.check("S2 感知提示单行不折行", False, "HintBlock 未出现")
+        # v0.3.4: protocol-driven reading stages replaced the old HintBlock.
+        # Before permission, never claim that capture has already completed.
+        hint = pa.bubble.findChild(ReadingStatus)
+        self.check("S2 当前阅读阶段可见，授权前不误报已读取",
+                   hint is not None and hint.isVisible() and hint.phase in {"binding", "bound"}
+                   and hint.label.text() == READING_LABELS[hint.phase],
+                   hint.label.text() if hint else "ReadingStatus 未出现")
         bar = pa.bubble._confirm_bar
         if bar:
-            for btn in bar.findChildren(QPushButton):
-                if btn.text() == "读吧":
-                    # v0.1.6：「读吧」必须醒目绿（白字加粗），不允许浅白看不清
-                    self.check("S2 读吧按钮醒目绿", "#3a7d5c" in btn.styleSheet()
-                               and "bold" in btn.styleSheet(), btn.styleSheet()[:60])
+            btn = bar.btn_yes
+            style = btn.styleSheet()
+            contrast = white_contrast(T.COLOR_ACCENT)
+            self.check("S2 读吧按钮可操作，使用共享主色与清晰白字",
+                       btn.isVisible() and btn.isEnabled() and btn.text() == "读吧"
+                       and T.COLOR_ACCENT in style and "color: #fff" in style
+                       and "bold" in style and contrast >= 4.5,
+                       f"accent={T.COLOR_ACCENT} contrast={contrast:.2f}:1")
             # v0.1.7：确认条可见时输入框回车 = 确认「读吧」
             QTimer.singleShot(300, lambda: QTest.keyClick(
                 pa.bubble.input, Qt.Key.Key_Return))
@@ -439,7 +474,7 @@ class Runner:
         pa._place_bubble()  # 程序化 move 不发 moved 信号，显式重锚定
         QTimer.singleShot(500, self._s8_geometry)
 
-    def _s8_gap(self) -> int:
+    def _s8_gap(self) -> float:
         """气泡尾尖与人物可见像素的垂直间隙。"""
         return visible_bubble_pet_gap(self.pa)
 
@@ -448,8 +483,11 @@ class Runner:
         b, p = pa.bubble, pa.pet
         gap = self._s8_gap()
         self.check("S8 气泡与人物不重叠（间隙 6~10px）", 6 <= gap <= 10, f"gap={gap}")
-        self.check("S8 气泡在人物正上方", b.y() + b.height() <= p.y(),
-                   f"b.bottom={b.y() + b.height()} p.top={p.y()}")
+        self.check("S8 气泡在人物正上方", b.tail_side == "bottom" and b.y() < p.y(),
+                   f"tail_side={b.tail_side} b.bottom={b.y() + b.height()} p.top={p.y()}")
+        painted_gap = painted_bubble_pet_gap(pa)
+        self.check("S8 实际绘制像素间距仍为 6~10px", 6 <= painted_gap <= 10,
+                   f"painted_gap={painted_gap}")
         tail_x = b.tail_tip_global_x
         self.check("S8 尾巴尖对准人物中心", abs(tail_x - (p.x() + p.width() // 2)) <= 2,
                    f"tail={tail_x} center={p.x() + p.width() // 2}")
@@ -564,6 +602,7 @@ class Runner:
 
     # ── 收尾 ──
     def finish(self):
+        self.completed = True
         (OUT / "state-transitions.log").write_text("\n".join(LOG) + "\n", encoding="utf-8")
         (OUT / "visual-metrics.json").write_text(
             json.dumps(VISUAL_EVIDENCE, ensure_ascii=False, indent=2) + "\n",
@@ -579,14 +618,22 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("haochen-pet-verification")
     app.setQuitOnLastWindowClosed(False)
-    pa = PetApp(mock=True)
-    pa.start()
-    runner = Runner(pa)
-    QTimer.singleShot(500, runner.next)
-    QTimer.singleShot(120000, app.quit)  # 全局兜底
-    code = app.exec()
+    note(f"isolated evidence -> {OUT}")
+    note(f"isolated profile -> {os.environ['HAOCHEN_HOME']}")
+    # Native mock UI must not reserve a user's global shortcut, capture their
+    # current app, launch the real model engine, or request screen permissions.
+    with patch("haochen_app.pet.app.install_hotkey", return_value=(False, "隔离 UI 验收，不注册全局热键")), \
+            patch("haochen_app.session_coordinator.capture_question_target", return_value=None):
+        pa = PetApp(mock=True)
+        pa.start()
+        runner = Runner(pa)
+        QTimer.singleShot(500, runner.next)
+        QTimer.singleShot(120000, app.quit)  # 全局兜底；超时必须失败，不能以退出码0冒充完成。
+        code = app.exec()
     pa.client.stop()
-    failed = any(line.startswith("FAIL") for line in runner.results)
+    failed = not runner.completed or any(line.startswith("FAIL") for line in runner.results)
+    if not runner.completed:
+        note("FAIL 验收未完成或超时")
     return 1 if failed else code
 
 

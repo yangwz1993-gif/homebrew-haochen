@@ -48,6 +48,8 @@ class AppShell:
         self.activation = ConfigActivation(self.supervisor)
         self.settings = SettingsWindow(home=home, store=self.store, activate=self._activate_config)
         self._syncing_draft = False
+        self.dashboard = None
+        self._stopped = False
         self._wire()
 
     # ── 接线 ──────────────────────────────────────────────────
@@ -67,6 +69,7 @@ class AppShell:
         self.chat.input.textChanged.connect(
             lambda: self._sync_draft(self.chat.input, self.pet.bubble.input))
         self.pet.settings_requested.connect(self.show_settings)
+        self.pet.pet.dashboard_requested.connect(self.show_dashboard)
         self.pet.credential_validation.connect(self._on_credential_validation)
         self.pet.read_permission_requested.connect(self._request_read_permission)
         self.chat.read_permission_requested.connect(self._request_read_permission)
@@ -112,6 +115,34 @@ class AppShell:
         else:
             self.chat.show_normal()
         self._keep_pet_beside_chat()
+
+    def show_dashboard(self) -> None:
+        if self._stopped or not self._interaction_allowed():
+            return
+        if self._ensure_dashboard():
+            self.dashboard.show()
+
+    def show_daily_report(self) -> None:
+        if self._stopped or not self._interaction_allowed():
+            return
+        if self._ensure_dashboard():
+            self.dashboard.show(report=True)
+
+    def _ensure_dashboard(self) -> bool:
+        if self.dashboard is not None:
+            return True
+        # Native WebKit is intentionally not instantiated under offscreen Qt.
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return False
+        try:
+            from .dashboard.controller import DashboardController
+            self.dashboard = DashboardController(self)
+            self.dashboard.start()
+            return True
+        except Exception:
+            log.exception("dashboard initialization failed")
+            self.pet.bubble.add_perception_hint("桌面总览暂未启动；对话和读屏仍可使用，请重启后重试")
+            return False
 
     def _open_pet_detail(self, rect) -> None:
         self.chat.open_from_bubble(rect, self.pet._last_user_text, self.pet.pet.geometry())
@@ -230,7 +261,8 @@ class AppShell:
 
     def _interaction_allowed(self) -> bool:
         """Do not let global shortcuts or the pet route around a visible wizard."""
-        if hasattr(self, "onboarding") and self.onboarding.isVisible():
+        from PyQt6.sip import isdeleted
+        if hasattr(self, "onboarding") and not isdeleted(self.onboarding) and self.onboarding.isVisible():
             self._present_onboarding()
             return False
         return True
@@ -241,6 +273,8 @@ class AppShell:
         # Discovery help is intentionally suppressed while onboarding is
         # visible; give it a fresh chance only after that surface is gone.
         self.chat._defer(900, self.pet._maybe_show_discovery_hint)
+        if not getattr(self.supervisor.client, "_mock", False):
+            QTimer.singleShot(500, self.show_dashboard)
 
     def any_key_configured(self) -> bool:
         try:
@@ -292,6 +326,10 @@ class AppShell:
         self.chat.start()         # 拉 get_state 就绪（窗口默认不显示）
         self._install_app_tracker()
         self._reconcile_tcc()
+        if not getattr(self.supervisor.client, "_mock", False):
+            self._ensure_dashboard()
+            if not hasattr(self, "onboarding") or self.onboarding.state.completed:
+                QTimer.singleShot(600, self.show_dashboard)
         if hasattr(self, "onboarding") and not self.onboarding.state.completed:
             # pet.start() shows its always-on-top window after first_run_setup().
             # Re-present once the event loop starts so the wizard cannot end up behind it.
@@ -319,5 +357,8 @@ class AppShell:
         install_tracker(haochen_home())
 
     def stop(self) -> None:
+        self._stopped = True
+        if self.dashboard is not None:
+            self.dashboard.stop()
         self.activation.stop()
         self.supervisor.stop()

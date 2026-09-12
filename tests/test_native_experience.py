@@ -39,6 +39,8 @@ def test_menu_bar_provides_required_native_entries(qtbot) -> None:
 
     calls: list[str] = []
     shell = SimpleNamespace(
+        show_dashboard=lambda: calls.append("dashboard"),
+        show_daily_report=lambda: calls.append("report"),
         show_chat=lambda: calls.append("chat"),
         show_settings=lambda: calls.append("settings"),
         new_session=lambda: calls.append("new"),

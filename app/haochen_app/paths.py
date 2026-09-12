@@ -52,6 +52,12 @@ def pet_assets() -> Path:
     return PROJECT_ROOT / "app" / "assets" / "pet"
 
 
+def dashboard_assets() -> Path:
+    if is_frozen():
+        return resources_dir() / "assets" / "dashboard"
+    return PROJECT_ROOT / "app" / "assets" / "dashboard"
+
+
 def reader_binary() -> Path | None:
     """内嵌读屏执行体；不存在返回 None（扩展回退 ~/.local/bin/haochen 开发路径）。"""
     p = (resources_dir() / "haochen-reader" if is_frozen()
