@@ -81,7 +81,13 @@ def test_release_preflight_independently_checks_public_distribution_gates() -> N
 def test_current_release_checklist_authorizes_only_explicit_legacy_distribution() -> None:
     checklist = read("docs/release-checklist.md")
     version = read("VERSION").strip()
-    assert checklist.startswith(f"# v{version} 正式发布清单")
+    if "-" in version:
+        assert checklist.startswith(f"# v{version} 本地验收清单")
+        assert "尚未授权公开发布" in checklist
+        assert "不更新 GitHub Release、标签或 Homebrew Cask" in checklist
+        assert "所有者亲自验收通过（尚未完成）" in checklist
+    else:
+        assert checklist.startswith(f"# v{version} 正式发布清单")
     assert "所有者明确选择" in checklist
     assert "未经 Apple 公证" in checklist
     assert "scripts/release_preflight.sh legacy-artifacts" in checklist

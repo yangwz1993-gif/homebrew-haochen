@@ -18,6 +18,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # app/ 上 sys.path
 
+# Explicit, isolated packaged-app verification; before logging/config/GUI startup.
+if "--dashboard-check" in sys.argv:
+    from haochen_app.dashboard.selfcheck import main as dashboard_check_main
+
+    sys.exit(dashboard_check_main(sys.argv[1:]))
+
+# Chrome starts a short-lived native messaging host, not a second pet/Qt app.
+if "--browser-host" in sys.argv:
+    from haochen_app.dashboard.browser_host import run_browser_host
+
+    _host_home = Path(os.environ.get("HAOCHEN_HOME", Path.home() / "Library/Application Support/haochen"))
+    sys.exit(run_browser_host(_host_home, argv=sys.argv[1:]))
+
 from haochen_app.app_shell import AppShell
 from haochen_app.version import __version__
 from PyQt6.QtWidgets import QApplication

@@ -63,3 +63,9 @@ git tag -s v0.3.0 -m 'haochen v0.3.0'
 该通道使用稳定的发布者自签身份，不经过 Apple 公证，并由 Cask 在安装后移除 quarantine。
 README、Cask 与 Release Notes 必须持续披露这一点，不得描述为 Apple 可信发行。
 默认 `release` 模式仍强制 Developer ID 与 Apple 公证，未来取得正式证书后可切换且不得静默降级。
+
+## 0.5.0-beta.3 独立测试通道
+
+2026-09-13 所有者明确授权当前候选用于 Homebrew 测试与开发交接，尚未验收通过正式 0.5。使用 `Casks/haochen@beta.rb` 与 GitHub Pre-release，保留默认 `haochen` Cask；不把预发布强改稳定版本，也不放宽 `release_preflight.sh` 的稳定版门禁。
+
+Beta 标签同样指向包含完整源码、Cask 和交接文档的 main 提交；不覆盖已有标签或 DMG。人工核对 SemVer、Apple 数字版本、扩展版本、稳定自签名、DMG 完整性与 Cask SHA，并使用 Homebrew 解析及下载校验 Beta Cask。此通道必须披露已知缺陷，发布授权不等于产品完成。详见 [本次测试版发布说明](releases/v0.5.0-beta.3.md)。

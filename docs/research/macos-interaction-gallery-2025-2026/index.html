@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>macOS 桌面惊艳交互画廊 · 2025–2026</title>
+<style>
+  :root{--ink:#1d2126;--ink2:#59616a;--ink3:#98a0a8;--bg:#101114;--card:#1a1c20;--line:#2c2f36;
+    --green:#34c77b;--amber:#e8a04c;--red:#e05b52;--blue:#5b9bf5;--purple:#9a7bfa;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:#e8eaed;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;font-size:14px;line-height:1.6;}
+  .wrap{max-width:1240px;margin:0 auto;padding:48px 28px 80px;}
+  h1{font-size:26px;margin:0 0 4px;}
+  h2{font-size:19px;margin:48px 0 4px;display:flex;align-items:baseline;gap:10px;}
+  h2 .n{color:var(--ink3);font-size:13px;font-weight:500;}
+  .sub{color:var(--ink3);font-size:13px;margin:0 0 18px;}
+  .meta{color:var(--ink3);font-size:12.5px;margin-bottom:8px;}
+  .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    transition:transform .25s ease,border-color .25s ease;}
+  .card:hover{transform:translateY(-3px);border-color:#454a55;}
+  .card.wide{grid-column:span 2;}
+  @media(max-width:760px){.card.wide{grid-column:span 1}}
+  .media{background:#0a0b0d;display:flex;align-items:center;justify-content:center;height:210px;overflow:hidden;}
+  .media img,.media video{width:100%;height:100%;object-fit:cover;display:block;}
+  .media.fit img,.media.fit video{object-fit:contain;}
+  .media.tall{height:260px;}
+  .media.short{height:150px;}
+  .media.px img{image-rendering:pixelated;object-fit:contain;padding:18px;}
+  .strip{display:flex;gap:0;}
+  .strip .cell{flex:1;border-right:1px solid var(--line);display:flex;align-items:center;justify-content:center;overflow:hidden;height:120px;background:#0a0b0d;}
+  .strip .cell:last-child{border-right:none;}
+  .strip img{max-width:100%;max-height:100%;}
+  .body{padding:12px 16px 14px;}
+  .trow{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
+  .trow b{font-size:14.5px;}
+  .stars{margin-left:auto;font-size:11.5px;color:var(--amber);white-space:nowrap;}
+  .one{color:var(--ink2);font-size:12.5px;margin:2px 0 8px;}
+  .badges{display:flex;flex-wrap:wrap;gap:5px;align-items:center;}
+  .bd{font-size:10.5px;padding:1px 8px;border-radius:20px;border:1px solid var(--line);color:var(--ink2);background:#212328;white-space:nowrap;}
+  .bd.swift{border-color:#3d5a80;color:#8fb8f5;}
+  .bd.c{border-color:#5a5a3d;color:#d4d48f;}
+  .bd.web{border-color:#3d5a54;color:#7fd4c4;}
+  .bd.mit{border-color:#3d5a43;color:#8fd4a0;}
+  .bd.gpl{border-color:#5a3d3d;color:#f5a08f;}
+  .bd.warn{border-color:#6b5320;color:#e8b34c;}
+  .bd a{color:var(--blue);text-decoration:none;}
+  .linkcard{display:flex;flex-direction:column;justify-content:center;padding:20px;background:var(--card);
+    border:1px dashed var(--line);border-radius:14px;}
+  .linkcard b{font-size:14.5px;margin-bottom:6px;}
+  .linkcard p{color:var(--ink2);font-size:12.5px;margin:3px 0;}
+  a{color:var(--blue);text-decoration:none;} a:hover{text-decoration:underline;}
+  .foot{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);color:var(--ink3);font-size:12px;line-height:1.8;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>macOS 桌面惊艳交互画廊 <span style="font-size:14px;color:var(--ink3);font-weight:400">2025–2026</span></h1>
+<p class="meta">调研日期 2026-09-13 ｜ 全部媒体为各项目官方演示素材（README / 官网），下载本地化展示 ｜ 用途：haochen 0.5（常驻宽面板 + 胶囊 + 像素桌宠）交互参照 ｜ 每张卡片：画面 + 一句话交互点 + 技术栈 + 源码</p>
+
+<!-- ========== 1 刘海 · 灵动岛形变 ========== -->
+<h2>① 刘海 · 灵动岛形变 <span class="n">胶囊 morph 成面板，haochen 胶囊态的直接参照</span></h2>
+<p class="sub">核心手法：同一容器宽高+圆角插值，hover 展开，元素在形变中保持位置。</p>
+<div class="gallery">
+
+<div class="card wide">
+  <div class="media"><img src="assets/gallery/boringnotch-demo.gif" alt="boring.notch 演示"></div>
+  <div class="body"><div class="trow"><b>boring.notch</b><span class="stars">★ 10.7k</span></div>
+  <p class="one">刘海悬停弹性张开为音乐/日历/文件架面板，统一 spring 曲线（源码：<code>Animation.spring(.bouncy(duration: 0.4))</code>），全屏 App 时自动退场。</p>
+  <div class="badges"><span class="bd swift">SwiftUI + AppKit</span><span class="bd gpl">GPL-3.0</span><span class="bd"><a href="https://github.com/TheBoredTeam/boring.notch">github.com/TheBoredTeam/boring.notch</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/notchkit-demo.gif" alt="DynamicNotchKit 刘海模式"></div>
+  <div class="body"><div class="trow"><b>DynamicNotchKit</b><span class="stars">★ 455</span></div>
+  <p class="one">「胶囊 morph 成面板」封装成可直接集成的 SwiftPM 库（Loop 作者出品）。</p>
+  <div class="badges"><span class="bd swift">SwiftUI 库</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/MrKai77/DynamicNotchKit">MrKai77/DynamicNotchKit</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/notchkit-float.gif" alt="DynamicNotchKit 浮动模式"></div>
+  <div class="body"><div class="trow"><b>DynamicNotchKit · 浮动模式</b><span class="stars">★ 455</span></div>
+  <p class="one">无刘海机型降级为悬浮胶囊——同一状态机的第二种皮肤，非激活 NSPanel 实现。</p>
+  <div class="badges"><span class="bd swift">SwiftUI 库</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/MrKai77/DynamicNotchKit">MrKai77/DynamicNotchKit</a></span></div></div>
+</div>
+
+<div class="card wide">
+  <div class="media fit tall"><video src="assets/gallery/dynamiclake-1.mp4" autoplay muted loop playsinline></video></div>
+  <div class="body"><div class="trow"><b>DynamicLake Pro</b><span class="stars">闭源 $</span></div>
+  <p class="one">商业化刘海面板的完整形态：音乐/日程/拖放/蓝牙多模块在岛内切换。</p>
+  <div class="badges"><span class="bd swift">原生 Swift</span><span class="bd"><a href="https://www.dynamiclake.com/">dynamiclake.com</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/atoll-panel.png" alt="Atoll"></div>
+  <div class="body"><div class="trow"><b>Atoll</b><span class="stars">★ 4.5k</span></div>
+  <p class="one">boring.notch 系高星 fork，多面板在胶囊内的切换/排队逻辑可研读（注意 GPL 传染性）。</p>
+  <div class="badges"><span class="bd swift">SwiftUI</span><span class="bd gpl">GPL-3.0</span><span class="bd"><a href="https://github.com/Ebullioscopic/Atoll">Ebullioscopic/Atoll</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/notchdrop.png" alt="NotchDrop"></div>
+  <div class="body"><div class="trow"><b>NotchDrop</b><span class="stars">★ 2.1k</span></div>
+  <p class="one">文件拖向刘海，刘海张开「接住」暂存——拖拽触发的形变（boring.notch 致谢引用它）。</p>
+  <div class="badges"><span class="bd swift">Swift</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/Lakr233/NotchDrop">Lakr233/NotchDrop</a></span></div></div>
+</div>
+
+</div>
+
+<h2>② 刘海里的 Agent 与桌宠 <span class="n">与 haochen 业务最近的一族</span></h2>
+<p class="sub">状态压缩：一只像素形象 + 颜色 + 计数 = 全部 agent 状态。</p>
+<div class="gallery">
+
+<div class="card wide">
+  <div class="strip" style="height:170px">
+    <div class="cell"><img src="assets/codeisland-claude.gif" alt="claude 吉祥物"></div>
+    <div class="cell"><img src="assets/gallery/codeisland-codex.gif" alt="codex 吉祥物"></div>
+    <div class="cell"><img src="assets/gallery/codeisland-gemini.gif" alt="gemini 吉祥物"></div>
+    <div class="cell"><img src="assets/codeisland-notch.png" alt="CodeIsland 刘海面板" style="object-fit:cover;width:100%;height:100%"></div>
+  </div>
+  <div class="body"><div class="trow"><b>CodeIsland</b><span class="stars">★ 2.4k</span></div>
+  <p class="one">每个 AI CLI 一只像素吉祥物坐在刘海里，工作/等待/报错各有动图；15 个 agent、快捷键审批。吉祥物 GIF 规格可直接参考（MIT）。</p>
+  <div class="badges"><span class="bd swift">SwiftUI + AppKit</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/wxtsky/CodeIsland">wxtsky/CodeIsland</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/t3notch-question.png" alt="T3Notch 审批"></div>
+  <div class="body"><div class="trow"><b>T3Notch</b><span class="stars">★ 33 · 无 License</span></div>
+  <p class="one">agent 需审批时刘海自动展开，问题在刘海下直接回答——审批闭环的开源样本。</p>
+  <div class="badges"><span class="bd swift">Swift</span><span class="bd warn">无 License，仅读勿抄</span><span class="bd"><a href="https://github.com/zortos293/T3Notch">zortos293/T3Notch</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/t3notch-merged.png" alt="T3Notch 完成"></div>
+  <div class="body"><div class="trow"><b>T3Notch · 完成态</b><span class="stars">★ 33</span></div>
+  <p class="one">合并成功撒彩带——稀有事件才配「庆祝级」反馈。</p>
+  <div class="badges"><span class="bd swift">Swift</span><span class="bd"><a href="https://github.com/zortos293/T3Notch">zortos293/T3Notch</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/mio-readme6.png" alt="MioIsland"></div>
+  <div class="body"><div class="trow"><b>MioIsland（60 分基准）</b><span class="stars">★ 541</span></div>
+  <p class="one">五色状态语义 + 刘海审批的开创者，但全仓库无 GIF——形变工艺与上面几项的差距即 60 分的由来。</p>
+  <div class="badges"><span class="bd swift">Swift</span><span class="bd warn">CC BY-NC 4.0 禁商用</span><span class="bd"><a href="https://github.com/MioMioOS/MioIsland">MioMioOS/MioIsland</a></span></div></div>
+</div>
+
+</div>
+
+<!-- ========== 3 窗口 空间 边缘 ========== -->
+<h2>③ 窗口 · 空间 · 边缘 <span class="n">「从光标/边缘长出来」的惊艳感</span></h2>
+<p class="sub">核心手法：交互界面跟随操作上下文出现，用完消失，不占用常驻空间。</p>
+<div class="gallery">
+
+<div class="card wide">
+  <div class="media tall"><video src="assets/gallery/loop-radial.mp4" autoplay muted loop playsinline></video></div>
+  <div class="body"><div class="trow"><b>Loop · 径向菜单</b><span class="stars">★ 11.6k</span></div>
+  <p class="one">按住触发键，径向菜单围绕光标弹簧展开，拖动方向即窗口去向。源码：<code>Loop/Window Action Indicators/Radial Menu/</code></p>
+  <div class="badges"><span class="bd swift">SwiftUI + AppKit</span><span class="bd gpl">GPL-3.0</span><span class="bd"><a href="https://github.com/MrKai77/Loop">MrKai77/Loop</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media"><video src="assets/gallery/loop-stash.mp4" autoplay muted loop playsinline></video></div>
+  <div class="body"><div class="trow"><b>Loop · Stash</b><span class="stars">★ 11.6k</span></div>
+  <p class="one">窗口拖向屏幕边缘「收进」缝里，悬停弹回——常驻面板的收纳参照（<code>Stashing/StashManager.swift</code>）。</p>
+  <div class="badges"><span class="bd swift">SwiftUI</span><span class="bd gpl">GPL-3.0</span><span class="bd"><a href="https://github.com/MrKai77/Loop">MrKai77/Loop</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media"><video src="assets/gallery/flashspace-switcher.mp4" autoplay muted loop playsinline></video></div>
+  <div class="body"><div class="trow"><b>FlashSpace</b><span class="stars">★ 3.5k</span></div>
+  <p class="one">跳过 macOS 原生 Space 动画的瞬时工作区切换 + 类 ⌘Tab 浮层切换器。</p>
+  <div class="badges"><span class="bd swift">Swift</span><span class="bd gpl">GPL-3.0</span><span class="bd"><a href="https://github.com/wojciech-kulik/FlashSpace">wojciech-kulik/FlashSpace</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media"><video src="assets/gallery/sketchybar-anim.mp4" autoplay muted loop playsinline></video></div>
+  <div class="body"><div class="trow"><b>SketchyBar</b><span class="stars">★ 12.4k</span></div>
+  <p class="one">纯 shell 脚本驱动的 bar item 弹跳/滑动动画——脚本也能做出弹簧感。</p>
+  <div class="badges"><span class="bd c">C + shell/Lua</span><span class="bd gpl">GPL-3.0</span><span class="bd"><a href="https://github.com/FelixKratz/SketchyBar">FelixKratz/SketchyBar</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media"><img src="assets/gallery/jankyborders.png" alt="JankyBorders"></div>
+  <div class="body"><div class="trow"><b>JankyBorders</b><span class="stars">★ 3.8k</span></div>
+  <p class="one">焦点切换瞬间窗口边框变色/渐变——用 SkyLight 私有 API 建无边框覆盖窗的范式（私有 API 不可上架，仅原理参考）。</p>
+  <div class="badges"><span class="bd c">C</span><span class="bd gpl">GPL-3.0</span><span class="bd"><a href="https://github.com/FelixKratz/JankyBorders">FelixKratz/JankyBorders</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/ice-bar.png" alt="Ice Bar"></div>
+  <div class="body"><div class="trow"><b>Ice · Ice Bar</b><span class="stars">★ 29.6k</span></div>
+  <p class="one">菜单栏隐藏区整体滑出为第二条工具条；菜单栏可做圆角/渐变/半透明（项目已近一年未更新，star 仍涨）。</p>
+  <div class="badges"><span class="bd swift">SwiftUI + AppKit</span><span class="bd gpl">GPL-3.0</span><span class="bd"><a href="https://github.com/jordanbaird/Ice">jordanbaird/Ice</a></span></div></div>
+</div>
+
+</div>
+
+<!-- ========== 4 HUD ========== -->
+<h2>④ HUD 与提示动画 <span class="n">轻提示条这一档的素材库</span></h2>
+<p class="sub">SlimHUD 把音量 HUD 的 7 种进出场动画逐一对比——选「长出-回弹-定时退场」节奏的最佳参考。</p>
+<div class="gallery">
+
+<div class="card wide">
+  <div class="strip">
+    <div class="cell"><img src="assets/gallery/slimhud-fade.gif" alt="fade"></div>
+    <div class="cell"><img src="assets/gallery/slimhud-grow.gif" alt="grow"></div>
+    <div class="cell"><img src="assets/gallery/slimhud-pop.gif" alt="pop in fade out"></div>
+    <div class="cell"><img src="assets/gallery/slimhud-side.gif" alt="side"></div>
+  </div>
+  <div class="body"><div class="trow"><b>SlimHUD · 动画全家桶</b><span class="stars">★ 468</span></div>
+  <p class="one">fade / grow / pop-in-fade-out / side……HUD 进出场动效的可视化目录（每张 &lt;40KB）。</p>
+  <div class="badges"><span class="bd swift">Swift</span><span class="bd gpl">GPL-3.0</span><span class="bd"><a href="https://github.com/AlexPerathoner/SlimHUD">AlexPerathoner/SlimHUD</a></span></div></div>
+</div>
+
+<div class="linkcard">
+  <b>闭源但值得看一眼</b>
+  <p>· <a href="https://youtu.be/N9L_dHuQCJg">MediaMate 官方演示</a>——HUD「比系统更像系统」，Focus 模式自动隐藏、按 App 排除</p>
+  <p>· <a href="https://tryalcove.com/">Alcove</a>——品类形变天花板，官网即演示</p>
+  <p>· <a href="https://youtu.be/vVCiMOjAwQY">NotchNook vs DynamicLake vs Alcove 三方对比</a></p>
+</div>
+
+</div>
+
+<!-- ========== 5 材质与形变实现 ========== -->
+<h2>⑤ 材质与形变的实现 demo <span class="n">「怎么做出来」的源码答案</span></h2>
+<p class="sub">macOS 26 官方玻璃 API + 社区 demo 集，胶囊⇄面板的官方路径是 GlassEffectContainer + glassEffectID。</p>
+<div class="gallery">
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/lg-menu.gif" alt="Liquid Glass 菜单"></div>
+  <div class="body"><div class="trow"><b>awesome-liquid-glass</b><span class="stars">★ 248</span></div>
+  <p class="one">玻璃菜单展开。十余个带 SwiftUI 源码的玻璃形变样例，每效果一个 .swift 文件可抄。</p>
+  <div class="badges"><span class="bd swift">SwiftUI · macOS 26</span><span class="bd warn">无 License</span><span class="bd"><a href="https://github.com/GetStream/awesome-liquid-glass">GetStream/awesome-liquid-glass</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/lg-tabbar.gif" alt="Liquid Glass Tab 栏"></div>
+  <div class="body"><div class="trow"><b>玻璃 squash &amp; stretch</b><span class="stars">★ 248</span></div>
+  <p class="one">Tab 切换时的果冻挤压拉伸——玻璃材质 + 形变的组合手感。</p>
+  <div class="badges"><span class="bd swift">SwiftUI · macOS 26</span><span class="bd"><a href="https://github.com/GetStream/awesome-liquid-glass">GetStream/awesome-liquid-glass</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media"><video src="assets/gallery/hero-morph.mp4" autoplay muted loop playsinline></video></div>
+  <div class="body"><div class="trow"><b>swiftui-hero-animations</b><span class="stars">★ 249</span></div>
+  <p class="one">matchedGeometryEffect：缩略图无缝 morph 成详情大卡——「胶囊长出面板」的最简实现（共享 @Namespace）。</p>
+  <div class="badges"><span class="bd swift">SwiftUI</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/swiftui-lab/swiftui-hero-animations">swiftui-lab/swiftui-hero-animations</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/kinetics.gif" alt="Kinetics"></div>
+  <div class="body"><div class="trow"><b>Kinetics</b><span class="stars">★ 241</span></div>
+  <p class="one">比原生 .spring 更细的可调物理原语（刚度/阻尼/响应曲线），实时预览手感微调。</p>
+  <div class="badges"><span class="bd swift">Swift 6</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/roberthein/Kinetics">roberthein/Kinetics</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media fit"><img src="assets/gallery/spring-morph.gif" alt="spring morphing"></div>
+  <div class="body"><div class="trow"><b>swiftui-spring-animations</b><span class="stars">★ 812</span></div>
+  <p class="one">弹簧参数（response/damping/blendDuration）可视化速查词典 + 形变样例。</p>
+  <div class="badges"><span class="bd swift">SwiftUI</span><span class="bd gpl">GPL-3.0</span><span class="bd"><a href="https://github.com/GetStream/swiftui-spring-animations">GetStream/swiftui-spring-animations</a></span></div></div>
+</div>
+
+<div class="linkcard">
+  <b>官方 API 入口（macOS 26+）</b>
+  <p>· <a href="https://developer.apple.com/documentation/swiftui/view/glasseffect(_:in:)">.glassEffect()</a> / <a href="https://developer.apple.com/documentation/swiftui/glasseffectcontainer">GlassEffectContainer</a> / <a href="https://developer.apple.com/documentation/appkit/nsglasseffectview">NSGlassEffectView</a></p>
+  <p>· <a href="https://developer.apple.com/videos/play/wwdc2025/323/">WWDC25-323</a>（19:51 玻璃 morph 演示）· <a href="https://developer.apple.com/videos/play/wwdc2025/337/">WWDC25-337</a>（SF Symbols 7 Draw On / Variable Draw）</p>
+  <p>· 缓动曲线工具：<a href="https://easings.net">easings.net</a> · <a href="https://cubic-bezier.com">cubic-bezier.com</a></p>
+</div>
+
+</div>
+
+<!-- ========== 6 web 标杆 ========== -->
+<h2>⑥ Web 动效工艺标杆 <span class="n">React 实现，但手感原则跨平台通用</span></h2>
+<p class="sub">Emil Kowalski（ex-Vercel/Linear）：可打断、来路即去路、弹簧接续手势——桌面端同样成立。</p>
+<div class="gallery">
+
+<div class="card">
+  <div class="media"><video src="assets/gallery/sonner.mp4" autoplay muted loop playsinline></video></div>
+  <div class="body"><div class="trow"><b>Sonner</b><span class="stars">★ 13.0k</span></div>
+  <p class="one">toast 从底部弹入、堆叠让位、手势滑走——「新元素挤入、旧元素让位」的弹簧编排，事件流可直接翻译。</p>
+  <div class="badges"><span class="bd web">React / TS</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/emilkowalski/sonner">emilkowalski/sonner</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media"><video src="assets/gallery/vaul.mp4" autoplay muted loop playsinline></video></div>
+  <div class="body"><div class="trow"><b>Vaul</b><span class="stars">★ 8.6k · 已停更</span></div>
+  <p class="one">手势速度 + 弹簧接续的抽屉——宽面板「甩手即关」手感的教科书。</p>
+  <div class="badges"><span class="bd web">React / TS</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/emilkowalski/vaul">emilkowalski/vaul</a></span></div></div>
+</div>
+
+</div>
+
+<!-- ========== 7 桌宠 ========== -->
+<h2>⑦ 桌宠与生命感 <span class="n">像素形象 + 行为状态机</span></h2>
+<p class="sub">「A static screen is a dead screen」：idle 呼吸 + 环境交互行为，比循环动画更有活物感。</p>
+<div class="gallery">
+
+<div class="card">
+  <div class="media"><img src="assets/gallery/pettherapy.gif" alt="pet-therapy"></div>
+  <div class="body"><div class="trow"><b>pet-therapy</b><span class="stars">★ 8</span></div>
+  <p class="one">SwiftUI 逐帧精灵动画 + 透明置顶窗：小恐龙在桌面闲逛爬边——像素桌宠的最小可读实现。</p>
+  <div class="badges"><span class="bd swift">SwiftUI + AppKit</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/raman0c17/pet-therapy">raman0c17/pet-therapy</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media"><img src="assets/gallery/agentpet.gif" alt="agentpet"></div>
+  <div class="body"><div class="trow"><b>agentpet</b><span class="stars">★ 352</span></div>
+  <p class="one">桌宠对 Claude Code 等 agent 活动做出反应，右键弹出等级/XP 面板——桌宠 × 工作台一体。</p>
+  <div class="badges"><span class="bd swift">SwiftUI · 跨平台</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/ntd4996/agentpet">ntd4996/agentpet</a></span></div></div>
+</div>
+
+<div class="card">
+  <div class="media"><img src="assets/gallery/screenpets-dragon.gif" alt="ScreenPets"></div>
+  <div class="body"><div class="trow"><b>ScreenPets</b><span class="stars">★ 4 · 极早期</span></div>
+  <p class="one">透明悬浮窗多宠物随机游走（喷火龙/彩虹猫/幽灵），菜单栏 App 形态。</p>
+  <div class="badges"><span class="bd swift">Swift</span><span class="bd mit">MIT</span><span class="bd"><a href="https://github.com/sealovesky/ScreenPets">sealovesky/ScreenPets</a></span></div></div>
+</div>
+
+<div class="linkcard">
+  <b>无演示素材但思路独特</b>
+  <p>· <a href="https://github.com/jieyefriic/mochi">mochi</a> ★112 MIT——吃回收站文件长大的像素宠：系统事件 → 宠物情绪/成长，「事件驱动生命感」</p>
+  <p>· <a href="https://github.com/philptr/NonactivatingPanelBug">NonactivatingPanelBug</a> + <a href="https://philz.blog/nspanel-nonactivating-style-mask-flag/">配套博客</a>——浮于一切之上却不抢焦点的 NSPanel 配置，常驻 HUD 的窗口层答案</p>
+  <p>· <a href="https://github.com/ddddxxx/LyricsX">LyricsX</a> ★5.2k MPL-2.0——桌面歌词浮层：置顶 + 点击穿透 ⇄ 可交互切换的成熟实现</p>
+</div>
+
+</div>
+
+<div class="foot">
+  素材说明：全部媒体于 2026-09-13 从各项目官方 README / 官网下载验证（HTTP 200），仅作研究参照，不作为 haochen 资产。stars 为当日 GitHub API 实测。<br>
+  License 提醒：MioIsland 为 CC BY-NC 4.0（禁商用）；T3Notch 无 License（仅可阅读）；GPL-3.0 项目（boring.notch / Loop / FlashSpace / Atoll 等）可学思路不可直接合入闭源代码；MIT 项目（CodeIsland / DynamicNotchKit / Kinetics / Sonner / pet-therapy / agentpet 等）可自由借鉴。<br>
+  如实报告：AltTab（16.3k★）、Übersicht（5.0k★）、Itsycal 的 README 无演示媒体，未进画廊；SF Symbols 7 无社区 demo（官方演示见 WWDC25-337）；CodeIsland 的 trae.gif 等个别断链已剔除。
+</div>
+
+</div>
+</body>
+</html>

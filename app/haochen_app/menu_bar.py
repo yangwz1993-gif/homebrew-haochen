@@ -51,6 +51,21 @@ def install_menu_bar(app: QApplication, shell: AppShell):
     menu = QMenu("haochen", bar)
     menu.setObjectName("haochen-app-menu")
 
+    overview = QAction("桌面总览", menu)
+    overview.setShortcut(QKeySequence("Ctrl+2"))
+    overview.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+    overview.triggered.connect(shell.show_dashboard)
+    menu.addAction(overview)
+    collapse = QAction("收回总览", menu)
+    collapse.setShortcut(QKeySequence("Ctrl+M"))
+    collapse.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+    collapse.triggered.connect(shell.collapse_dashboard)
+    menu.addAction(collapse)
+    report = QAction("今天的日报", menu)
+    report.triggered.connect(shell.show_daily_report)
+    menu.addAction(report)
+    menu.addSeparator()
+
     open_chat = QAction("打开对话", menu)
     # Qt on macOS maps ControlModifier to the native Command key.
     open_chat.setShortcut(QKeySequence("Ctrl+1"))

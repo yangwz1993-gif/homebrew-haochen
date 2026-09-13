@@ -1,6 +1,6 @@
 [project]
 name = "haochen"
-version = "0.3.4"
+version = "0.5.0b3"
 description = "haochen macOS desktop agent"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -10,6 +10,8 @@ dependencies = [
   "pyobjc-framework-Cocoa>=12.0,<13",
   "pyobjc-framework-CoreText>=12.0,<13",
   "pyobjc-framework-Quartz>=12.0,<13",
+  "pyobjc-framework-WebKit>=12.0,<13",
+  "pyobjc-framework-EventKit>=12.0,<13",
   "PyQt6>=6.10,<6.12",
 ]
 

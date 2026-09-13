@@ -5,7 +5,7 @@
     HAOCHEN_MOCK=1 MOCK_TICK_MS=5 QT_QPA_PLATFORM=offscreen \
         app/.venv/bin/python app/haochen_app/chat/verification/run_scenarios.py
 
-产物：同目录 01-*.png … 08-*.png（验证什么见 README.md）。
+产物：启动时打印的隔离临时目录，不覆盖仓库历史截图。
 v0.1.7 新增断言：用户气泡浅绿 / bot 气泡与工具卡清晰框线 / 确认条回车=读吧。
 """
 
@@ -18,9 +18,10 @@ import time
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parents[3]          # app/
-OUT = Path(__file__).resolve().parent
+OUT = Path(tempfile.mkdtemp(prefix="haochen-chat-scenarios-"))
 sys.path.insert(0, str(APP_DIR))
-os.environ.setdefault("HAOCHEN_HOME", tempfile.mkdtemp(prefix="haochen-chat-verification-"))
+os.environ["HAOCHEN_HOME"] = tempfile.mkdtemp(prefix="haochen-chat-verification-")
+print(f"isolated evidence -> {OUT}", flush=True)
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest

@@ -109,6 +109,7 @@ echo "==> [4/6] PyInstaller onedir 直出 haochen.app"
     --icon "$ICNS" \
     --osx-bundle-identifier "com.haochen.app" \
     --add-data "$APP_DIR/assets:assets" \
+    --add-data "$ROOT/browser-extension:browser-extension" \
     --add-data "$ROOT/config:config" \
     --add-data "$APP_DIR/ext:ext" \
     --add-data "$VERSION_FILE:." \
@@ -136,6 +137,8 @@ PLIST="$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUNDLE_BUILD" "$PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_BUILD" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string haochen" "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :NSCalendarsFullAccessUsageDescription string haochen 仅在你选择连接日历后读取日程，用于桌面提醒和日报，不会修改你的日历。" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :NSCalendarsUsageDescription string haochen 读取你选择的日历，用于桌面日程提醒，不会修改事件。" "$PLIST"
 
 SIGN_ARGS=(--force --sign "$SIGNING_IDENTITY")
 if [ -n "${HAOCHEN_KEYCHAIN:-}" ]; then
