@@ -50,6 +50,7 @@ open -a haochen
 
 | 能力 | 当前事实与边界 |
 | --- | --- |
+| 刘海 / 动效 | 用户最新反馈：刘海入口与系统物理刘海视觉割裂，收展不够丝滑。列为 P1 待修，不以现有动画测试通过代替体验验收；改造方向及原始演示见 [交互参考归档](docs/research/macos-interaction-gallery-2025-2026/README.md)。 |
 | Otty Agent | 官方 CLI 可发现终端；隔离真实 Pi 的 `processing → idle` 和精确来源跳转已验证。但本机现有 2 个会话均为 `unknown`、无 session ID；Pi 默认位置集成文件存在但未上报，另一个 Agent 类型尚未识别。不能把“发现终端”当作“Agent 状态已接通”。约 3 秒快照仍可能漏掉轮询间短状态。 |
 | Chrome | 已实测首次授权一次点击、真实正文、正文更新、表单排除、精确跳转及切页保护。需在 `chrome://extensions` 加载 `/Applications/haochen.app/Contents/Resources/browser-extension`，再由 App 完成本机桥接；逐站授权、逐页明确选择，不自动扫描全部标签。未上架扩展商店；当前只覆盖主框架 DOM 文字，图片、Canvas 等不在覆盖范围内。 |
 | 微信 | 仅可选观察公开 Dock 未读数字，不读取聊天正文。真实测试返回 `kAXErrorNoValue`，当前不能取得标记；不等于未读为零，正向消息提醒尚未验收。 |
@@ -79,6 +80,15 @@ beta.3 工程门禁：Python **795 passed / 1 opt-in skipped**、Node **42/42**�
 
 ## 本地开发
 
+换机器接手时，公开源码可用 HTTPS 克隆最新开发分支，不需要搬运旧机 SSH 私钥：
+
+```bash
+git clone --branch feat/v0.5-dashboard https://github.com/yangwz1993-gif/homebrew-haochen.git
+cd homebrew-haochen
+```
+
+准备上方指定的 Python / Node / Bun / uv 后再执行下方命令。**Git 不包含安装包、个人配置、API Key、系统授权或签名身份。** beta.3 还未发布，原包需先由旧机 AirDrop / USB 传输并核对 SHA；新机不能把重打包产物冒充同一个已核验 DMG。详情见 [换机交接](docs/handoff/v0.5.0-beta.3.md#换一台-mac-接手)。
+
 ```bash
 make bootstrap
 make check
@@ -103,6 +113,8 @@ app/.venv/bin/python scripts/verify_dashboard_ui.py
 ```
 
 冻结包的隔离自检入口为 `haochen.app/Contents/MacOS/haochen --dashboard-check --dashboard-check-output /tmp/haochen-dashboard-check-001`。输出目录必须尚不存在；自检只用自己创建的临时文件，不授予权限、启动引擎或读取用户资料。它是工程验证，不能代替用户实际连接后的验收。
+
+用户提供的 [macOS 交互画廊](docs/research/macos-interaction-gallery-2025-2026/README.md) 已随仓库归档全部 33 个本地媒体。克隆后运行 `open docs/research/macos-interaction-gallery-2025-2026/index.html` 可看完整演示；GitHub 页面本身只展示 HTML 源码。先看刘海衔接与形变段落，再对齐具体实现；本轮没有实施这部分产品改造。
 
 ## 仓库与版本
 
