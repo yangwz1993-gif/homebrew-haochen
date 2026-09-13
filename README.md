@@ -10,10 +10,10 @@ haochen 是一款面向 macOS 的独立桌面 AI 伙伴：常驻桌面、按需�
 
 - 稳定里程碑：`0.3.4`（所有者验收通过；历史记录为 472 项自动化测试、整体覆盖率 83%）。
 - 默认 Homebrew 配方 `haochen`：远程 `main` 本次核对仍为 `0.3.3`，与 `0.3.4` 里程碑存在历史不同步；默认安装/升级不能据此承诺拿到 `0.3.4`。
-- 当前测试候选：`0.5.0-beta.3`，已完成本机替换安装和部分真实连接验证，**不是全部功能验收通过的正式版**。
-- 本次分发计划：GitHub 预发布 + 独立 `haochen@beta` Cask；默认 `haochen` 保持现状，不自动将稳定通道用户升级到 beta。发布授权已取得，以下 beta 链接和命令为预期入口，发布及下载验证完成前不视为已上线。
+- 当前已发布版本：`0.5.0-beta.3`，已完成本机替换安装和部分真实连接验证，**不是全部功能验收通过的正式版**。
+- 分发已上线：GitHub Release + 独立 `haochen@beta` Cask；所有者确认保留普通 Release 标记，版本号和 Beta 通道不变。默认 `haochen` 保持现状，不自动将稳定通道用户升级到 beta。
 
-**交接时的发布进度：** 完整代码、本文和 Beta 配方已推送 `feat/v0.5-dashboard`；尚未合并 main、发布 beta.3 Release 或完成 Homebrew 下载验证。API 认证和网页上传遇阻，下一位先按 [交接顶部的发布收尾记录](docs/handoff/v0.5.0-beta.3.md#发布收尾状态尚未上线2026-09-13) 完成，不能直接把下面的预期安装命令当作已可用。
+**发布核验：2026-09-13 18:10:31（Asia/Shanghai，UTC+08:00）。** PR #11 已合并 `main`；标签 `v0.5.0-beta.3` 指向 `7f4f47f`。Release 已公开，真实 Homebrew 全新缓存下载、SHA-256 和 DMG 完整性检查均通过。无需重复发布或重打包；本次未重复安装或清理用户数据。详情见 [现有交接文档](docs/handoff/v0.5.0-beta.3.md)。
 
 0.5 增加原生桌面总览、刘海/侧边入口、Otty Agent 动态、授权网页追踪、日历、文件条、自建事项和日报；haochen 仍是右下角的全局助手。接入要求和已知限制见下文；完整状态与后续优先级见 [下一位开发者交接](docs/handoff/v0.5.0-beta.3.md)。
 
@@ -31,7 +31,7 @@ open -a haochen
 
 已通过 Homebrew 安装的用户：`brew update && brew upgrade --cask haochen`。
 
-0.5 独立测试通道（预期安装方式，须先确认预发布资产与配方已实际上线）：
+0.5 独立测试通道（已验证可下载，仅 Apple Silicon）：
 
 ```bash
 brew tap yangwz1993-gif/haochen
@@ -40,7 +40,7 @@ brew install --cask yangwz1993-gif/haochen/haochen@beta
 open -a haochen
 ```
 
-预期下载入口：[v0.5.0-beta.3 预发布](https://github.com/yangwz1993-gif/homebrew-haochen/releases/tag/v0.5.0-beta.3)。已安装 beta 后使用 `brew upgrade --cask yangwz1993-gif/haochen/haochen@beta`。
+下载入口：[v0.5.0-beta.3 Release](https://github.com/yangwz1993-gif/homebrew-haochen/releases/tag/v0.5.0-beta.3)。已安装 beta 后先 `brew update`，再使用 `brew upgrade --cask yangwz1993-gif/haochen/haochen@beta`。
 
 两个通道安装的是同名 `haochen.app`，不是可同时运行的两套应用。已有默认通道安装时，先备份应用数据，再移除旧 App/原 Cask 后切换通道；不要使用 `--zap` 清除数据。两版共享应用数据，降级兼容性尚未验收。
 
@@ -60,7 +60,19 @@ open -a haochen
 
 Chrome 详细设置见 [扩展说明](browser-extension/README.md)。Otty 集成先诊断再操作：Pi/OMP 仅在用户确认后新增官方集成文件，不覆盖已有文件或重启现有 Agent；Codex/Claude 按 Otty 官方设置配置。**不要反复安装已存在的 Pi 文件来掩盖未上报问题。**
 
-beta.3 工程门禁：Python **795 passed / 1 opt-in skipped**、Node **42/42**、实际隔离 WK **76/76**、冻结包自检 **15/15**。Otty 实装生命周期、原生入口/窗口层级验证来自 beta.2；beta.3 专项实装复测验证 Chrome 首次授权修复，未重复全套 Otty 实装测试。详见 [连接验收记录](docs/reviews/v0.5.0-beta.3-connections.md) 与 [本地交付记录](docs/releases/v0.5.0-beta.3-local.md)。这些历史记录中的“不发布”描述对应取得本次 beta 发布授权之前，不代表已完成发布验证。
+beta.3 工程门禁：Python **795 passed / 1 opt-in skipped**、Node **42/42**、实际隔离 WK **76/76**、冻结包自检 **15/15**。Otty 实装生命周期、原生入口/窗口层级验证来自 beta.2；beta.3 专项实装复测验证 Chrome 首次授权修复，未重复全套 Otty 实装测试。详见 [连接验收记录](docs/reviews/v0.5.0-beta.3-connections.md) 与 [本地交付记录](docs/releases/v0.5.0-beta.3-local.md)。其中“不发布”描述是本次授权前的历史记录；当前发布状态以本文顶部核验结论为准。
+
+## 下一位 Agent 从这里开始
+
+接手请从最新 `main` 新建工作分支，先读 [版本交接](docs/handoff/v0.5.0-beta.3.md)，按下列顺序与用户推进：
+
+1. **P0 · Otty 状态**：诊断真实 Agent 类型、集成加载和状态上报；当前旧机两条会话仍为 unknown。不要重复安装已有 Pi 文件，也不要未经确认重启用户 Agent。
+2. **P0 · 模型连接**：由用户本人完成系统授权，再验证真实请求和重启后的配置持久化；新机器不继承旧机 Keychain/TCC。
+3. **P1 · 刘海与动效**：解决与物理刘海割裂、收展不丝滑；先看 [已归档交互报告](docs/research/macos-interaction-gallery-2025-2026/README.md)，实机测量、录屏并对齐方案，改后由用户本人验收。
+4. **P1 · 真实连接验收**：Chrome 用户所选页面、微信 Dock 未读样本、日历、多屏、事项渠道和日报。明确“不支持 / 不可读 / 未授权”，不能显示假成功。
+5. **后续治理**：默认 Cask 仍为历史 0.3.3，与 0.3.4 Release 不同步；另行确认处理，不把本次 beta 改成默认通道。飞书、Hi 和项目维度汇总继续暂缓。
+
+发布下载已验证，不等于新机器安装和所有功能验收完成；不要重复卸载、重置权限或改写已有发布资产。
 
 ## 产品形态
 
@@ -80,14 +92,14 @@ beta.3 工程门禁：Python **795 passed / 1 opt-in skipped**、Node **42/42**�
 
 ## 本地开发
 
-换机器接手时，公开源码可用 HTTPS 克隆最新开发分支，不需要搬运旧机 SSH 私钥：
+换机器接手时，公开源码可用 HTTPS 克隆最新 `main`，不需要搬运旧机 SSH 私钥：
 
 ```bash
-git clone --branch feat/v0.5-dashboard https://github.com/yangwz1993-gif/homebrew-haochen.git
+git clone --branch main https://github.com/yangwz1993-gif/homebrew-haochen.git
 cd homebrew-haochen
 ```
 
-准备上方指定的 Python / Node / Bun / uv 后再执行下方命令。**Git 不包含安装包、个人配置、API Key、系统授权或签名身份。** beta.3 还未发布，原包需先由旧机 AirDrop / USB 传输并核对 SHA；新机不能把重打包产物冒充同一个已核验 DMG。详情见 [换机交接](docs/handoff/v0.5.0-beta.3.md#换一台-mac-接手)。
+准备上方指定的 Python / Node / Bun / uv 后再执行下方命令。**Git 不包含安装包、个人配置、API Key、系统授权或签名身份。** 原包可直接通过上方 Release / Homebrew 下载；新机不能把重打包产物冒充同一个已发布 DMG。推送代码时由用户在新机配置自己的 GitHub 认证。详情见 [换机交接](docs/handoff/v0.5.0-beta.3.md#换一台-mac-接手)。
 
 ```bash
 make bootstrap
@@ -118,7 +130,7 @@ app/.venv/bin/python scripts/verify_dashboard_ui.py
 
 ## 仓库与版本
 
-本仓库同时承载应用源码和 Homebrew Tap。`Casks/haochen.rb` 是默认通道；本次计划新增 `Casks/haochen@beta.rb` 作为独立测试通道。应用构建版本以根目录 `VERSION` 为唯一来源，采用 SemVer；不同分发通道可指向不同的已发布版本，不能用开发版 VERSION 覆盖稳定配方。发布流程见 [版本与发布规范](docs/versioning-and-release.md)，协作方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+本仓库同时承载应用源码和 Homebrew Tap。`Casks/haochen.rb` 是默认通道；`Casks/haochen@beta.rb` 是已上线的独立测试通道。应用构建版本以根目录 `VERSION` 为唯一来源，采用 SemVer；不同分发通道可指向不同的已发布版本，不能用开发版 VERSION 覆盖稳定配方。发布流程见 [版本与发布规范](docs/versioning-and-release.md)，协作方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 v0.3.0 的交互升级方案见 [桌宠交互全面升级方案](docs/roadmap/v0.3.0-experience-redesign.md)；
 v0.3.1 进一步修复并收敛了桌宠输入气泡的尺寸、留白和视觉层级，补齐了
