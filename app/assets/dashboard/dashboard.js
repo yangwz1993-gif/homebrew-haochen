@@ -8,7 +8,7 @@
   const PALETTES = Object.freeze({sage:'浅雾绿', stone:'暖白石墨', mist:'冷白雾蓝', carbon:'中性炭灰'});
   const FREQUENCIES = Object.freeze({manual:'仅手动', quarter:'每 15 分钟', hourly:'每小时', daily:'每天'});
   const ACTIONS = new Set(['ready','refresh','openSource','trackCreate','trackUpdate','trackPause','trackRefresh','trackDelete','reportGet','pickFolder','fileRemove','askHaochen','openSettings','collapse','connectorEnable','settingsUpdate','browserInstall','browserExtensionFolder','calendarList','calendarSelect','ottyCheck','ottySetup','eventRead']);
-  const STATUS = Object.freeze({connected:'已连接', disabled:'未开启', permission_required:'需要授权', limited:'能力受限', partial:'内容不完整', unavailable:'暂不可用', not_running:'应用未运行', error:'检查失败', failed:'检查失败', running:'进行中', processing:'处理中', working:'进行中', busy:'检查中', checking:'检查中', awaiting:'等待确认', waiting:'等待确认', needs_attention:'需要关注', completed:'已完成', complete:'已完成', success:'已更新', changed:'有变化', unchanged:'未发现变化', idle:'就绪', paused:'已暂停', pending:'等待检查', unknown:'状态未知', unavailable_source:'来源不可用', stale:'等待更新', unsupported:'暂不支持', warning:'需要关注', ready:'就绪'});
+  const STATUS = Object.freeze({connected:'已连接', disconnected:'连接已断开', not_connected:'尚未连接', disabled:'未开启', available:'内容可用', permission_required:'需要授权', limited:'能力受限', partial:'内容不完整', unavailable:'暂不可用', not_running:'应用未运行', tab_closed:'标签页已关闭', target_changed:'原标签页已切换', suspended:'标签页已休眠', reading:'读取中', error:'检查失败', failed:'检查失败', running:'进行中', processing:'处理中', working:'进行中', busy:'检查中', checking:'检查中', awaiting:'等待确认', waiting:'等待确认', needs_attention:'需要关注', completed:'已完成', complete:'已完成', success:'已更新', changed:'有变化', unchanged:'未发现变化', idle:'就绪', paused:'已暂停', pending:'等待检查', unknown:'状态未知', unavailable_source:'来源不可用', stale:'状态已过期', unsupported:'暂不支持', warning:'需要关注', ready:'就绪'});
   const list = (value, limit = 1000) => Array.isArray(value) ? value.filter(item => item && typeof item === 'object' && !Array.isArray(item)).slice(0, limit) : [];
   // Back-end source snapshots can contain 48,000 characters. Preserve their
   // complete, already-bounded evidence rather than silently clipping at an AI
@@ -33,11 +33,20 @@
     const date = new Date(`${value}T12:00:00`);
     return Number.isFinite(date.getTime()) && localDate(date) === value;
   }
-  function statusLabel(value) { return STATUS[text(value,60)] || '状态未知'; }
+  function statusLabel(value) { const key=text(value,60); return Object.hasOwn(STATUS,key) ? STATUS[key] : '状态未知'; }
   function eventStateLabel(event) {
-    const item=record(event), state=item.status || item.state;
-    if (item.stale===true || state==='stale') return state && !['unknown','stale'].includes(state) ? `状态已过期（上次：${statusLabel(state)}）` : '状态已过期';
-    return statusLabel(state);
+    const item=record(event), state=item.status || item.state, source=text(item.source,60).toLowerCase(), target=record(item.target);
+    let label=statusLabel(state), contextual={};
+    if (['browser','chrome'].includes(source) || target.kind==='browser') {
+      contextual={available:'已读取页面文字',permission_required:'需要网站授权',reading:'正在读取页面',disconnected:'Chrome 已断开',error:'页面读取失败'};
+    } else if (source==='wechat' || target.kind==='wechat' || item.reasonCode==='dock_badge_only') {
+      contextual={available:'已获取未读标记',permission_required:'需辅助功能授权'};
+    }
+    if (Object.hasOwn(contextual,state)) label=contextual[state];
+    // An old successful read must stay visibly old; available describes the
+    // collected source data, never completion of an Agent task or read chats.
+    if (item.stale===true || state==='stale') return state && !['unknown','stale'].includes(state) ? `状态已过期（上次：${label}）` : '状态已过期';
+    return label;
   }
   function eventReceipt(event) {
     const item = record(event), id = text(item.id,200), version = text(item.attentionVersion,200);

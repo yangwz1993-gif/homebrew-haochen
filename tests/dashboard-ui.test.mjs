@@ -93,6 +93,43 @@ test('WeChat Dock-only events never imply full chat access or missing badge mean
   assert.match(coverage.copy,/不会当作 0 条/); assert.match(coverage.copy,/不会定位某个聊天/);
 });
 
+test('every production BrowserAdapter event state has an honest visible label',() => {
+  const expected={available:'已读取页面文字',permission_required:'需要网站授权',tab_closed:'标签页已关闭',suspended:'标签页已休眠',target_changed:'原标签页已切换',disconnected:'Chrome 已断开',stale:'状态已过期',reading:'正在读取页面',error:'页面读取失败'};
+  const adapter=readFileSync(fileURLToPath(new URL('../app/haochen_app/dashboard/adapters/browser.py',import.meta.url)),'utf8');
+  const messages=adapter.match(/MESSAGES = \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(messages,'the production adapter status contract must be present');
+  const states=[...messages.matchAll(/^\s*"([a-z_]+)":/gm)].map(match=>match[1]);
+  assert.deepEqual(new Set(states),new Set(Object.keys(expected)));
+  for (const state of states) {
+    assert.notEqual(ui.statusLabel(state),'状态未知',state);
+    assert.equal(ui.eventStateLabel({source:'browser',status:state}),expected[state],state);
+    assert.equal(ui.eventStateLabel({source:'Chrome',state}),expected[state],state);
+    assert.equal(ui.eventStateLabel({target:{kind:'browser'},state}),expected[state],state);
+    assert.doesNotMatch(expected[state],/任务完成|已完成/);
+  }
+  assert.equal(ui.statusLabel('not_connected'),'尚未连接');
+});
+
+test('available is contextual source data, not task completion or reading WeChat conversations',() => {
+  assert.equal(ui.statusLabel('available'),'内容可用');
+  assert.equal(ui.eventStateLabel({source:'browser',status:'available'}),'已读取页面文字');
+  for (const context of [{source:'wechat'},{target:{kind:'wechat'}},{reasonCode:'dock_badge_only'}]) {
+    assert.equal(ui.eventStateLabel({...context,status:'available'}),'已获取未读标记');
+    assert.doesNotMatch(ui.eventStateLabel({...context,status:'available'}),/任务完成|已完成|已读消息|聊天已读/);
+  }
+  assert.equal(ui.eventStateLabel({source:'other',status:'available'}),'内容可用');
+  for (const state of ['future_unknown','__proto__','constructor','toString']) {
+    assert.equal(ui.statusLabel(state),'状态未知');
+    assert.equal(ui.eventStateLabel({source:'browser',status:state}),'状态未知');
+  }
+});
+
+test('old browser reads and Dock badges remain explicitly stale in their own source context',() => {
+  assert.equal(ui.eventStateLabel({source:'browser',status:'available',stale:true}),'状态已过期（上次：已读取页面文字）');
+  assert.equal(ui.eventStateLabel({source:'wechat',status:'available',stale:true}),'状态已过期（上次：已获取未读标记）');
+  assert.equal(ui.eventStateLabel({source:'browser',status:'stale'}),'状态已过期');
+});
+
 test('WeChat has an app jump and only missing AX grants get a manual settings entry',() => {
   assert.deepEqual(ui.wechatControls({status:'permission_required'}).map(item=>item.action),['wechat-open','wechat-permission']);
   for (const status of ['disabled','connected','limited','not_running','error']) assert.deepEqual(ui.wechatControls({status}).map(item=>item.action),['wechat-open']);

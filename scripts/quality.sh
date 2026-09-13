@@ -44,7 +44,7 @@ printf '\n==> screen reader extension regressions\n'
 NODE_PATH="$ROOT/pi-source/node_modules" bun run app/ext/test-screen-target.ts
 NODE_PATH="$ROOT/pi-source/node_modules" bun run app/ext/test-visual-mode.ts
 
-printf '\n==> dashboard UI contracts\n'
-node --test tests/dashboard-ui.test.mjs
+printf '\n==> dashboard UI and browser authorization contracts\n'
+node --test tests/dashboard-ui.test.mjs tests/browser-extension-permissions.test.mjs
 
 printf '\nAll quality checks passed.\n'

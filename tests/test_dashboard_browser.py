@@ -465,7 +465,7 @@ const chrome={storage:{local:{async get(){return {};},async set(v){Object.assign
  runtime:{id:'a'.repeat(32),getURL:p=>origin+p,onMessage:event('message'),onStartup:event('startup'),onInstalled:event('installed'),
   connectNative(){return {onMessage:event('nativeMessage'),onDisconnect:event('disconnect'),
    postMessage(m){posts.push(m);if(m.type==='hello')queueMicrotask(()=>events.nativeMessage({type:'ack',operation:'hello',sessionId:nativeSession}));},disconnect(){}};}},
- permissions:{async contains(){return allowed;},onRemoved:event('revoked')},
+ permissions:{async contains(){return allowed;},async request(){return allowed;},onRemoved:event('revoked')},
  tabs:{async get(){if(!tab)throw Error('closed');return {...tab};},
    async update(id,opts){assert.equal(id,tab.id);assert.deepEqual(opts,{active:true});
      focuses.push(['tab',id]);tab.active=true;return {...tab};},
@@ -483,7 +483,7 @@ const focus=async target=>{const commandId='focus-test-'+(++commandIndex);
  events.nativeMessage({type:'focus',commandId,expiresAt:Date.now()+2000,target});await wait();await wait();
  return posts.find(x=>x.type==='focus_result'&&x.commandId===commandId)?.status;};
 (async()=>{await wait();
- assert((await call({type:'track',tabId:7,url:tab.url})).ok);await wait();
+ assert((await call({type:'requestTrack',tabId:7,windowId:2,url:tab.url})).ok);await wait();
  let state=await call({type:'state'});assert.equal(state.sources.length,1);
  const id=state.sources[0].id;
  assert(injections.every(x=>x.target.tabId===7&&x.target.frameIds[0]===0&&x.world==='ISOLATED'));
@@ -530,3 +530,14 @@ const focus=async target=>{const commandId='focus-test-'+(++commandIndex);
     )
     assert result.returncode == 0, result.stderr
     assert "Chrome stub checks passed" in result.stdout
+
+
+def test_extension_permission_transaction_survives_popup_teardown():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node unavailable for Chrome permission regression")
+    result = subprocess.run(
+        [node, "--test", str(ROOT / "tests/browser-extension-permissions.test.mjs")],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

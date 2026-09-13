@@ -2,11 +2,15 @@
 const HOST = "com.haochen.browser";
 const MAX_SOURCES = 32;
 const MAX_CONTENT = 60000;
+const TRACK_PERMISSION_TIMEOUT = 60000;
 let sources = {}, clientId, port = null, connecting = false, connected = false;
 let bridgeMessage = "尚未连接 haochen。请先在应用中安装桥接。";
 let bridgeReason = "not_connected", connectionTimer = null;
 let pendingForgets = [];
 let sessionId = null, focusBusy = false;
+// Ephemeral, one-at-a-time user intent. Never persisted: browser/worker restart
+// must not resurrect an old permission request or select another active page.
+let pendingTrack = null, trackingMessage = "";
 const ready = chrome.storage.local.get(["sources", "clientId", "pendingForgets"]).then(saved => {
   sources = saved.sources || {};
   pendingForgets = saved.pendingForgets || [];
@@ -22,6 +26,100 @@ function pageURL(value) {
   return url.href;
 }
 function originPattern(url) { return new URL(url).origin + "/*"; }
+function cancelTrackIntent(intent, message) {
+  if (!intent || intent.cancelled || intent.consumed) return;
+  intent.cancelled = true;
+  clearTimeout(intent.timer);
+  if (pendingTrack === intent) { pendingTrack = null; trackingMessage = message; }
+  intent.resolveCancel?.({cancelled: true, message});
+}
+function checkTrackIntent(intent) {
+  if (intent.cancelled || pendingTrack !== intent || Date.now() >= intent.expiresAt) {
+    throw new Error("这次追踪选择已取消或超时。请重新选择当前页面。");
+  }
+  if (!connected) throw new Error("本机连接已断开，未加入追踪。请重新连接后再试。");
+}
+async function selectedTab(intent) {
+  checkTrackIntent(intent);
+  let tab;
+  try { tab = await chrome.tabs.get(intent.tabId); }
+  catch (_) { throw new Error("授权期间标签页已关闭，未加入追踪。"); }
+  checkTrackIntent(intent);
+  if (tab.incognito || tab.id !== intent.tabId || tab.windowId !== intent.windowId ||
+      pageURL(tab.url) !== intent.url || tab.discarded || tab.frozen) {
+    throw new Error("授权期间页面或窗口已变化，未加入追踪。请重新选择。");
+  }
+  return tab;
+}
+async function finishTrackRequest(intent, permission) {
+  try {
+    const outcome = await Promise.race([permission.then(allowed => ({allowed})), intent.cancellation]);
+    if (outcome.cancelled) return {ok: false, message: outcome.message};
+    if (!outcome.allowed) {
+      cancelTrackIntent(intent, "你没有授权该网站，未读取页面、未加入追踪。");
+      return {ok: false, message: trackingMessage};
+    }
+    await ready;
+    await selectedTab(intent);
+    if (!await chrome.permissions.contains({origins: [originPattern(intent.url)]})) {
+      throw new Error("网站权限已撤回，未加入追踪。");
+    }
+    const previous = Object.values(sources).find(source => source.url === intent.url);
+    if (!previous && Object.keys(sources).length >= MAX_SOURCES) throw new Error("最多追踪 32 个页面，请先移除不再需要的来源。");
+    if (previous) await stopObserver(previous);
+    // Revalidate after every asynchronous preparation, immediately before the
+    // atomic binding. A grant is not permission to follow a different URL/tab.
+    if (!await chrome.permissions.contains({origins: [originPattern(intent.url)]})) {
+      throw new Error("网站权限已撤回，未加入追踪。");
+    }
+    const tab = await selectedTab(intent);
+    const source = {id: previous?.id || crypto.randomUUID(), url: intent.url,
+      title: (tab.title || intent.url).slice(0, 500), tabId: intent.tabId, windowId: intent.windowId,
+      status: "reading", checkedAt: Date.now()};
+    // Consume the intent before saving/reading. Later navigation is handled as
+    // a changed fixed source, never as a new implicit page selection.
+    intent.consumed = true; clearTimeout(intent.timer); pendingTrack = null;
+    sources[source.id] = source;
+    trackingMessage = "已加入追踪。仅读取你选择的固定页面；切换网址不会自动改读。";
+    for (const old of Object.values(sources)) {
+      if (old.tabId === source.tabId && old.id !== source.id) await setStatus(old, "target_changed");
+    }
+    await save(); await refresh(source);
+    return {ok: true};
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "网站授权未完成，未加入追踪。";
+    cancelTrackIntent(intent, message);
+    return {ok: false, message};
+  }
+}
+function requestTracking(message, sender) {
+  if (sender.url !== chrome.runtime.getURL("popup.html")) return Promise.resolve({ok: false});
+  if (!connected) return Promise.resolve({ok: false, message: "请先完成 haochen 本机连接，再选择网页。"});
+  if (pendingTrack) return Promise.resolve({ok: false, message: "已有网站授权等待处理；请完成或取消后重试。"});
+  let url;
+  try {
+    url = pageURL(message.url);
+    if (!Number.isInteger(message.tabId) || message.tabId < 0 ||
+        !Number.isInteger(message.windowId) || message.windowId < 0) throw new Error("无效的页面选择。");
+  } catch (_) { return Promise.resolve({ok: false, message: "页面选择无效，请重新打开扩展后选择。"}); }
+  const intent = {id: crypto.randomUUID(), tabId: message.tabId, windowId: message.windowId,
+    url, expiresAt: Date.now() + TRACK_PERMISSION_TIMEOUT, cancelled: false, consumed: false};
+  intent.cancellation = new Promise(resolve => { intent.resolveCancel = resolve; });
+  pendingTrack = intent;
+  trackingMessage = "正在等待网站授权；扩展小窗关闭也不会丢失这次页面选择。";
+  intent.timer = setTimeout(() => cancelTrackIntent(intent, "网站授权等待已超时。未加入追踪，请重新选择页面。"), TRACK_PERMISSION_TIMEOUT);
+  try {
+    // Chrome propagates a privileged popup click's user gesture into the
+    // service worker's onMessage callback. This call MUST remain synchronous,
+    // before any await, so the native prompt and its Promise live in the worker
+    // rather than the disposable popup. Do not infer acceptance from onAdded.
+    const permission = Promise.resolve(chrome.permissions.request({origins: [originPattern(url)]}));
+    return finishTrackRequest(intent, permission);
+  } catch (_) {
+    cancelTrackIntent(intent, "无法发起网站授权。请点击扩展按钮重新选择页面。");
+    return Promise.resolve({ok: false, message: trackingMessage});
+  }
+}
 function save() { return chrome.storage.local.set({sources, pendingForgets}); }
 function send(message) {
   if (!port || !connected) return false;
@@ -251,28 +349,18 @@ async function handle(message, sender) {
   // Control commands only come from our popup, never a content script/web page.
   if (sender.url !== chrome.runtime.getURL("popup.html")) return {ok: false};
   if (message.type === "state") return {ok: true, sources: Object.values(sources), connected,
-    connecting, bridgeReason, bridgeMessage, extensionId: chrome.runtime.id};
+    connecting, bridgeReason, bridgeMessage, extensionId: chrome.runtime.id, trackingMessage,
+    pendingTrack: pendingTrack ? {id: pendingTrack.id, tabId: pendingTrack.tabId,
+      windowId: pendingTrack.windowId, url: pendingTrack.url, expiresAt: pendingTrack.expiresAt} : null};
+  if (message.type === "cancelTrackRequest") {
+    if (pendingTrack && message.requestId === pendingTrack.id) {
+      cancelTrackIntent(pendingTrack, "已取消这次页面追踪选择；不会在之后授权时自动加入。");
+    }
+    return {ok: true};
+  }
   if (message.type === "reconnect") {
     if (port) port.disconnect(); port = null; connecting = false; connected = false;
     await connect(); return {ok: true};
-  }
-  if (message.type === "track") {
-    const tab = await chrome.tabs.get(message.tabId);
-    const url = pageURL(tab.url);
-    if (url !== message.url) throw new Error("授权期间页面已变化，请重新选择当前页面。");
-    if (tab.incognito) throw new Error("不在无痕窗口内追踪网页。");
-    if (!await chrome.permissions.contains({origins: [originPattern(url)]})) throw new Error("尚未获得该网站权限。");
-    const previous = Object.values(sources).find(source => source.url === url);
-    if (!previous && Object.keys(sources).length >= MAX_SOURCES) throw new Error("最多追踪 32 个页面，请先移除不再需要的来源。");
-    if (previous) await stopObserver(previous);
-    const source = {id: previous?.id || crypto.randomUUID(), url, title: (tab.title || url).slice(0, 500),
-      tabId: tab.id, windowId: tab.windowId, status: "reading", checkedAt: Date.now()};
-    // One binding per tab. Navigating to a new URL is a new explicitly selected source.
-    for (const old of Object.values(sources)) {
-      if (old.tabId === source.tabId && old.id !== source.id) await setStatus(old, "target_changed");
-    }
-    sources[source.id] = source;
-    await save(); await connect(); await refresh(source); return {ok: true};
   }
   const source = sources[message.sourceId];
   if (!source) throw new Error("该页面已不在追踪列表中。");
@@ -288,22 +376,34 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  handle(message, sender).then(sendResponse).catch(error => sendResponse({ok: false,
+  // A closed popup only loses the response channel, not the permission/track
+  // transaction. Request the permission before entering async handle().
+  const operation = message?.type === "requestTrack" ? requestTracking(message, sender) : handle(message, sender);
+  const reply = result => { try { sendResponse(result); } catch (_) { /* Popup may have been destroyed. */ } };
+  operation.then(reply).catch(error => reply({ok: false,
     message: error instanceof Error ? error.message : "网页追踪操作失败"}));
   return true;
 });
 chrome.tabs.onRemoved.addListener(async tabId => {
+  if (pendingTrack?.tabId === tabId) cancelTrackIntent(pendingTrack, "所选标签页已关闭，未加入追踪。");
   await ready;
   for (const source of Object.values(sources)) if (source.tabId === tabId) await setStatus(source, "tab_closed");
 });
 chrome.tabs.onUpdated.addListener(async (tabId, change) => {
+  if (pendingTrack?.tabId === tabId && (change.url || change.status === "loading" || change.discarded || change.frozen)) {
+    cancelTrackIntent(pendingTrack, "所选页面在授权期间发生变化，未加入追踪。请重新选择。");
+  }
   if (!change.url && !change.status && change.discarded === undefined && change.frozen === undefined) return;
   await ready;
   for (const source of Object.values(sources)) if (source.tabId === tabId) await refresh(source);
 });
 chrome.permissions.onRemoved.addListener(async () => {
+  cancelTrackIntent(pendingTrack, "网站权限已撤回，这次页面选择已取消。");
   await ready;
   for (const source of Object.values(sources)) await refresh(source);
+});
+chrome.tabs.onReplaced?.addListener((_, removedTabId) => {
+  if (pendingTrack?.tabId === removedTabId) cancelTrackIntent(pendingTrack, "所选标签页已被替换，未加入追踪。");
 });
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name !== "haochen-check") return;

@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 let active = null;
 let rendering = false, lastSources = null, connected = false, tracking = false;
+let pendingRequestId = null, lastTrackingMessage = "";
 const labels = {available: "已检查", reading: "读取中", tab_closed: "标签页已关闭", suspended: "页面休眠",
   target_changed: "页面已切换 · 未读取新网址", permission_required: "需重新授权", error: "采集失败"};
 function notify(message) { $("notice").textContent = message; }
@@ -20,7 +21,13 @@ async function render() {
   $("connection-step").textContent = !state.connected ? "第 2 步 / 4 · 扩展已运行，等待本机桥接" :
     actual.length ? `第 4 步 / 4 · 已读取 ${actual.length} 个页面` : "第 3 步 / 4 · 连接成功，选择网页并授权";
   $("reconnect").disabled = state.connecting;
-  $("track").disabled = !active || !connected || tracking;
+  pendingRequestId = state.pendingTrack?.id || null;
+  $("track").disabled = !active || !connected || tracking || Boolean(pendingRequestId);
+  $("track").textContent = pendingRequestId ? "正在等待网站授权…" : "授权此网站并追踪当前页";
+  $("cancel-track").hidden = !pendingRequestId;
+  if (state.trackingMessage && state.trackingMessage !== lastTrackingMessage) {
+    lastTrackingMessage = state.trackingMessage; notify(state.trackingMessage);
+  }
   if (!state.connected && !state.connecting) $("first-connection").open = true;
   $("extension-id").textContent = state.extensionId;
   $("count").textContent = String(state.sources.length);
@@ -65,13 +72,18 @@ $("track").addEventListener("click", async () => {
   tracking = true;
   $("track").disabled = true;
   try {
-    // Called in the user's click handler: no blanket grant on install/startup.
-    const allowed = await chrome.permissions.request({origins: [new URL(active.url).origin + "/*"]});
-    if (!allowed) { notify("你没有授权该网站，未读取页面。"); return; }
-    await command({type: "track", tabId: active.id, url: active.url});
+    // Send during the click, before any await: Chrome carries this user gesture
+    // to the worker. The worker owns both native permission and exact binding;
+    // closing this popup cannot strand a granted site with zero tracked pages.
+    await command({type: "requestTrack", tabId: active.id, windowId: active.windowId, url: active.url});
     notify("已加入追踪。只有该固定页面会被读取；切换网址不会自动改读。"); await render();
   } catch (error) { notify(error.message); }
-  finally { tracking = false; $("track").disabled = !active || !connected; }
+  finally { tracking = false; render().catch(() => {}); }
+});
+$("cancel-track").addEventListener("click", async () => {
+  if (!pendingRequestId) return;
+  try { await command({type: "cancelTrackRequest", requestId: pendingRequestId}); await render(); }
+  catch (error) { notify(error.message); }
 });
 (async () => {
   try {
