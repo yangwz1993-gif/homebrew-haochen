@@ -13,6 +13,8 @@ haochen 是一款面向 macOS 的独立桌面 AI 伙伴：常驻桌面、按需�
 - 当前测试候选：`0.5.0-beta.3`，已完成本机替换安装和部分真实连接验证，**不是全部功能验收通过的正式版**。
 - 本次分发计划：GitHub 预发布 + 独立 `haochen@beta` Cask；默认 `haochen` 保持现状，不自动将稳定通道用户升级到 beta。发布授权已取得，以下 beta 链接和命令为预期入口，发布及下载验证完成前不视为已上线。
 
+**交接时的发布进度：** 完整代码、本文和 Beta 配方已推送 `feat/v0.5-dashboard`；尚未合并 main、发布 beta.3 Release 或完成 Homebrew 下载验证。API 认证和网页上传遇阻，下一位先按 [交接顶部的发布收尾记录](docs/handoff/v0.5.0-beta.3.md#发布收尾状态尚未上线2026-09-13) 完成，不能直接把下面的预期安装命令当作已可用。
+
 0.5 增加原生桌面总览、刘海/侧边入口、Otty Agent 动态、授权网页追踪、日历、文件条、自建事项和日报；haochen 仍是右下角的全局助手。接入要求和已知限制见下文；完整状态与后续优先级见 [下一位开发者交接](docs/handoff/v0.5.0-beta.3.md)。
 
 沿用所有者选择的 legacy DMG 分发：稳定发布者自签名，Cask 使用已明确披露的 quarantine 处理。不是 Apple Developer ID 签名，也未通过 Apple 公证；直接下载 DMG 可能被 Gatekeeper 拦截。
