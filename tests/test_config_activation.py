@@ -174,18 +174,80 @@ def test_prompt_passes_gate_after_failure_release(tmp_path, monkeypatch):
     assert client.prompt("test-only") == "ok-id"
 
 
-def test_busy_turn_finishes_before_reload_and_duplicate_request_cannot_replace_it(qtbot):
+def test_busy_turn_finishes_before_reload_and_queued_switch_runs_next(qtbot):
+    """行为变更（reject → queue）：进行中的激活不被打断，新请求排队后自动接续。"""
+    sup = FakeSupervisor()
+    flow = ConfigActivation(sup)
+    a_done, b_done = [], []
+    flow.apply("deepseek", "m", lambda *r: a_done.append(r))
+    assert sup.restarts == 1 and sup.client.configuration_blocked  # A 已进入重启（引擎已被触碰）
+    flow.apply("other", "new", lambda *r: b_done.append(r))
+    assert not b_done and flow._target == ("deepseek", "m")  # 排队等待，不立刻应答也不打断
+    sup.restarted.emit()
+    sup.client.response.emit({"id": "select-1", "success": True})
+    sup.client.response.emit({"id": "state-2", "success": True,
+                              "data": {"model": {"provider": "deepseek", "id": "m"}}})
+    assert a_done and a_done[0][0]
+    qtbot.waitUntil(lambda: sup.restarts == 2)  # 排队请求自动接续
+    assert flow._target == ("other", "new")
+    flow.stop()
+
+
+def test_waiting_activation_is_superseded_without_touching_engine(qtbot):
+    """还在等引擎空闲的激活被新请求立即取代；旧回退链不丢、引擎不被多余重启。"""
     sup = FakeSupervisor()
     ctrl = SimpleNamespace(busy=True)
     sup._ctrls.append(ctrl)
     flow = ConfigActivation(sup)
-    flow.apply("deepseek", "m", lambda *_: None)
-    assert sup.restarts == 0 and sup.client.configuration_blocked
-    duplicate = []
-    flow.apply("other", "new", lambda *r: duplicate.append(r))
-    assert duplicate and not duplicate[0][0] and flow._target == ("deepseek", "m")
+    a_done, b_done = [], []
+    flow.apply("deepseek", "m", lambda *r: a_done.append(r))
+    assert sup.restarts == 0
+    flow.apply("codewiz", "kimi-k3", lambda *r: b_done.append(r))
+    assert a_done and not a_done[0][0] and "取代" in a_done[0][1]
+    assert flow._target == ("codewiz", "kimi-k3")
     ctrl.busy = False
     qtbot.waitUntil(lambda: sup.restarts == 1)
+    flow.stop()
+
+
+def test_queued_switch_is_superseded_by_newer_request(qtbot):
+    """最新优先：排队中的请求被更新的请求取代并被告之，最新请求最终执行。"""
+    sup = FakeSupervisor()
+    flow = ConfigActivation(sup)
+    a_done, b_done, c_done = [], [], []
+    flow.apply("deepseek", "m", lambda *r: a_done.append(r))
+    flow.apply("codewiz", "kimi-k3", lambda *r: b_done.append(r))
+    flow.apply("zhipu", "glm", lambda *r: c_done.append(r))
+    assert b_done and not b_done[0][0] and "取代" in b_done[0][1] and not c_done
+    sup.restarted.emit()
+    sup.client.response.emit({"id": "select-1", "success": True})
+    sup.client.response.emit({"id": "state-2", "success": True,
+                              "data": {"model": {"provider": "deepseek", "id": "m"}}})
+    assert a_done and a_done[0][0]
+    qtbot.waitUntil(lambda: sup.restarts == 2)
+    sup.restarted.emit()
+    sup.client.response.emit({"id": "select-3", "success": True})
+    sup.client.response.emit({"id": "state-4", "success": True,
+                              "data": {"model": {"provider": "zhipu", "id": "glm"}}})
+    assert c_done and c_done[0][0]
+    flow.stop()
+
+
+def test_hot_switch_escalates_to_restart_when_model_not_in_catalog(qtbot):
+    """热切换时目标模型不在引擎目录 → 自动升级为重启生效，而不是直接失败。"""
+    sup = FakeSupervisor()
+    flow = ConfigActivation(sup)
+    results = []
+    flow.apply("codewiz", "kimi-k3", lambda *r: results.append(r), reload=False)
+    assert sup.restarts == 0
+    sup.client.response.emit({"id": "select-1", "success": False,
+                              "error": "Model not found: codewiz/kimi-k3"})
+    assert sup.restarts == 1 and not results  # 自动升级，而不是失败
+    sup.restarted.emit()
+    sup.client.response.emit({"id": "select-2", "success": True})
+    sup.client.response.emit({"id": "state-3", "success": True,
+                              "data": {"model": {"provider": "codewiz", "id": "kimi-k3"}}})
+    assert results and results[0][0] and not sup.client.configuration_blocked
     flow.stop()
 
 

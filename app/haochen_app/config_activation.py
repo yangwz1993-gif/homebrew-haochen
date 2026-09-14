@@ -24,6 +24,7 @@ class ConfigActivation(QObject):
         self._ready_target = None
         self._fallback = None
         self._did_restart = False
+        self._queued: tuple[str, str, object, bool] | None = None
         self._reload = True
         self._idle = QTimer(self)
         self._idle.setInterval(50)
@@ -50,7 +51,23 @@ class ConfigActivation(QObject):
 
     def apply(self, provider, model, done, *, reload=True):
         if self._phase != "idle":
-            done(False, "另一个配置正在生效，请稍后重试。")
+            # 排队语义取代硬报错：最新请求排队，当前激活完成后自动接续；
+            # 还在等引擎空闲（尚未触碰引擎）的激活可被立即取代。
+            if self._phase == "waiting":
+                superseded, self._done = self._done, None
+                self._idle.stop()
+                self._phase = "idle"
+                self._ready_target = self._fallback  # 尚未触碰引擎，还原旧就绪态
+                self._fallback = None
+                if superseded:
+                    superseded(False, "已被新的切换取代")
+                self.apply(provider, model, done, reload=reload)
+                return
+            if self._queued is not None:
+                _provider, _model, old_done, _reload = self._queued
+                if callable(old_done):
+                    old_done(False, "已被新的切换取代")
+            self._queued = (provider, model, done, reload)
             return
         self._target = (provider, model)
         self._done = done
@@ -94,6 +111,15 @@ class ConfigActivation(QObject):
             return
         self._request = None
         if not response.get("success"):
+            # 热切换时目标模型不在引擎目录（spawn 后新增/换了 provider）→ 自动升级为重启，
+            # 而不是直接失败：重启后引擎重新加载磁盘上的模型目录。
+            if (self._phase == "selecting" and not self._did_restart
+                    and "Model not found" in str(response.get("error", ""))):
+                log.info("model not in engine catalog; escalating to restart")
+                self._did_restart = True
+                self._phase = "restarting"
+                self.supervisor.restart_now(reason="configuration")
+                return
             log.warning("configuration RPC failed phase=%s code=%s", self._phase, response.get("errorCode", "rejected"))
             self._failed()
             return
@@ -142,12 +168,18 @@ class ConfigActivation(QObject):
         done, self._done = self._done, None
         if done:
             done(ok, message)
+        # 排队请求在当前激活尘埃落定后自动接续（回到事件循环再进，避免重入）。
+        queued, self._queued = self._queued, None
+        if queued is not None:
+            provider, model, queued_done, queued_reload = queued
+            QTimer.singleShot(0, lambda: self.apply(provider, model, queued_done, reload=queued_reload))
 
     def stop(self):
         self._idle.stop()
         self._deadline.stop()
         self._done = None
         self._request = None
+        self._queued = None
         self._phase = "idle"
         self._ready_target = None
         self._fallback = None

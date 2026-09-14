@@ -224,7 +224,7 @@ class SettingsWindow(QWidget):
     def _model_card(self, providers, settings) -> QFrame:
         card, lay = _card(
             "模型",
-            "同模型供应商内切换立即生效；切换供应商需重启引擎。",
+            "切换立即生效；目标模型不在引擎目录时会自动重启生效。Key 在下方「API Key」区管理。",
         )
         cur_provider = settings.get("defaultProvider", "")
         cur_model = settings.get("defaultModel", "")
@@ -233,7 +233,10 @@ class SettingsWindow(QWidget):
         row.addWidget(QLabel("默认供应商"))
         self._provider_combo = QComboBox()
         for p in providers:
-            self._provider_combo.addItem(p.name, p.id)
+            # 在下拉里直接标明真实可用性，免得用户切过去才发现没配 Key（模型管理的混乱点
+            # 之一）。外部 $ENV 引用（如 CodeWiz 内网）必须运行时真能解析才算可用——光有
+            # 占位引用不算。
+            self._provider_combo.addItem(f"{p.name}（{self._provider_availability_marker(p)}）", p.id)
         if (i := self._provider_combo.findData(cur_provider)) >= 0:
             self._provider_combo.setCurrentIndex(i)
         row.addWidget(self._provider_combo, 1)
@@ -259,6 +262,21 @@ class SettingsWindow(QWidget):
         self._model_combo.currentIndexChanged.connect(self._on_model_changed)
         return card
 
+    def _provider_availability_marker(self, provider) -> str:
+        """供应商下拉的可用性标注：未配置 / 已配置 / 环境变量未生效 / 需连接内网。"""
+        configured, _status = self.store.key_status(provider.id)
+        if not configured:
+            return "自定义" if not provider.builtin else "未配置 Key"
+        key = self.store.get_key(provider.id)
+        from ..keychain import credential_env_name
+        if isinstance(key, str) and key.startswith("$") and key != f"${credential_env_name(provider.id)}":
+            import os
+            if provider.id.startswith("codewiz"):
+                from .. import codewiz
+                return "已配置" if codewiz.credentials_ready(self.store.home) else "需在向导连接内网"
+            return "已配置" if os.environ.get(key[1:]) else "环境变量未生效"
+        return "已配置"
+
     def _fill_models(self, provider_id: str, select: str = "") -> None:
         self._model_combo.blockSignals(True)
         self._model_combo.clear()
@@ -282,7 +300,9 @@ class SettingsWindow(QWidget):
         if self.activate:
             self._set_working(True)
             self._set_status("正在应用模型配置，完成后才能开始对话…", ok=False)
-        self.restartRequired.emit(f"默认供应商已切换为 {provider}")
+        # 热切换优先：目标模型已在引擎目录时秒切；不在时由 ConfigActivation
+        # 自动升级为重启生效（引擎 set_model 支持跨 provider，只要模型在目录里）。
+        self.modelChanged.emit(provider, model)
 
     def _on_model_changed(self) -> None:
         provider = self._provider_combo.currentData()

@@ -187,3 +187,16 @@ def test_theme_and_signature_cards_render(qtbot, tmp_path: Path) -> None:
     assert disabled  # 主题下拉是禁用扩展位
     labels = [label.text() for label in window.findChildren(settings_module.QLabel)]
     assert any("Developer ID" in text or "开发模式" in text for text in labels)
+
+
+def test_provider_combo_marks_configuration_status(qtbot, tmp_path: Path) -> None:
+    """供应商下拉直接标明可用性（已配置/未配置 Key），减少模型管理的迷路感。"""
+    window, store, _cred = make_window(qtbot, tmp_path)
+    store.set_key("deepseek", "test-only-key")
+    window._build()
+    combo = window._provider_combo
+    labels = {combo.itemData(i): combo.itemText(i) for i in range(combo.count())}
+    assert "已配置" in labels["deepseek"]
+    # codewiz 是外部 $ENV 引用：没有 codewiz.json/SSO 会话时必须如实显示「未生效」，
+    # 不得只因占位引用就标“已配置”。
+    assert "需在向导连接内网" in labels["codewiz"], labels
