@@ -104,6 +104,76 @@ def test_failed_activation_never_releases_send_gate_and_can_retry(qtbot, failure
     flow.stop()
 
 
+@pytest.mark.parametrize("failure", ["restart", "select", "mismatch", "timeout"])
+def test_failed_switch_releases_gate_when_verified_fallback_exists(qtbot, failure):
+    """终态不变量：已有验证过的模型时，切换失败必须放行聊天并回退到旧就绪态。
+
+    与 test_failed_activation_never_releases_send_gate_and_can_retry 互补：
+    那条钉「从未就绪过 → 失败保持关闭」（没有可回退的安全配置）；
+    这条钉「就绪过 → 失败必须释放」（旧模型还在跑，锁死是 bug）。
+    """
+    sup = FakeSupervisor()
+    flow = ConfigActivation(sup)
+    ok = []
+    flow.apply("deepseek", "m", lambda *r: ok.append(r))
+    sup.restarted.emit()
+    sup.client.response.emit({"id": "select-1", "success": True})
+    sup.client.response.emit({"id": "state-2", "success": True,
+                              "data": {"model": {"provider": "deepseek", "id": "m"}}})
+    assert ok == [(True, "模型已就绪，可以开始对话。")]
+    assert not sup.client.configuration_blocked
+    results = []
+    flow.apply("codewiz", "kimi-k3", lambda *r: results.append(r))
+    if failure == "restart":
+        sup.restart_failed.emit()
+    elif failure == "timeout":
+        flow._deadline.timeout.emit()
+    else:
+        sup.restarted.emit()
+        sup.client.response.emit({"id": "select-3", "success": failure != "select"})
+        if failure == "mismatch":
+            sup.client.response.emit({"id": "state-4", "success": True,
+                                      "data": {"model": {"provider": "deepseek", "id": "m"}}})
+    assert len(results) == 1 and not results[0][0]
+    assert not sup.client.configuration_blocked, "切换失败不得锁死聊天（与启动态语义一致）"
+    # 重启路径下引擎状态不确定：不伪装回退成功，清空就绪态交下次 ensure_ready 重验
+    assert flow._ready_target is None
+    flow.stop()
+
+
+def test_failed_hot_switch_restores_verified_fallback(qtbot):
+    """热切换（不重启引擎）失败：引擎未被触碰，旧模型仍在跑，可以直接回退。"""
+    sup = FakeSupervisor()
+    flow = ConfigActivation(sup)
+    ok = []
+    flow.apply("deepseek", "m", lambda *r: ok.append(r))
+    sup.restarted.emit()
+    sup.client.response.emit({"id": "select-1", "success": True})
+    sup.client.response.emit({"id": "state-2", "success": True,
+                              "data": {"model": {"provider": "deepseek", "id": "m"}}})
+    assert ok and not sup.client.configuration_blocked
+    results = []
+    flow.apply("codewiz", "kimi-k3", lambda *r: results.append(r), reload=False)
+    assert sup.restarts == 1  # 热切换不再重启
+    sup.client.response.emit({"id": "select-3", "success": False})
+    assert len(results) == 1 and not results[0][0]
+    assert not sup.client.configuration_blocked
+    assert flow._ready_target == ("deepseek", "m"), "热切换失败应回退到旧的就绪模型"
+    # 回退后就绪态复用：ensure_ready 不再触发重启
+    again = []
+    flow.ensure_ready("deepseek", "m", lambda *r: again.append(r))
+    assert again and again[0][0] and sup.restarts == 1
+    flow.stop()
+
+
+def test_prompt_passes_gate_after_failure_release(tmp_path, monkeypatch):
+    """与 test_no_prompt_can_bypass_configuration_gate 互为正反：闸门释放后 prompt 正常走。"""
+    client = EngineClient(mock=True, home=tmp_path)
+    client.configuration_blocked = False
+    monkeypatch.setattr(client, "_send", lambda msg: "ok-id")
+    assert client.prompt("test-only") == "ok-id"
+
+
 def test_busy_turn_finishes_before_reload_and_duplicate_request_cannot_replace_it(qtbot):
     sup = FakeSupervisor()
     ctrl = SimpleNamespace(busy=True)

@@ -22,6 +22,8 @@ class ConfigActivation(QObject):
         self._phase = "idle"
         self._request = None
         self._ready_target = None
+        self._fallback = None
+        self._did_restart = False
         self._reload = True
         self._idle = QTimer(self)
         self._idle.setInterval(50)
@@ -54,6 +56,8 @@ class ConfigActivation(QObject):
         self._done = done
         self._reload = reload
         log.info("applying configuration provider=%s model=%s reload=%s", provider, model, reload)
+        self._fallback = self._ready_target  # 失败时可回退的旧就绪态；无则 None（首次配置）
+        self._did_restart = False
         self._ready_target = None
         self.client.configuration_blocked = True
         self._phase = "waiting"
@@ -68,6 +72,7 @@ class ConfigActivation(QObject):
         self._deadline.start()
         if self._reload or not self.client.alive or self.supervisor._restarting:
             self._phase = "restarting"
+            self._did_restart = True
             self.supervisor.restart_now(reason="configuration")
         else:
             self._select()
@@ -110,14 +115,29 @@ class ConfigActivation(QObject):
             self._finish(True, "模型已就绪，可以开始对话。")
 
     def _failed(self):
-        if self._phase != "idle":
-            self._finish(False, "配置已保存，但模型尚未就绪。请点“连接模型”重试；无需重新填写 Key。")
+        if self._phase == "idle":
+            return
+        if self._fallback is not None and self.client.alive:
+            # 有验证过的旧模型且引擎活着：放行聊天（与启动态语义一致——启动时也不拦）。
+            # 热切换失败引擎未被触碰，可直接回退旧就绪态；重启路径引擎状态不确定，
+            # 就绪态清空，交给下次 ensure_ready 重验，不伪装回退成功。
+            self.client.configuration_blocked = False
+            if not self._did_restart:
+                self._ready_target = self._fallback
+                provider, model = self._fallback
+                self._finish(False, f"切换未生效，已保持原模型 {provider}/{model}；可随时重试，无需重新填写 Key。")
+            else:
+                self._finish(False, "切换未生效；引擎已按新配置重启，聊天将沿用该配置，如需回原模型请在设置中重选。")
+            return
+        self._finish(False, "配置已保存，但模型尚未就绪。请点“连接模型”重试；无需重新填写 Key。")
 
     def _finish(self, ok, message):
         log.info("configuration activation finished ready=%s phase=%s", ok, self._phase)
         self._idle.stop()
         self._deadline.stop()
         self._request = None
+        self._fallback = None
+        self._did_restart = False
         self._phase = "idle"
         done, self._done = self._done, None
         if done:
@@ -130,3 +150,5 @@ class ConfigActivation(QObject):
         self._request = None
         self._phase = "idle"
         self._ready_target = None
+        self._fallback = None
+        self._did_restart = False

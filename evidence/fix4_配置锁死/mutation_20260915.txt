@@ -1,0 +1,208 @@
+.....FFFFF........ss                                                     [100%]
+=================================== FAILURES ===================================
+___ test_failed_switch_releases_gate_when_verified_fallback_exists[restart] ____
+
+qtbot = <pytestqt.qtbot.QtBot object at 0x10aed4500>, failure = 'restart'
+
+    @pytest.mark.parametrize("failure", ["restart", "select", "mismatch", "timeout"])
+    def test_failed_switch_releases_gate_when_verified_fallback_exists(qtbot, failure):
+        """终态不变量：已有验证过的模型时，切换失败必须放行聊天并回退到旧就绪态。
+    
+        与 test_failed_activation_never_releases_send_gate_and_can_retry 互补：
+        那条钉「从未就绪过 → 失败保持关闭」（没有可回退的安全配置）；
+        这条钉「就绪过 → 失败必须释放」（旧模型还在跑，锁死是 bug）。
+        """
+        sup = FakeSupervisor()
+        flow = ConfigActivation(sup)
+        ok = []
+        flow.apply("deepseek", "m", lambda *r: ok.append(r))
+        sup.restarted.emit()
+        sup.client.response.emit({"id": "select-1", "success": True})
+        sup.client.response.emit({"id": "state-2", "success": True,
+                                  "data": {"model": {"provider": "deepseek", "id": "m"}}})
+        assert ok == [(True, "模型已就绪，可以开始对话。")]
+        assert not sup.client.configuration_blocked
+        results = []
+        flow.apply("codewiz", "kimi-k3", lambda *r: results.append(r))
+        if failure == "restart":
+            sup.restart_failed.emit()
+        elif failure == "timeout":
+            flow._deadline.timeout.emit()
+        else:
+            sup.restarted.emit()
+            sup.client.response.emit({"id": "select-3", "success": failure != "select"})
+            if failure == "mismatch":
+                sup.client.response.emit({"id": "state-4", "success": True,
+                                          "data": {"model": {"provider": "deepseek", "id": "m"}}})
+        assert len(results) == 1 and not results[0][0]
+>       assert not sup.client.configuration_blocked, "切换失败不得锁死聊天（与启动态语义一致）"
+E       AssertionError: 切换失败不得锁死聊天（与启动态语义一致）
+E       assert not True
+E        +  where True = <test_config_activation.FakeClient object at 0x10aeb77f0>.configuration_blocked
+E        +    where <test_config_activation.FakeClient object at 0x10aeb77f0> = <test_config_activation.FakeSupervisor object at 0x10aeb7930>.client
+
+tests/test_config_activation.py:138: AssertionError
+____ test_failed_switch_releases_gate_when_verified_fallback_exists[select] ____
+
+qtbot = <pytestqt.qtbot.QtBot object at 0x10aed7cb0>, failure = 'select'
+
+    @pytest.mark.parametrize("failure", ["restart", "select", "mismatch", "timeout"])
+    def test_failed_switch_releases_gate_when_verified_fallback_exists(qtbot, failure):
+        """终态不变量：已有验证过的模型时，切换失败必须放行聊天并回退到旧就绪态。
+    
+        与 test_failed_activation_never_releases_send_gate_and_can_retry 互补：
+        那条钉「从未就绪过 → 失败保持关闭」（没有可回退的安全配置）；
+        这条钉「就绪过 → 失败必须释放」（旧模型还在跑，锁死是 bug）。
+        """
+        sup = FakeSupervisor()
+        flow = ConfigActivation(sup)
+        ok = []
+        flow.apply("deepseek", "m", lambda *r: ok.append(r))
+        sup.restarted.emit()
+        sup.client.response.emit({"id": "select-1", "success": True})
+        sup.client.response.emit({"id": "state-2", "success": True,
+                                  "data": {"model": {"provider": "deepseek", "id": "m"}}})
+        assert ok == [(True, "模型已就绪，可以开始对话。")]
+        assert not sup.client.configuration_blocked
+        results = []
+        flow.apply("codewiz", "kimi-k3", lambda *r: results.append(r))
+        if failure == "restart":
+            sup.restart_failed.emit()
+        elif failure == "timeout":
+            flow._deadline.timeout.emit()
+        else:
+            sup.restarted.emit()
+            sup.client.response.emit({"id": "select-3", "success": failure != "select"})
+            if failure == "mismatch":
+                sup.client.response.emit({"id": "state-4", "success": True,
+                                          "data": {"model": {"provider": "deepseek", "id": "m"}}})
+        assert len(results) == 1 and not results[0][0]
+>       assert not sup.client.configuration_blocked, "切换失败不得锁死聊天（与启动态语义一致）"
+E       AssertionError: 切换失败不得锁死聊天（与启动态语义一致）
+E       assert not True
+E        +  where True = <test_config_activation.FakeClient object at 0x10aeb6350>.configuration_blocked
+E        +    where <test_config_activation.FakeClient object at 0x10aeb6350> = <test_config_activation.FakeSupervisor object at 0x10aeb72f0>.client
+
+tests/test_config_activation.py:138: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  haochen.config_activation:config_activation.py:92 configuration RPC failed phase=selecting code=rejected
+___ test_failed_switch_releases_gate_when_verified_fallback_exists[mismatch] ___
+
+qtbot = <pytestqt.qtbot.QtBot object at 0x10aed7b90>, failure = 'mismatch'
+
+    @pytest.mark.parametrize("failure", ["restart", "select", "mismatch", "timeout"])
+    def test_failed_switch_releases_gate_when_verified_fallback_exists(qtbot, failure):
+        """终态不变量：已有验证过的模型时，切换失败必须放行聊天并回退到旧就绪态。
+    
+        与 test_failed_activation_never_releases_send_gate_and_can_retry 互补：
+        那条钉「从未就绪过 → 失败保持关闭」（没有可回退的安全配置）；
+        这条钉「就绪过 → 失败必须释放」（旧模型还在跑，锁死是 bug）。
+        """
+        sup = FakeSupervisor()
+        flow = ConfigActivation(sup)
+        ok = []
+        flow.apply("deepseek", "m", lambda *r: ok.append(r))
+        sup.restarted.emit()
+        sup.client.response.emit({"id": "select-1", "success": True})
+        sup.client.response.emit({"id": "state-2", "success": True,
+                                  "data": {"model": {"provider": "deepseek", "id": "m"}}})
+        assert ok == [(True, "模型已就绪，可以开始对话。")]
+        assert not sup.client.configuration_blocked
+        results = []
+        flow.apply("codewiz", "kimi-k3", lambda *r: results.append(r))
+        if failure == "restart":
+            sup.restart_failed.emit()
+        elif failure == "timeout":
+            flow._deadline.timeout.emit()
+        else:
+            sup.restarted.emit()
+            sup.client.response.emit({"id": "select-3", "success": failure != "select"})
+            if failure == "mismatch":
+                sup.client.response.emit({"id": "state-4", "success": True,
+                                          "data": {"model": {"provider": "deepseek", "id": "m"}}})
+        assert len(results) == 1 and not results[0][0]
+>       assert not sup.client.configuration_blocked, "切换失败不得锁死聊天（与启动态语义一致）"
+E       AssertionError: 切换失败不得锁死聊天（与启动态语义一致）
+E       assert not True
+E        +  where True = <test_config_activation.FakeClient object at 0x10aeb71b0>.configuration_blocked
+E        +    where <test_config_activation.FakeClient object at 0x10aeb71b0> = <test_config_activation.FakeSupervisor object at 0x10aeb6490>.client
+
+tests/test_config_activation.py:138: AssertionError
+___ test_failed_switch_releases_gate_when_verified_fallback_exists[timeout] ____
+
+qtbot = <pytestqt.qtbot.QtBot object at 0x10af1b170>, failure = 'timeout'
+
+    @pytest.mark.parametrize("failure", ["restart", "select", "mismatch", "timeout"])
+    def test_failed_switch_releases_gate_when_verified_fallback_exists(qtbot, failure):
+        """终态不变量：已有验证过的模型时，切换失败必须放行聊天并回退到旧就绪态。
+    
+        与 test_failed_activation_never_releases_send_gate_and_can_retry 互补：
+        那条钉「从未就绪过 → 失败保持关闭」（没有可回退的安全配置）；
+        这条钉「就绪过 → 失败必须释放」（旧模型还在跑，锁死是 bug）。
+        """
+        sup = FakeSupervisor()
+        flow = ConfigActivation(sup)
+        ok = []
+        flow.apply("deepseek", "m", lambda *r: ok.append(r))
+        sup.restarted.emit()
+        sup.client.response.emit({"id": "select-1", "success": True})
+        sup.client.response.emit({"id": "state-2", "success": True,
+                                  "data": {"model": {"provider": "deepseek", "id": "m"}}})
+        assert ok == [(True, "模型已就绪，可以开始对话。")]
+        assert not sup.client.configuration_blocked
+        results = []
+        flow.apply("codewiz", "kimi-k3", lambda *r: results.append(r))
+        if failure == "restart":
+            sup.restart_failed.emit()
+        elif failure == "timeout":
+            flow._deadline.timeout.emit()
+        else:
+            sup.restarted.emit()
+            sup.client.response.emit({"id": "select-3", "success": failure != "select"})
+            if failure == "mismatch":
+                sup.client.response.emit({"id": "state-4", "success": True,
+                                          "data": {"model": {"provider": "deepseek", "id": "m"}}})
+        assert len(results) == 1 and not results[0][0]
+>       assert not sup.client.configuration_blocked, "切换失败不得锁死聊天（与启动态语义一致）"
+E       AssertionError: 切换失败不得锁死聊天（与启动态语义一致）
+E       assert not True
+E        +  where True = <test_config_activation.FakeClient object at 0x10aeb63f0>.configuration_blocked
+E        +    where <test_config_activation.FakeClient object at 0x10aeb63f0> = <test_config_activation.FakeSupervisor object at 0x10aeb5e50>.client
+
+tests/test_config_activation.py:138: AssertionError
+______________ test_failed_hot_switch_restores_verified_fallback _______________
+
+qtbot = <pytestqt.qtbot.QtBot object at 0x10aed7710>
+
+    def test_failed_hot_switch_restores_verified_fallback(qtbot):
+        """热切换（不重启引擎）失败：引擎未被触碰，旧模型仍在跑，可以直接回退。"""
+        sup = FakeSupervisor()
+        flow = ConfigActivation(sup)
+        ok = []
+        flow.apply("deepseek", "m", lambda *r: ok.append(r))
+        sup.restarted.emit()
+        sup.client.response.emit({"id": "select-1", "success": True})
+        sup.client.response.emit({"id": "state-2", "success": True,
+                                  "data": {"model": {"provider": "deepseek", "id": "m"}}})
+        assert ok and not sup.client.configuration_blocked
+        results = []
+        flow.apply("codewiz", "kimi-k3", lambda *r: results.append(r), reload=False)
+        assert sup.restarts == 1  # 热切换不再重启
+        sup.client.response.emit({"id": "select-3", "success": False})
+        assert len(results) == 1 and not results[0][0]
+>       assert not sup.client.configuration_blocked
+E       assert not True
+E        +  where True = <test_config_activation.FakeClient object at 0x10aeb7b10>.configuration_blocked
+E        +    where <test_config_activation.FakeClient object at 0x10aeb7b10> = <test_config_activation.FakeSupervisor object at 0x10aeb53b0>.client
+
+tests/test_config_activation.py:160: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  haochen.config_activation:config_activation.py:92 configuration RPC failed phase=selecting code=rejected
+=========================== short test summary info ============================
+SKIPPED [2] tests/test_config_activation.py:256: build the engine to run the process-level acceptance test
+FAILED tests/test_config_activation.py::test_failed_switch_releases_gate_when_verified_fallback_exists[restart]
+FAILED tests/test_config_activation.py::test_failed_switch_releases_gate_when_verified_fallback_exists[select]
+FAILED tests/test_config_activation.py::test_failed_switch_releases_gate_when_verified_fallback_exists[mismatch]
+FAILED tests/test_config_activation.py::test_failed_switch_releases_gate_when_verified_fallback_exists[timeout]
+FAILED tests/test_config_activation.py::test_failed_hot_switch_restores_verified_fallback
+5 failed, 13 passed, 2 skipped in 0.48s

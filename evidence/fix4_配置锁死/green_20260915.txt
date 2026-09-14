@@ -1,0 +1,4 @@
+..................ss                                                     [100%]
+=========================== short test summary info ============================
+SKIPPED [2] tests/test_config_activation.py:256: build the engine to run the process-level acceptance test
+18 passed, 2 skipped in 0.86s
