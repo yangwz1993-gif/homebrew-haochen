@@ -292,3 +292,51 @@ test('Hi 空占位卡片保留在动态列表（只有已读 hi 消息才剔除�
   ];
   assert.deepEqual(ui.feedEvents(events).map(e=>e.id), ['hi:none','hi:msg:2','otty:p_1']);
 });
+
+test('增量渲染：相同 state 二次渲染全部复用，无增删改',() => {
+  const events = [
+    {id:'otty:p_1', source:'otty', title:'终端 1', status:'processing', unread:false, occurredAt:'2026-09-15T10:03:00+08:00'},
+    {id:'hi:none', source:'hi', title:'Hi', summary:'当前没有 @ 你的待处理消息。', status:'available', occurredAt:'2026-09-15T10:03:00+08:00'},
+  ];
+  const first = ui.computeFeedDiff({}, events);
+  assert.deepEqual(first.add.sort(), ['hi:none','otty:p_1']);
+  assert.deepEqual(first.update, []); assert.deepEqual(first.reuse, []); assert.deepEqual(first.remove, []);
+  const second = ui.computeFeedDiff(first.signatures, events);
+  assert.deepEqual(second.add, []); assert.deepEqual(second.update, []); assert.deepEqual(second.remove, []);
+  assert.deepEqual(second.reuse.sort(), ['hi:none','otty:p_1']);
+});
+
+test('增量渲染：新增事件只有新卡片进入 add（is-new 只给它）',() => {
+  const base = [{id:'otty:p_1', source:'otty', title:'终端 1', status:'idle', occurredAt:'2026-09-15T10:03:00+08:00'}];
+  const known = ui.computeFeedDiff({}, base).signatures;
+  const diff = ui.computeFeedDiff(known, [...base, {id:'hi:msg:9', source:'hi', title:'李四', status:'needs_attention', occurredAt:'2026-09-15T10:04:00+08:00'}]);
+  assert.deepEqual(diff.add, ['hi:msg:9']);
+  assert.deepEqual(diff.reuse, ['otty:p_1']);
+  assert.deepEqual(diff.update, []); assert.deepEqual(diff.remove, []);
+});
+
+test('增量渲染：内容真实变化（标题/状态/未读）必须进入 update，不允许被复用掩盖',() => {
+  const base = [{id:'otty:p_1', source:'otty', title:'终端 1', status:'processing', unread:false, occurredAt:'2026-09-15T10:03:00+08:00'}];
+  const known = ui.computeFeedDiff({}, base).signatures;
+  for (const change of [{title:'改名了'},{status:'idle'},{unread:true},{summary:'新摘要'}]) {
+    const diff = ui.computeFeedDiff(known, [{...base[0], ...change}]);
+    assert.deepEqual(diff.update, ['otty:p_1'], `变化 ${JSON.stringify(change)} 必须触发更新`);
+    assert.deepEqual(diff.reuse, []);
+  }
+});
+
+test('增量渲染：消失的事件进入 remove',() => {
+  const known = ui.computeFeedDiff({}, [{id:'a', title:'A'},{id:'b', title:'B'}]).signatures;
+  const diff = ui.computeFeedDiff(known, [{id:'a', title:'A'}]);
+  assert.deepEqual(diff.remove, ['b']); assert.deepEqual(diff.reuse, ['a']);
+});
+
+test('时间桶：分钟内跳动不触发签名变化，跨小时才变',() => {
+  assert.equal(ui.feedTimeBucket('2026-09-15T10:03:00+08:00'), ui.feedTimeBucket('2026-09-15T10:59:00+08:00'));
+  assert.notEqual(ui.feedTimeBucket('2026-09-15T10:59:00+08:00'), ui.feedTimeBucket('2026-09-15T11:00:00+08:00'));
+  const base = [{id:'hi:none', source:'hi', title:'Hi', status:'available', occurredAt:'2026-09-15T10:03:00+08:00'}];
+  const known = ui.computeFeedDiff({}, base).signatures;
+  // 适配器每次轮询刷新 updatedAt（分钟级）：同小时内不得引起 update
+  const diff = ui.computeFeedDiff(known, [{...base[0], occurredAt:'2026-09-15T10:47:00+08:00'}]);
+  assert.deepEqual(diff.reuse, ['hi:none']); assert.deepEqual(diff.update, []);
+});
