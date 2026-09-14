@@ -64,6 +64,39 @@
     return list(events,200).filter(item => item && item.type !== 'calendar' && item.kind !== 'calendar'
       && !(String(item.id || '').startsWith('hi:msg:') && item.unread === false));
   }
+  function feedTimeBucket(value) {
+    // 小时粒度同桶：动态列表的刷新签名用它，避免分钟级时间跳动触发全列表重建。
+    // 注意：时间戳是绝对值（适配器每次轮询会刷新 updatedAt），桶只随「数据时间跨小时」变化。
+    const date = typeof value === 'number' ? new Date(value < 1e12 ? value * 1000 : value) : new Date(text(value));
+    if (!Number.isFinite(date.getTime())) return '';
+    return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}`;
+  }
+  function feedEventSignature(event) {
+    // 影响一张动态卡片渲染结果的全部字段；签名不变 = 卡片可以完全复用（不重建、不重播动画）。
+    const item = record(event);
+    return [text(item.id,200), text(item.source || item.sourceId,60), text(item.title),
+            text(item.summary || item.description), text(item.status || item.state),
+            item.stale===true, item.unread===true, text(item.attentionVersion,64),
+            feedTimeBucket(item.occurredAt || item.updatedAt),
+            Boolean(item.target && typeof item.target==='object')].join('\u0001');
+  }
+  function computeFeedDiff(known, events) {
+    // known: {id: signature}（上次渲染的行签名表）；events: 本次事件列表。
+    // → add（新出现，播入场动画）/ update（内容真变，更新节点）/ reuse（原样复用）/ remove（消失）。
+    const next = new Map();
+    for (const event of list(events,200)) {
+      const id = text(event && event.id,200);
+      if (id) next.set(id, feedEventSignature(event));
+    }
+    const add = [], update = [], reuse = [];
+    for (const [id, sig] of next) {
+      if (!Object.hasOwn(known, id)) add.push(id);
+      else if (known[id] !== sig) update.push(id);
+      else reuse.push(id);
+    }
+    const remove = Object.keys(record(known)).filter(id => !next.has(id));
+    return {add, update, reuse, remove, signatures: Object.fromEntries(next)};
+  }
   function connectorLabel(connector) {
     const item = record(connector), stage = record(item.setup).stage;
     if (item.id==='wechat') {
@@ -221,7 +254,7 @@
       this.pending.clear();
     }
   }
-  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
+  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,feedTimeBucket,feedEventSignature,computeFeedDiff,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
   if (typeof module === 'object' && module.exports) module.exports = core;
   global.HaochenDashboardCore = core;
   if (typeof document === 'undefined') return;
@@ -357,16 +390,20 @@
     overviewFrame = requestAnimationFrame(() => { if (overviewPending) renderOverview(); });
   }
   function renderEvents() {
-    // Hi messages are notifications: once handled (read), drop them so they
-    // don't keep nagging. Other sources stay (they reflect live status).
     // 口径与 core.feedEvents 一致（可单测）：Hi 空占位 hi:none 保留。
     const events = feedEvents(ui.state.events);
     const connected = ui.state.connectors.some(item => item.status === 'connected');
-    if (!overviewChanged('events',[events.length,events.length ? null : [ui.received,connected],events.slice(0,80).map(item=>[item.id,item.source,item.sourceId,item.title,item.summary || item.description,item.status,item.stale,item.unread,item.attentionVersion,timeLabel(item.occurredAt || item.updatedAt)])])) return;
-    const target = $('#event-list'); target.replaceChildren();
+    // 签名按小时粒度取时间桶（feedEventSignature）：分钟级时间跳动不再触发重建。
+    // 被守卫跳过时也要把各卡片时间文本原地刷新（文本更新不重播动画）。
+    if (!overviewChanged('events',[events.length,events.length ? null : [ui.received,connected],events.slice(0,80).map(feedEventSignature)])) { refreshFeedTimes(events); return; }
+    const target = $('#event-list');
     const unread = events.filter(item=>item.unread===true).length;
     $('#event-count').textContent = unread ? `${unread} 条未读` : events.length ? `${events.length} 条` : '';
     if (!events.length) {
+      // 空态整体替换：注册表一并清空，避免残留节点被误复用。
+      ui.feedRows = new Map(); ui.feedModules = new Map();
+      if (ui.feedFooter) { ui.feedFooter.remove(); ui.feedFooter = null; }
+      target.replaceChildren();
       target.append(empty(ui.received ? connected ? '此刻，没有新的动态。' : '给重要的消息，留一个位置。' : '正在连接你的本机服务', ui.received ? connected ? '已连接来源的真实变化会出现在这里。不打扰，也不遗漏。' : '连接 Agent、浏览器或日历，让真实变化自然浮现。' : '正在读取本地连接状态，不会载入示例消息。','bell',ui.received ? 'connections' : null,'连接应用')); return;
     }
     // A top "需要处理" module (attention/error across all apps) + one module per
@@ -391,7 +428,7 @@
       const meta = node('span','event-meta'), label = node('span');
       const dot = event.stale ? '' : ['error','failed'].includes(event.status) ? 'error' : ['running','processing','working','checking'].includes(event.status) ? 'running' : ['waiting','awaiting','needs_attention','warning'].includes(event.status) ? 'warning' : '';
       label.append(node('span',`status-dot ${dot}`),document.createTextNode(eventStateLabel(event)));
-      meta.append(label,node('span','',timeLabel(event.occurredAt || event.updatedAt))); el.append(glyph,copy,meta);
+      meta.append(label,node('span','event-time',timeLabel(event.occurredAt || event.updatedAt))); el.append(glyph,copy,meta);
       row.append(el);
       if (event.target && typeof event.target === 'object') {
         const jump = button('','event-source',{className:'event-jump',id,key:`jump-${id}`});
@@ -400,18 +437,11 @@
       }
       return row;
     };
-    const buildModule = (opts, items) => {
-      const mod = node('section',`feed-module${opts.priority ? ' is-priority' : ''}`);
-      const head = node('div','module-head');
-      const badge = node('span',`group-glyph${opts.kind === 'terminal' ? ' agent' : ''}${opts.priority ? ' pri' : ''}`); badge.append(icon(opts.kind));
-      head.append(badge,node('span','module-name',opts.name),node('span','module-count',String(items.length)));
-      const rows = node('div','module-rows');
-      for (const event of items) rows.append(buildRow(event));
-      mod.append(head,rows); target.append(mod);
-    };
+    // 增量更新：模块壳与卡片行按 key 复用，只有新出现的卡片播入场动画。
     // No separate "priority" column: keep every event inside its own app module
     // and let colour (attention/error left-bar) mark what needs handling. Within
     // a module, attention/error float to the top.
+    if (!ui.feedModules) { ui.feedModules = new Map(); ui.feedRows = new Map(); }
     const groups = [], byKey = new Map();
     for (const event of shown) {
       const key = text(event.source || event.sourceId || 'other',60);
@@ -425,12 +455,78 @@
     const rank = (s) => { const i = ORDER.indexOf(text(s)); return i < 0 ? ORDER.length : i; };
     groups.sort((a,b) => (rank(a.source) - rank(b.source)) || text(a.source).localeCompare(text(b.source)));
     const attnRank = (e) => ['err','attn'].includes(priorityOf(e)) ? 0 : 1;
+    // 渲染差分与被单测钉死的 core.computeFeedDiff 是同一套逻辑（测的就是跑的）。
+    const known = {};
+    for (const [id, entry] of ui.feedRows) known[id] = entry.sig;
+    const diff = computeFeedDiff(known, shown);
+    const addSet = new Set(diff.add), updateSet = new Set(diff.update);
+    const usedModules = new Set();
     for (const g of groups) {
+      usedModules.add(g.key);
+      let mod = ui.feedModules.get(g.key);
+      if (!mod) {
+        const section = node('section','feed-module');
+        const head = node('div','module-head');
+        const badge = node('span',`group-glyph${sourceKind(g.source) === 'terminal' ? ' agent' : ''}`); badge.append(icon(sourceKind(g.source)));
+        const countEl = node('span','module-count','');
+        head.append(badge,node('span','module-name',appLabel(g.source)),countEl);
+        const rows = node('div','module-rows');
+        section.append(head,rows);
+        mod = {mod:section, rows, countEl};
+        ui.feedModules.set(g.key, mod);
+      }
+      target.append(mod.mod);  // 按固定顺序归位：已有节点是移动不是重建，不触发动画
+      const countText = String(g.items.length);
+      if (mod.countEl.textContent !== countText) mod.countEl.textContent = countText;
       const ordered = g.items.map((item, i) => [item, i]);
       ordered.sort((a,b) => (attnRank(a[0]) - attnRank(b[0])) || (a[1] - b[1]));
-      buildModule({name:appLabel(g.source), kind:sourceKind(g.source), source:g.source}, ordered.map(x => x[0]));
+      for (const [event] of ordered) {
+        const id = text(event.id,200), sig = diff.signatures[id];
+        const existing = ui.feedRows.get(id);
+        if (existing && !addSet.has(id) && !updateSet.has(id)) {
+          // 未变化：节点原样复用（引用不变、不重播动画），只原地刷新时间文本。
+          existing.row.classList.remove('is-new');
+          updateRowTime(existing, event);
+          mod.rows.append(existing.row);
+        } else {
+          const row = buildRow(event);
+          if (existing) {
+            existing.row.remove();  // 内容真变：换新节点，但不加 is-new（不重播动画）
+          } else {
+            // 只有新出现的卡片播入场动画；播完即摘除，避免后续移动重放。
+            row.classList.add('is-new');
+            row.addEventListener('animationend', () => row.classList.remove('is-new'), {once:true});
+          }
+          mod.rows.append(row);
+          ui.feedRows.set(id, {row, sig, timeEl: row.querySelector('.event-time')});
+        }
+      }
     }
-    if (events.length > 30) target.append(paragraph(`先展示最近 30 条，共 ${events.length} 条；日报中可回顾今日变化。`,'compact-empty'));
+    // 消失的模块与卡片移除（diff.remove 与模块归集同一口径）
+    for (const [key, mod] of ui.feedModules) if (!usedModules.has(key)) { mod.mod.remove(); ui.feedModules.delete(key); }
+    for (const id of diff.remove) {
+      const entry = ui.feedRows.get(id);
+      if (entry) { entry.row.remove(); ui.feedRows.delete(id); }
+    }
+    // 尾部「最近 30 条」提示：常驻节点原地更新，同样不重建。
+    if (events.length > 30) {
+      if (!ui.feedFooter) ui.feedFooter = paragraph('','compact-empty');
+      ui.feedFooter.textContent = `先展示最近 30 条，共 ${events.length} 条；日报中可回顾今日变化。`;
+      target.append(ui.feedFooter);
+    } else if (ui.feedFooter) { ui.feedFooter.remove(); ui.feedFooter = null; }
+  }
+  function updateRowTime(entry, event) {
+    if (!entry.timeEl || !entry.timeEl.isConnected) return;
+    const label = timeLabel(event.occurredAt || event.updatedAt);
+    if (entry.timeEl.textContent !== label) entry.timeEl.textContent = label;
+  }
+  function refreshFeedTimes(events) {
+    // 守卫跳过的零变化刷新：只原地更新时间文本（不重建、不重播动画）。
+    if (!ui.feedRows || !ui.feedRows.size) return;
+    for (const event of list(events,200)) {
+      const entry = ui.feedRows.get(text(event && event.id,200));
+      if (entry) updateRowTime(entry, event);
+    }
   }
   function renderConnectorsOverview() {
     const connectors = visibleConnectors(ui.state.connectors);

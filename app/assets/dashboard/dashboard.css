@@ -136,7 +136,9 @@ svg { width:17px; height:17px; flex-shrink:0; vertical-align:middle; }
 .module-rows .event-card { min-height:54px; padding:10px 12px; background:var(--soft); box-shadow:none; border-color:transparent; }
 .module-rows .event-card:hover { background:var(--hover); box-shadow:var(--elev-1); transform:none; }
 .module-rows .event-row:hover .event-jump, .module-rows .event-row:focus-within .event-jump { width:38px; }
-.event-row { display:flex; align-items:stretch; gap:0; position:relative; animation:card-in .32s cubic-bezier(.2,.8,.25,1) both; }
+.event-row { display:flex; align-items:stretch; gap:0; position:relative; }
+/* 入场动画只给新出现的卡片（.is-new）：增量渲染下复用的节点不再重播，消除整列表抖动。 */
+.event-row.is-new { animation:card-in .32s cubic-bezier(.2,.8,.25,1) both; }
 .event-jump { flex-shrink:0; width:0; overflow:hidden; display:grid; place-items:center; color:var(--muted); border-radius:0 var(--radius) var(--radius) 0; border:1px solid transparent; border-left:0; transition:width .16s,background .16s,color .16s; }
 .event-row:hover .event-jump, .event-row:focus-within .event-jump { width:40px; background:var(--soft); color:var(--accent); border-color:var(--line); }
 .event-jump svg { width:16px; height:16px; }
