@@ -20,6 +20,9 @@ TARGETS = {
     "codex": [".codex/hooks.json", ".codex/config.toml"],
     "claude": [".claude/settings.json"],
 }
+# codewiz-cc（CW）驱动的 Claude 会话读这个独立配置目录；Otty 官方安装器只会写
+# ~/.claude/settings.json，不会写这里——CW 会话「状态未知」的常见根因。
+CW_CLAUDE_CONFIG = ".cc-mirror/codewiz-cc/config/settings.json"
 
 
 def agent_kind(value: object) -> str | None:
@@ -99,10 +102,35 @@ class OttyIntegrationSetup:
                               message="已找到默认配置中的 Otty hooks；未上报时请检查信任提示并重启相应会话。"
                               if has_hook and enabled else
                               "请在 Otty 设置 → Agents 安装官方 Hooks；haochen 不改写你的现有 Agent 配置。")
+            if kind == "claude":
+                result.update(self._cw_claude_inspect())
         except (OSError, ValueError, UnicodeError, AttributeError):
             result.update(integrationStatus="unknown", reasonCode="config_unreadable",
                           message="暂时无法安全核对集成配置，请在 Otty 设置中检查。")
         return result
+
+    def _cw_claude_inspect(self) -> dict:
+        """CW（codewiz-cc）驱动的 Claude 会话的独立配置目录检查（只读，只回布尔，不回正文）。"""
+        cw_path = self.user_home / CW_CLAUDE_CONFIG
+        if not cw_path.parent.is_dir():
+            return {}  # 未装 codewiz-cc：无 CW 场景
+        info: dict = {"cwConfigPath": str(cw_path), "cwHooks": None}
+        try:
+            contents = _read(cw_path)
+        except (OSError, ValueError, UnicodeError):
+            info["cwNote"] = "CW 配置目录无法安全核对，请手动比对 ~/.claude/settings.json 的 Otty hooks。"
+            return info
+        if contents is not None:
+            try:
+                config = json.loads(contents)
+                info["cwHooks"] = bool(isinstance(config, dict) and _has_hook(config.get("hooks", {})))
+            except ValueError:
+                info["cwHooks"] = None
+        if info["cwHooks"] is False:
+            info["cwNote"] = ("CW 驱动的 Claude 会话使用独立配置目录，其中暂无 Otty hooks，CW 会话状态会显示未知；"
+                              "请在 Otty 设置安装 Claude 官方 Hooks 后，把带 _otty 标记的 hooks 组合并到该目录的 "
+                              "settings.json，然后重启 CW 会话。")
+        return info
 
     def setup(self, kind: str, *, apply: bool = False) -> dict:
         plan = self.inspect(kind)

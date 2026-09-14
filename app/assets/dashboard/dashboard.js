@@ -861,6 +861,8 @@
           const actions = node('div','detail-actions'); actions.append(button('确认安装集成','otty-setup-apply',{className:'primary-button',id:kind,key:`otty-apply-${kind}`}),button('暂不修改','otty-setup-cancel',{key:'otty-cancel'})); confirmation.append(actions); row.append(confirmation);
         }
       } else if (agent.nextAction==='open_otty_settings') row.append(paragraph('请在 Otty 设置 → Agents 中检查该 Agent 的官方集成。haochen 不会自动重写它的配置。','field-help'));
+      // CW（codewiz-cc）驱动的 Claude 会话有独立配置目录；官方钩子装不到那里，需要单独指引。
+      if (agent.cwNote) row.append(paragraph(text(agent.cwNote,300),'field-help'));
       if (agent.needsRestart) row.append(paragraph('集成已有配置，但当前会话可能尚未加载；重启对应 Agent 后再检查。','field-help'));
       help.append(row);
     }

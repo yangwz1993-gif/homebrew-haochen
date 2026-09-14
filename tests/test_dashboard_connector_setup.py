@@ -223,3 +223,47 @@ def test_chrome_popup_refreshes_async_connection_without_reopening():
     script = (ROOT / "browser-extension/popup.js").read_text()
     assert "setInterval" in script and "document.hidden" in script and '"pagehide"' in script
     assert 'contains(document.activeElement)' in script
+
+
+def test_cw_claude_hooks_detection(otty_setup):
+    """CW（codewiz-cc）驱动的 Claude 会话读独立配置目录；探测只回布尔，不回正文。"""
+    result = otty_setup.inspect("claude")
+    assert "cwHooks" not in result  # 未装 codewiz-cc：无 CW 场景字段
+
+    cw = otty_setup.user_home / ".cc-mirror/codewiz-cc/config"
+    cw.mkdir(parents=True)
+    (cw / "settings.json").write_text(json.dumps({"hooks": {}, "secret": "never-return-this"}))
+    result = otty_setup.inspect("claude")
+    assert result["cwHooks"] is False and "CW" in result["cwNote"]
+    assert "never-return-this" not in json.dumps(result)
+
+    (cw / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [{"command": "otty-hook.sh idle"}]}}))
+    result = otty_setup.inspect("claude")
+    assert result["cwHooks"] is True and "cwNote" not in result
+
+
+def test_otty_version_gate_flags_old_versions(otty_setup, monkeypatch):
+    """旧版 Otty 没有 agent_state 字段：诊断必须明确提示升级，而不是静默「状态未知」。"""
+    import plistlib
+    adapter = OttyAdapter(otty_setup.cli, user_home=otty_setup.user_home)
+    adapter._cli = otty_setup.cli
+    monkeypatch.setattr(adapter, "snapshot", lambda: {"status": "ready", "checkedAt": "now",
+                                                      "message": "ok", "events": []})
+    plist = otty_setup.cli.parent.parent / "Info.plist"
+    result = adapter.diagnostic()
+    assert "upgradeRequired" not in result  # 无 Info.plist → 版本未知 → 不猜不拦
+
+    plist.write_bytes(plistlib.dumps({"CFBundleShortVersionString": "1.3.0"}))
+    result = adapter.diagnostic()
+    assert result["upgradeRequired"] is True and "1.4.1" in result["message"]
+    assert result["ottyVersion"] == "1.3.0"
+
+    plist.write_bytes(plistlib.dumps({"CFBundleShortVersionString": "1.4.1"}))
+    assert "upgradeRequired" not in adapter.diagnostic()
+
+
+def test_distribution_doc_covers_otty_prerequisites():
+    """分发文档必须包含 Otty 前置链与 CW 指引（防文档回退，措辞守卫）。"""
+    doc = (ROOT / "docs" / "homebrew-install.md").read_text(encoding="utf-8")
+    for needle in ("Otty", "1.4.1", "Agents", "重启", ".cc-mirror"):
+        assert needle in doc, f"homebrew-install.md 缺少 Otty 前置要素：{needle}"

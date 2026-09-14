@@ -65,6 +65,26 @@ brew uninstall --cask yangwz1993-gif/haochen/haochen   # 加 --zap 连数据一�
 - **Hi 状态监控 / 精准跳转 / 让 haochen 查 Hi**：本机需已安装内部 `hi` CLI。
 - **读屏 / 看图**：首次在「系统设置 → 隐私与安全性」授权「辅助功能」「屏幕录制」。
 
+### Otty「Agent 状态」前置链（缺了会全部显示「状态未知」）
+
+haochen 的 Otty 面板本身不含 Otty，也不能替你装钩子。要让 Claude / Codex / Pi 等
+Agent 的状态真实上报，需要四步：
+
+1. **安装 Otty ≥ 1.4.1**（旧版没有状态上报字段，haochen 会在诊断里提示升级）；
+2. 让 Otty 保持运行；
+3. 在 **Otty 设置 → Agents** 给你用的每种 Agent 安装官方 Hooks（Claude/Codex 只能
+   在这里装，haochen 不改写你的 Agent 配置；Pi/OMP 可以在 haochen 看板里确认安装）；
+4. **重启对应的 Agent 会话**（钩子随进程启动加载，不重启不上报）。
+
+> 自查一句话：`/Applications/Otty.app/Contents/MacOS/otty-cli --json pane list` 里
+> 每个 pane 的 `agent_state` 非空（processing/idle/awaiting）即正常；空则是钩子没装
+> 或会话没重启。
+
+**用 codewiz-cc（CW）驱动 Claude 的额外一步**：CW 会话读的是独立配置目录
+`~/.cc-mirror/codewiz-cc/config/settings.json`，Otty 官方安装器不会写进去。装完
+Claude 官方 Hooks 后，把 `~/.claude/settings.json` 里带 `_otty` 标记的 hooks 组
+合并进该文件，然后重启 CW 会话。
+
 ---
 
 ## 说明与边界

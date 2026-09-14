@@ -22,6 +22,8 @@ from haochen_app.dashboard.adapters.otty_setup import LABELS, OttyIntegrationSet
 
 BUNDLE_ID = "io.appmakes.otty"
 HOOKS_HELP_URL = "https://docs.otty.sh/agents/setup"
+# agent_state 元数据格式来自 Otty 1.4.1；更旧的版本没有该字段，会全员静默「状态未知」。
+_MIN_OTTY_VERSION = (1, 4, 1)
 _ID = re.compile(r"[ptw]_[A-Za-z0-9_-]{1,160}\Z")
 _MAX_OUTPUT = 1024 * 1024
 _MAX_PANES = 500
@@ -43,6 +45,27 @@ class OttyError(ValueError):
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _otty_version(cli: Path | None) -> tuple[int, ...] | None:
+    """Otty.app 的 Info.plist 版本（只读）；读不到返回 None（不猜、不拦）。"""
+    if cli is None:
+        return None
+    plist = cli.parent.parent / "Info.plist"  # …/Contents/MacOS/otty-cli → …/Contents/Info.plist
+    try:
+        import plistlib
+        data = plistlib.loads(plist.read_bytes())
+    except Exception:
+        return None
+    raw = str(data.get("CFBundleShortVersionString", ""))
+    parts: list[int] = []
+    for token in raw.split("."):
+        if not token.isdigit():
+            return None
+        parts.append(int(token))
+    if not parts:
+        return None
+    return tuple((parts + [0, 0, 0])[:3])
 
 
 def _text(value, limit: int = 400) -> str:
@@ -185,10 +208,20 @@ class OttyAdapter:
             elif result["integrationStatus"] == "present":
                 result["reasonCode"] = "installed_but_not_reporting"
             agents.append(result)
-        return {"status": snapshot["status"], "checkedAt": snapshot["checkedAt"],
-                "message": snapshot["message"], "agents": agents, "unrecognizedAgents": unrecognized,
-                "unrecognizedNames": unrecognized_names,
-                "paneCount": len(snapshot.get("events", [])), "helpUrl": HOOKS_HELP_URL}
+        result = {"status": snapshot["status"], "checkedAt": snapshot["checkedAt"],
+                  "message": snapshot["message"], "agents": agents, "unrecognizedAgents": unrecognized,
+                  "unrecognizedNames": unrecognized_names,
+                  "paneCount": len(snapshot.get("events", [])), "helpUrl": HOOKS_HELP_URL}
+        version = _otty_version(self._cli)
+        if version is not None:
+            result["ottyVersion"] = ".".join(str(part) for part in version)
+            if version < _MIN_OTTY_VERSION:
+                # 版本门禁：旧版 Otty 没有 agent_state 字段，静默「状态未知」是最大的误导源。
+                result["upgradeRequired"] = True
+                minimum = ".".join(str(p) for p in _MIN_OTTY_VERSION)
+                result["message"] = (f"当前 Otty {result['ottyVersion']} 过旧：状态上报需要 Otty ≥ "
+                                     f"{minimum}，请升级后重启 Otty。" + result["message"])
+        return result
 
     def setup(self, kind: str, *, apply: bool = False) -> dict:
         """Plan first; only an explicit confirmed click may request apply=True."""
