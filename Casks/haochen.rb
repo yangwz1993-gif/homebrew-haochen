@@ -1,6 +1,6 @@
 cask "haochen" do
-  version "0.6.2-beta.1"
-  sha256 "829df34438138afcc4b1ea9fc8664dc8e4d477d802579b0a3957cca7d51b916c"
+  version "0.6.2-beta.2"
+  sha256 "17d15cb1d9214ea6e8eacd89289001e18e8f0218cf9a1c584e4528c12a279c72"
 
   url "https://github.com/yangwz1993-gif/homebrew-haochen/releases/download/v#{version}/haochen-#{version}.dmg"
   name "haochen"
@@ -21,7 +21,7 @@ cask "haochen" do
   end
 
   caveats <<~EOS
-    这是内部里程碑版（0.6.2-beta.1），本地自签、未经 Apple 公证，仅供内部试用。
+    这是内部里程碑版，本地自签、未经 Apple 公证，仅供内部试用。
 
     首次使用按需配置（不配也能用外网 DeepSeek 聊天）：
       • 内网模型（Kimi/GLM/Gemini 等）：先登录本机 codewiz-cc，再在向导「连接模型」里
