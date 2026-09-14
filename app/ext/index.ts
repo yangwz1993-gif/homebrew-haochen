@@ -243,6 +243,10 @@ const RESULT_RULES = `
    - 读取失败时只说明工具确认的事实。身份不一致或暂不可访问不证明用户切走、关闭了页面；禁止把这些猜测说成原因，也不要承诺“立刻能读到”。
 9. **信息不足时的边界**：若用户没给候选项、目标或取舍标准，直接用一句话说清缺什么，再问最多 2 个聚焦问题。
    不得为猜测上下文而读屏、列目录、读文件或运行命令。除非用户明确要求技术诊断，不得提及 pi-home、HAOCHEN_HOME、Contents/Resources、/private/tmp 或其他应用内部运行路径。
+10. **语言与工具纪律**：
+   - 正文必须使用用户所用的语言（默认中文）：思考过程、英文转述、自我指令（如 "Let me…"）绝不出现在正文里。
+   - 工具只在确有必要时调用；信息足够就直接回答。禁止把「准备回答/自我提醒」当成工具空调用（例如把 "Just produce the answer" 发给 bash）。
+   - 浏览器操作一律用 browser_control（打开/列标签/聚焦），禁止自编 AppleScript 或猜 open 命令的目标。
 `.trim();
 
 interface PetreadBlock {
@@ -680,6 +684,187 @@ export default function (pi: ExtensionAPI) {
         return {
           content: [{ type: "text" as const, text: `Hi 查询失败：${(e as Error).message}。可能是 hi 未安装或登录态失效。` }],
           details: { hiError: true },
+          isError: true,
+        };
+      }
+    },
+  });
+
+  // ── 浏览器三原语（0.6.2-beta.3）─────────────────────────────
+  // 让 agent 可靠地操作用户的 Chrome，而不是现场编 AppleScript/open 脚本碰运气。
+  // 边界：只开 http/https；只读标签元数据（url+title，截断）；绝不执行页面 JS、
+  // 不读页面正文。list_tabs/focus_tab 走 Chrome 标准 AppleScript 套件（首次触发
+  // 系统自动化授权弹窗属正常）；open_url 走 macOS open，不需要任何授权。
+  const OPEN_BIN = process.env.HAOCHEN_OPEN_BIN || "open";
+  const OSASCRIPT_BIN = process.env.HAOCHEN_OSASCRIPT_BIN || "osascript";
+  const BROWSER_APP = process.env.HAOCHEN_BROWSER_APP || "Google Chrome";
+  const BROWSER_TIMEOUT_MS = 10_000;
+
+  function runBrowserCmd(bin: string, args: string[], signal?: AbortSignal): Promise<string> {
+    return new Promise((resolve, reject) => {
+      execFile(bin, args, { timeout: BROWSER_TIMEOUT_MS, maxBuffer: 1024 * 1024, signal }, (err, stdout, stderr) => {
+        if (err) reject(new Error(String(stderr || err.message)));
+        else resolve(String(stdout));
+      });
+    });
+  }
+
+  function validHttpUrl(value: unknown): string | null {
+    const text = String(value ?? "").trim();
+    return /^https?:\/\/[^\s"'\\]{1,2000}$/i.test(text) ? text : null;
+  }
+
+  function automationGuidance(stderr: string): string | null {
+    if (/not allowed|1743|不允许|未经授权|permission/i.test(stderr)) {
+      return "macOS 未允许 haochen 控制浏览器。请到 系统设置 → 隐私与安全性 → 自动化 允许 haochen 控制 Chrome 后重试。";
+    }
+    return null;
+  }
+
+  const LIST_TABS_SCRIPT = [
+    "on run argv",
+    'set out to ""',
+    "tell application (item 1 of argv)",
+    "  set wi to 0",
+    "  repeat with w in windows",
+    "    set wi to wi + 1",
+    "    set ti to 0",
+    "    repeat with t in tabs of w",
+    "      set ti to ti + 1",
+    '      set out to out & "w" & wi & "/" & ti & " " & (URL of t) & " | " & (title of t) & linefeed',
+    "    end repeat",
+    "  end repeat",
+    "end tell",
+    "return out",
+    "end run",
+  ].join("\n");
+
+  const FOCUS_TAB_SCRIPT = [
+    "on run argv",
+    "set appName to item 1 of argv",
+    "set needle to item 2 of argv",
+    "tell application appName",
+    "  repeat with w in windows",
+    "    set i to 0",
+    "    repeat with t in tabs of w",
+    "      set i to i + 1",
+    "      if (URL of t) contains needle then",
+    "        set active tab index of w to i",
+    "        set index of w to 1",
+    "        activate",
+    '        return "focused"',
+    "      end if",
+    "    end repeat",
+    "  end repeat",
+    "end tell",
+    'return "not_found"',
+    "end run",
+  ].join("\n");
+
+  pi.registerTool({
+    name: "browser_control",
+    label: "浏览器操作",
+    description:
+      "操作用户的 Chrome（三个原语）：open_url=在已登录的 Chrome 里新开标签打开网页；" +
+      "list_tabs=列出当前打开的标签（URL+标题，只读元数据）；focus_tab=按 URL 片段聚焦回某个已打开的标签。" +
+      "用户要求「打开某网页/在某网页上操作/看看开着的标签」时用本工具；不要自己用 bash 编 AppleScript 或猜 open 的目标。",
+    promptSnippet:
+      "browser_control: 打开/列出/聚焦用户 Chrome 标签页（open_url/list_tabs/focus_tab）；浏览器操作一律用它，别自编 AppleScript。",
+    promptGuidelines: [
+      "要打开网页时用 browser_control 的 open_url（进用户已登录的 Chrome）；不要自己调 bash 的 open 或现编 AppleScript。",
+      "open_url 只支持 http/https 页面；chrome:// 等内部协议不支持。",
+      "list_tabs/focus_tab 首次可能触发 macOS 自动化授权；若返回授权引导，如实转告用户去系统设置允许。",
+    ],
+    parameters: Type.Object({
+      action: Type.Union(
+        [Type.Literal("open_url"), Type.Literal("list_tabs"), Type.Literal("focus_tab")],
+        { description: "open_url=新开标签打开网页；list_tabs=列出标签；focus_tab=按 URL 片段聚焦已有标签" },
+      ),
+      url: Type.Optional(Type.String({ description: "open_url: 完整 http(s) URL；focus_tab: URL 片段（如 github.com/settings）" })),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      if (params.action === "open_url") {
+        const target = validHttpUrl(params.url);
+        if (!target) {
+          return {
+            content: [{ type: "text" as const, text: "open_url 需要完整的 http/https URL（不支持 chrome:// 等内部协议）。" }],
+            details: { browserError: "invalid_url" },
+            isError: true,
+          };
+        }
+        try {
+          await runBrowserCmd(OPEN_BIN, ["-a", BROWSER_APP, target], signal);
+          return {
+            content: [{ type: "text" as const, text: `已在用户的 Chrome 中打开：${target}` }],
+            details: { action: "open_url", browser: BROWSER_APP, url: target },
+          };
+        } catch (e) {
+          // Chrome 不在/打不开时退回系统默认浏览器，并如实说明落在哪。
+          try {
+            await runBrowserCmd(OPEN_BIN, [target], signal);
+            return {
+              content: [{ type: "text" as const, text: `Chrome 未能打开（${(e as Error).message}），已改用系统默认浏览器打开：${target}` }],
+              details: { action: "open_url", browser: "default", url: target },
+            };
+          } catch (e2) {
+            return {
+              content: [{ type: "text" as const, text: `打开网页失败：${(e2 as Error).message}` }],
+              details: { browserError: "open_failed" },
+              isError: true,
+            };
+          }
+        }
+      }
+      if (params.action === "list_tabs") {
+        try {
+          const out = await runBrowserCmd(OSASCRIPT_BIN, ["-e", LIST_TABS_SCRIPT, BROWSER_APP], signal);
+          const lines = out.split("\n").filter((l) => l.trim()).slice(0, 100)
+            .map((l) => (l.length > 220 ? l.slice(0, 220) + "…" : l));
+          return {
+            content: [{
+              type: "text" as const,
+              text: lines.length
+                ? `当前 Chrome 标签（${lines.length} 个，只读元数据）：\n${lines.join("\n")}`
+                : "Chrome 当前没有打开的标签页。",
+            }],
+            details: { action: "list_tabs", count: lines.length },
+          };
+        } catch (e) {
+          const guide = automationGuidance((e as Error).message);
+          return {
+            content: [{ type: "text" as const, text: guide || `读取标签页失败：${(e as Error).message}` }],
+            details: { browserError: guide ? "automation_denied" : "list_failed" },
+            isError: true,
+          };
+        }
+      }
+      // focus_tab：按 URL 片段聚焦已有标签；找不到就如实说，绝不退化为新开。
+      const needle = String(params.url ?? "").trim().slice(0, 200);
+      if (!needle) {
+        return {
+          content: [{ type: "text" as const, text: "focus_tab 需要 url 片段（例如 github.com/settings）。" }],
+          details: { browserError: "missing_url" },
+          isError: true,
+        };
+      }
+      try {
+        const out = await runBrowserCmd(OSASCRIPT_BIN, ["-e", FOCUS_TAB_SCRIPT, BROWSER_APP, needle], signal);
+        if (out.trim() === "focused") {
+          return {
+            content: [{ type: "text" as const, text: `已聚焦到 URL 含「${needle}」的标签页。` }],
+            details: { action: "focus_tab", status: "focused" },
+          };
+        }
+        return {
+          content: [{ type: "text" as const, text: `当前 Chrome 里没有 URL 含「${needle}」的标签；可先用 list_tabs 确认，或用 open_url 新开。` }],
+          details: { action: "focus_tab", status: "not_found" },
+          isError: true,
+        };
+      } catch (e) {
+        const guide = automationGuidance((e as Error).message);
+        return {
+          content: [{ type: "text" as const, text: guide || `聚焦标签页失败：${(e as Error).message}` }],
+          details: { browserError: guide ? "automation_denied" : "focus_failed" },
           isError: true,
         };
       }

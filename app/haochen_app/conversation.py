@@ -469,6 +469,15 @@ class ConversationController(QObject):
         result = apply_user_output_constraints(
             self._current_user_text, parse_turn_result(raw)
         )
+        if not (result.detail or result.brief) and stop_reason not in ("aborted", "cancelled"):
+            # 空回复兜底：模型只思考没产出（或协议全丢）时，绝不让用户面对沉默——
+            # 如实告知并请ta重试，比“装死”更能保住信任。
+            result = TurnResult(
+                brief="这一步我没有给出内容，请重试或换个说法再问我。",
+                detail="（本次没有收到模型的有效回复：可能只产出了思考。请重试，或换个说法再问我。）",
+                raw=raw,
+                fallback_used=True,
+            )
         self._answer_text = result.detail
         if stop_reason in ("aborted", "cancelled"):
             self.remember_aborted_context(result.detail or result.brief)

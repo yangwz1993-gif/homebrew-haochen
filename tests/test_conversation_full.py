@@ -332,3 +332,41 @@ def test_parse_turn_result_recovers_mismatched_brief_closing_tag() -> None:
     assert result.brief == "没读到屏——还缺辅助功能权限。"
     assert result.detail == "请到系统设置开启辅助功能权限。"
     assert result.fallback_used is True
+
+
+def test_empty_agent_reply_never_faces_user_with_silence() -> None:
+    """模型只思考没产出（空 agent_end）时：必须如实兜底，不得沉默。"""
+    client = FakeClient()
+    controller = ConversationController(client)
+    answers: list[str] = []
+    controller.answer_done.connect(answers.append)
+
+    request_id = controller.send("问题")
+    client.response.emit({"id": request_id, "success": True})
+    # 模型只产出 thinking，没有任何文本
+    client_event_emit(client, {"type": "agent_end", "messages": [
+        user_message("问题"),
+        {"role": "assistant", "content": [{"type": "thinking", "thinking": "…"}],
+         "stopReason": "stop"},
+    ]})
+
+    assert answers and "没有收到模型的有效回复" in answers[-1]
+
+
+def test_empty_agent_reply_aborted_keeps_partial_context() -> None:
+    """中止场景不走兜底文案（用户主动打断，不是模型装死）。"""
+    client = FakeClient()
+    controller = ConversationController(client)
+    aborted: list[str] = []
+    answers: list[str] = []
+    controller.turn_aborted.connect(aborted.append)
+    controller.answer_done.connect(answers.append)
+
+    request_id = controller.send("问题")
+    client.response.emit({"id": request_id, "success": True})
+    client_event_emit(client, {"type": "agent_end", "messages": [
+        user_message("问题"),
+        {"role": "assistant", "content": [], "stopReason": "aborted"},
+    ]})
+
+    assert aborted and not any("没有收到模型的有效回复" in a for a in answers)
