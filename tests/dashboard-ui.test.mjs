@@ -281,3 +281,14 @@ test('production UI has bundled resources, CSP, visible daily report and no fake
   assert.match(js,/overview\.inert = true/); assert.match(js,/compositionstart/); assert.match(js,/shape\.finished\.then/);
   assert.match(js,/calendarSelect/); assert.match(js,/openReport/); assert.match(js,/haochenNativeEscape/);
 });
+
+test('Hi 空占位卡片保留在动态列表（只有已读 hi 消息才剔除）',() => {
+  const events = [
+    {id:'hi:none', source:'hi', unread:false, status:'available'},
+    {id:'hi:msg:1', source:'hi', unread:false},
+    {id:'hi:msg:2', source:'hi', unread:true},
+    {id:'otty:p_1', source:'otty', unread:false},
+    {id:'cal:1', type:'calendar'},
+  ];
+  assert.deepEqual(ui.feedEvents(events).map(e=>e.id), ['hi:none','hi:msg:2','otty:p_1']);
+});

@@ -174,6 +174,8 @@ def test_subcall_failure_stays_ready_when_data_loaded():
 
 
 def test_partial_only_when_nothing_loaded():
+    # 行为变更（0.6.2-beta.3）：partial 且无任何内容时也给明确占位（带降级说明），
+    # 不再让动态区空白——这是用户报告「空占位还是没有」的修复。
     responses = {
         "search:me": IDENTITY,
         "search:message": module.HiError("timeout", "x"),
@@ -182,7 +184,55 @@ def test_partial_only_when_nothing_loaded():
     }
     result = adapter(responses).snapshot()
     assert result["status"] == "partial"
-    assert not result["events"]
+    placeholder = [e for e in result["events"] if e["id"] == "hi:none"]
+    assert placeholder, "partial 且空内容时必须有占位卡片"
+    assert "没有 @ 你" in placeholder[0]["summary"]
+    assert any("稍后自动刷新" in ev.get("text", "") for ev in placeholder[0]["evidence"])
+
+
+def test_placeholder_when_ready_and_empty():
+    responses = {
+        "search:me": IDENTITY,
+        "calendar:get-user-schedules": [{"scheduleList": [], "hasDetailPermission": True}],
+        "search:message": {"items": []},
+    }
+    result = adapter(responses).snapshot()
+    assert result["status"] == "ready"
+    placeholder = [e for e in result["events"] if e["id"] == "hi:none"]
+    assert placeholder and "没有 @ 你" in placeholder[0]["summary"]
+    assert not placeholder[0]["evidence"]  # ready 态不带降级说明
+
+
+def test_ready_with_real_events_has_no_placeholder():
+    responses = {
+        "search:me": IDENTITY,
+        "calendar:get-user-schedules": [{"scheduleList": [], "hasDetailPermission": True}],
+        "search:message": {"items": [
+            {"messageId": "z1", "senderName": "李四", "senderId": "l@xiaohongshu.com",
+             "content": "@时田 看下"}]},
+    }
+    result = adapter(responses).snapshot()
+    assert result["status"] == "ready"
+    assert any(e["id"].startswith("hi:msg:") for e in result["events"])
+    assert not any(e["id"] == "hi:none" for e in result["events"])
+
+
+def test_placeholder_never_fakes_unread(tmp_path):
+    """诚实性：占位卡片不算未读、不进 activity 计数、不参与「有新结果」。"""
+    from haochen_app.dashboard.attention import activity
+    store = Store(tmp_path)
+    store.enable("hi", True)
+    responses = {
+        "search:me": IDENTITY,
+        "calendar:get-user-schedules": [{"scheduleList": [], "hasDetailPermission": True}],
+        "search:message": {"items": []},
+    }
+    store.observe("hi", adapter(responses).snapshot())
+    events = store.snapshot()["events"]
+    assert len(events) == 1 and events[0]["id"] == "hi:none"
+    assert events[0]["reasonCode"] == "empty" and events[0]["status"] == "available"
+    act = activity(events, [{"id": "hi", "enabled": True, "status": "connected"}])
+    assert act["kind"] == "idle" and act["count"] == 0
 
 
 def test_store_keeps_at_me_message(tmp_path):

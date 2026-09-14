@@ -381,14 +381,18 @@ class HiAdapter:
             status = "ready"
             if partial:
                 message += "（个别数据稍后自动刷新）"
-        # 已连接但没有任何 @我消息 / 今日日程时，给一个明确的占位，而不是空白。
-        if status == "ready" and not events:
+        # 已连接（含个别子调用失败的 partial 降级态）但没有任何 @我消息/今日日程时，
+        # 给一个明确的占位，而不是空白。partial 时 summary 保持不变（避免版本翻动造成
+        # 假未读），降级说明放进 evidence（不参与版本计算）。
+        if not events:
+            note = ([{"label": "数据完整性", "text": "个别数据本次获取失败，稍后自动刷新。"}]
+                    if partial else [])
             events = [{
                 "id": "hi:none", "sourceId": "hi:none", "title": "Hi",
                 "state": "available", "status": "available",
                 "summary": "当前没有 @ 你的待处理消息。",
                 "reasonCode": "empty", "fingerprint": "hi:none",
-                "updatedAt": checked, "evidence": [],
+                "updatedAt": checked, "evidence": note,
             }]
         result.update(status=status, message=message, events=events)
         return result

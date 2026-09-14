@@ -59,6 +59,11 @@
     return events.find(item=>text(item.id)===current.id) || null;
   }
   function visibleConnectors(connectors) { return list(connectors,50).filter(item => !/^(lark|feishu)$/.test(text(item.id))); }
+  function feedEvents(events) {
+    // 动态列表口径：日历走独立区；已处理（已读）的 hi 消息剔除；Hi 空占位 hi:none 保留。
+    return list(events,200).filter(item => item && item.type !== 'calendar' && item.kind !== 'calendar'
+      && !(String(item.id || '').startsWith('hi:msg:') && item.unread === false));
+  }
   function connectorLabel(connector) {
     const item = record(connector), stage = record(item.setup).stage;
     if (item.id==='wechat') {
@@ -216,7 +221,7 @@
       this.pending.clear();
     }
   }
-  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
+  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
   if (typeof module === 'object' && module.exports) module.exports = core;
   global.HaochenDashboardCore = core;
   if (typeof document === 'undefined') return;
@@ -354,8 +359,8 @@
   function renderEvents() {
     // Hi messages are notifications: once handled (read), drop them so they
     // don't keep nagging. Other sources stay (they reflect live status).
-    const events = ui.state.events.filter(item => item.type !== 'calendar' && item.kind !== 'calendar'
-      && !(String(item.id).startsWith('hi:msg:') && item.unread === false));
+    // 口径与 core.feedEvents 一致（可单测）：Hi 空占位 hi:none 保留。
+    const events = feedEvents(ui.state.events);
     const connected = ui.state.connectors.some(item => item.status === 'connected');
     if (!overviewChanged('events',[events.length,events.length ? null : [ui.received,connected],events.slice(0,80).map(item=>[item.id,item.source,item.sourceId,item.title,item.summary || item.description,item.status,item.stale,item.unread,item.attentionVersion,timeLabel(item.occurredAt || item.updatedAt)])])) return;
     const target = $('#event-list'); target.replaceChildren();
