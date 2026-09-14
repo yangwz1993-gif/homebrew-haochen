@@ -219,6 +219,21 @@ ACTIVITY_PALETTE = {"attention": (1, 0.76, 0.39), "error": (1, 0.48, 0.42),
                     "idle": (0.65, 0.72, 0.67)}
 
 
+def hover_hint_text(activity: Activity) -> str:
+    """hover 展开时的提示行（WP3）：有待处理事项时指名数量与动作，否则通用提示。
+
+    审批/异常态点击会唤起到总览对应详情（summon_requested 路由不变），
+    提示行负责「告诉用户点了会得到什么」。
+    """
+    if activity.kind == "attention" and activity.count:
+        return f"{activity.count} 项等你确认 · 点击处理"
+    if activity.kind == "error" and activity.count:
+        return f"{activity.count} 个连接需处理 · 点击检查"
+    if activity.kind == "new" and activity.count:
+        return f"{activity.count} 条新结果 · 点击查看"
+    return "点击打开桌面总览"
+
+
 # --- Pure, testable appearance of the entrance surface -----------------------
 
 def entrance_fill(attached: bool, highlighted: bool = False) -> tuple[float, float]:
@@ -331,7 +346,8 @@ def _entrance_classes():
                         AK.NSForegroundColorAttributeName:
                             AK.NSColor.colorWithCalibratedWhite_alpha_(0.96, 0.55 * hint_alpha),
                         AK.NSParagraphStyleAttributeName: paragraph}
-                    AK.NSString.stringWithString_("点击打开桌面总览").drawInRect_withAttributes_(
+                    AK.NSString.stringWithString_(
+                        hover_hint_text(self.activity)).drawInRect_withAttributes_(
                         AK.NSMakeRect(8, hint_center_y - 8, width - 16, 16), attrs)
 
         @objc.python_method

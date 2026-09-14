@@ -432,3 +432,17 @@ def test_close_stops_all_animations(qtbot):
     e.panel.close = lambda: stopped.append("panel")
     e.close()
     assert set(stopped) == {"hover", "transition", "pulse", "owner", "panel"}
+
+
+def test_hover_hint_text_attention_loop():
+    """WP3：有待确认/异常/新结果时，hover 提示行指名数量与动作；空闲时通用提示。"""
+    attention = notch.Activity(kind="attention", count=3)
+    assert notch.hover_hint_text(attention) == "3 项等你确认 · 点击处理"
+    error = notch.Activity(kind="error", count=2)
+    assert notch.hover_hint_text(error) == "2 个连接需处理 · 点击检查"
+    fresh = notch.Activity(kind="new", count=1)
+    assert notch.hover_hint_text(fresh) == "1 条新结果 · 点击查看"
+    idle = notch.Activity(kind="idle")
+    assert notch.hover_hint_text(idle) == "点击打开桌面总览"
+    # 计数为 0 的 attention 不得虚报数量
+    assert notch.hover_hint_text(notch.Activity(kind="attention", count=0)) == "点击打开桌面总览"
