@@ -1,0 +1,5 @@
+
+tests/test_conversation_full.py:353: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_conversation_full.py::test_empty_agent_reply_never_faces_user_with_silence
+1 failed, 24 passed in 0.04s

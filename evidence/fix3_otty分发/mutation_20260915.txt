@@ -1,0 +1,6 @@
+
+tests/test_dashboard_connector_setup.py:258: KeyError
+=========================== short test summary info ============================
+FAILED tests/test_dashboard_connector_setup.py::test_cw_claude_hooks_detection
+FAILED tests/test_dashboard_connector_setup.py::test_otty_version_gate_flags_old_versions
+2 failed, 23 passed in 0.59s
