@@ -12,7 +12,17 @@ from pathlib import Path
 from PyQt6.QtCore import QEasingCurve, QObject, QVariantAnimation, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
-from .notch import NativeEntrance, command_m, entrance_geometry
+from .notch import (
+    NativeEntrance,
+    command_m,
+    entrance_geometry,
+    interpolate_frame,
+    morph_corner_radius,
+    morph_duration,
+    spring_value,
+)
+
+PANEL_RADIUS = 28.0  # 总览面板展开态圆角
 
 
 def _native_classes():
@@ -204,9 +214,10 @@ class NativeDashboard(QObject):
         self.webview.setAllowsBackForwardNavigationGestures_(False)
         self.webview.registerForDraggedTypes_([AK.NSPasteboardTypeFileURL])
         self.webview.setWantsLayer_(True)
-        self.webview.layer().setCornerRadius_(28)
+        self.webview.layer().setCornerRadius_(PANEL_RADIUS)
         self.webview.layer().setMasksToBounds_(True)
         self._content_size = (1020, 700)
+        self._closed_attached = False  # 闭合形态的贴合态标记（圆角插值端点用）
         self.webview.setAutoresizingMask_(AK.NSViewNotSizable)
         # Resize only this clipping viewport during the liquid transition. The
         # web document retains its final size, so Chinese text never rewraps at
@@ -214,7 +225,7 @@ class NativeDashboard(QObject):
         self.viewport = AK.NSView.alloc().initWithFrame_(AK.NSMakeRect(0, 0, 1020, 700))
         self.viewport.setAutoresizesSubviews_(False)
         self.viewport.setWantsLayer_(True)
-        self.viewport.layer().setCornerRadius_(28)
+        self.viewport.layer().setCornerRadius_(PANEL_RADIUS)
         self.viewport.layer().setMasksToBounds_(True)
         self.viewport.addSubview_(self.webview)
         # Real macOS vibrancy behind a transparent WebView: this is the material
@@ -228,7 +239,7 @@ class NativeDashboard(QObject):
         self.effect.setState_(AK.NSVisualEffectStateActive)
         self.effect.setAppearance_(AK.NSAppearance.appearanceNamed_(AK.NSAppearanceNameVibrantDark))
         self.effect.setWantsLayer_(True)
-        self.effect.layer().setCornerRadius_(28)
+        self.effect.layer().setCornerRadius_(PANEL_RADIUS)
         self.effect.layer().setMasksToBounds_(True)
         self.viewport.addSubview_positioned_relativeTo_(self.effect, AK.NSWindowBelow, self.webview)
         self.panel = Panel.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -366,6 +377,15 @@ class NativeDashboard(QObject):
             return self.collapse_if_active()
         return False
 
+    def _morph_progress(self, frame) -> float:
+        """frame 在「闭合胶囊 ↔ 展开面板」之间的形态进度（宽度占比，天然连续）。"""
+        closed = self._closed_frame()
+        open_frame = self._open_frame()
+        span = open_frame[2] - closed[2]
+        if span <= 0:
+            return 1.0
+        return min(1.0, max(0.0, (frame[2] - closed[2]) / span))
+
     def _set_frame(self, frame):
         import AppKit as AK
         self.panel.setFrame_display_(AK.NSMakeRect(*frame), True)
@@ -373,6 +393,10 @@ class NativeDashboard(QObject):
         self.webview.setFrameOrigin_(AK.NSMakePoint((frame[2] - width) / 2, (frame[3] - height) / 2))
         # The vibrancy layer fills the whole surface as it grows/shrinks.
         self.effect.setFrame_(AK.NSMakeRect(0, 0, frame[2], frame[3]))
+        # 圆角随形态插值：胶囊（贴合刘海 13 / 悬浮 17）→ 面板 PANEL_RADIUS。
+        radius = morph_corner_radius(self._morph_progress(frame), self._closed_attached, PANEL_RADIUS)
+        for view in (self.webview, self.viewport, self.effect):
+            view.layer().setCornerRadius_(radius)
 
     def _size_webview(self, frame):
         import AppKit as AK
@@ -390,25 +414,29 @@ class NativeDashboard(QObject):
         current = self.panel.frame()
         start = (current.origin.x, current.origin.y, current.size.width, current.size.height)
         start_alpha = self.panel.alphaValue()
+        # 单容器形变：收起不再淡出，而是形变回刘海形态后整窗移除；
+        # 展开时从刘海形态直接长出（show() 已把起点 alpha 置 1）。
+        target_alpha = 1.0 if opening else start_alpha
         reduced = self._reduced_motion()
         animation = QVariantAnimation(self)
         animation.setStartValue(0.0)
         animation.setEndValue(1.0)
-        animation.setDuration(0 if reduced else (360 if opening else 300))
-        # Same decelerating curve in both directions: a mid-flight reversal
-        # (⌘M / Esc / re-summon) resumes from the current frame on a continuous
-        # curve instead of blending two different easings and visibly hitching.
-        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.setDuration(int(1000 * morph_duration(reduced, opening=opening)))
+        # 时间线性、弹性由 spring_value 提供；中途反向（⌘M / Esc / 重新唤起）
+        # 从当前 frame 重新出发，天然连续续接（generation 守卫）。
+        animation.setEasingCurve(QEasingCurve.Type.Linear)
 
         def step(value):
             if self.closed or generation != self._generation:
                 return
-            self._set_frame(tuple(a + (b - a) * value for a, b in zip(start, target, strict=True)))
-            self.panel.setAlphaValue_(start_alpha + ((1.0 if opening else 0.0) - start_alpha) * value)
+            k = spring_value(value)
+            self._set_frame(interpolate_frame(start, target, k))
+            self.panel.setAlphaValue_(start_alpha + (target_alpha - start_alpha) * k)
 
         def finish():
             if self.closed or generation != self._generation:
                 return
+            self._set_frame(target)  # 弹簧末值精确落位
             if not opening:
                 self.panel.orderOut_(None)
                 self._show_handle()
@@ -427,11 +455,13 @@ class NativeDashboard(QObject):
         if not self.expanded:
             target = self._open_frame()
             self._size_webview(target)
+            self._closed_attached = self._entrance_geometry()[1]
             # A quick reversal resumes the current frame/opacity, without
             # teleporting back to the handle while the closing window is visible.
+            # 首次展开从刘海形态直接长出（alpha=1），不再先透明——消除两窗跳切感。
             if not self.panel.isVisible():
                 self._set_frame(self._closed_frame())
-                self.panel.setAlphaValue_(0)
+                self.panel.setAlphaValue_(1.0)
             self.expanded = True
             self.handle.hide()
             self.panel.makeKeyAndOrderFront_(None)
@@ -450,6 +480,7 @@ class NativeDashboard(QObject):
         self.expanded = False
         self.evaluate("window.haochenVisibilityChanged?.(false)")
         self._place_handle()
+        self._closed_attached = self._entrance_geometry()[1]
         self._animate(self._closed_frame(), False)
         self.visibility_changed.emit(False)
 
