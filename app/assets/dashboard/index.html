@@ -9,7 +9,7 @@
   <script src="icons.js" defer></script>
   <script src="dashboard.js" defer></script>
 </head>
-<body data-palette="sage">
+<body data-palette="glass">
   <div id="dashboard">
     <main id="overview" aria-label="haochen 总览">
       <header class="app-heading">
@@ -17,31 +17,33 @@
           <span class="wordmark">haochen<span></span></span>
           <span class="tagline">让重要的事，自然浮现。</span>
         </button>
+        <div class="clock" id="clock" aria-hidden="true"><span class="clock-time" id="clock-time">--:--</span><span class="clock-date" id="clock-date"></span></div>
         <div class="heading-actions">
-          <button class="report-trigger quiet-button" type="button" data-action="report" data-focuskey="report"><span data-icon="notebook"></span><span>今日日报</span></button>
+          <button class="report-trigger quiet-button" type="button" data-action="evidence-open" data-url="https://cowork.xiaohongshu.com/s/teach-2-v3/#daily" data-focuskey="report" title="在 Cowork 打开个人日报"><span data-icon="notebook"></span><span>今日日报</span><span data-icon="arrow-up-right"></span></button>
           <button class="icon-button" type="button" data-action="connections" data-focuskey="connections" aria-label="连接与外观设置" title="连接与外观"><span data-icon="settings"></span></button>
           <button class="icon-button collapse-button" type="button" data-action="collapse" aria-label="收起总览" title="收起总览"><span data-icon="minimize"></span></button>
         </div>
       </header>
       <div id="connection-banner" class="notice" hidden></div>
-      <nav id="connector-overview" class="connector-overview" aria-label="应用连接状态" hidden></nav>
-      <div class="main-grid">
-        <section class="events-section" aria-labelledby="events-title">
-          <header class="section-heading"><h1 id="events-title">应用动态</h1><div class="section-tools"><span id="event-count" class="muted"></span><button class="icon-button" type="button" data-action="refresh" data-focuskey="refresh" aria-label="检查最新动态" title="检查最新动态"><span data-icon="refresh"></span></button></div></header>
-          <div id="event-list" class="event-list"></div>
-          <footer class="events-footer"><span id="updated-label">正在连接本机服务</span><button class="text-button" type="button" data-action="connections">管理连接 <span data-icon="arrow-up-right"></span></button></footer>
+      <div class="board-top">
+        <section class="auth-rail-section" aria-labelledby="auth-title">
+          <h2 id="auth-title" class="strip-title">连接与授权</h2>
+          <nav id="connector-overview" class="auth-rail" aria-label="应用连接与授权，点击一键连接"></nav>
         </section>
-        <aside class="side-panels">
-          <section class="tracking-section" aria-labelledby="tracks-title">
-            <header class="section-heading"><h2 id="tracks-title">我在追踪</h2><button class="text-button" type="button" data-action="track-new" data-focuskey="track-new"><span data-icon="plus"></span>新事项</button></header>
-            <div id="track-list"></div>
-          </section>
-          <section class="calendar-section" aria-labelledby="calendar-title">
-            <header class="section-heading"><h2 id="calendar-title">接下来</h2><span data-icon="calendar"></span></header>
-            <div id="calendar-list"></div>
-          </section>
-        </aside>
+        <section class="tracking-section" aria-labelledby="tracks-title">
+          <header class="section-heading"><h2 id="tracks-title">我在追踪</h2><button class="text-button" type="button" data-action="track-new" data-focuskey="track-new"><span data-icon="plus"></span>新事项</button></header>
+          <div id="track-list" class="track-grid"></div>
+        </section>
+        <section class="calendar-section" aria-labelledby="calendar-title">
+          <header class="section-heading"><h2 id="calendar-title">接下来</h2><span data-icon="calendar"></span></header>
+          <div id="calendar-list"></div>
+        </section>
       </div>
+      <section class="events-section" aria-labelledby="events-title">
+        <header class="section-heading"><h1 id="events-title">应用动态</h1><div class="section-tools"><span id="event-count" class="muted"></span><button class="icon-button" type="button" data-action="refresh" data-focuskey="refresh" aria-label="检查最新动态" title="检查最新动态"><span data-icon="refresh"></span></button></div></header>
+        <div id="event-list" class="event-list"></div>
+        <footer class="events-footer"><span id="updated-label">正在连接本机服务</span><button class="text-button" type="button" data-action="connections">管理连接 <span data-icon="arrow-up-right"></span></button></footer>
+      </section>
       <section id="file-shelf" class="file-shelf" aria-labelledby="files-title">
         <header><h2 id="files-title"><span data-icon="folder"></span>随手可达</h2><span class="shelf-hint">拖入文件夹，留在这里</span></header>
         <div id="file-list" class="file-list"></div>

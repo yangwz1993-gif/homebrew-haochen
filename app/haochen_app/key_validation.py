@@ -70,8 +70,17 @@ def validate_custom_model(
     *,
     timeout: float = 10.0,
     api: str = "openai-completions",
+    extra_headers: dict[str, str] | None = None,
+    probe_completion_only: bool = False,
 ) -> ValidationResult:
-    """Probe an OpenAI-compatible endpoint before committing any local configuration."""
+    """Probe an OpenAI-compatible endpoint before committing any local configuration.
+
+    ``extra_headers`` lets a gated provider (e.g. CodeWiz 内网) attach the auth headers
+    it needs to probe successfully — SSO cookie + adapter headers — beyond the Bearer key.
+    ``probe_completion_only`` skips the ``GET /models`` listing and validates straight
+    through a chat completion: the CodeWiz proxy returns 500 (not 404) on ``/models`` even
+    though ``/chat/completions`` works, so listing-first would spuriously fail.
+    """
     try:
         normalized = normalize_model_base_url(base_url)
     except ValueError as exc:
@@ -83,6 +92,10 @@ def validate_custom_model(
     headers = {"User-Agent": "haochen/0.3.4", "Accept": "application/json"}
     if key.strip():
         headers["Authorization"] = f"Bearer {key.strip()}"
+    if extra_headers:
+        headers.update({k: v for k, v in extra_headers.items() if isinstance(v, str)})
+    if probe_completion_only:
+        return _probe_completion(normalized, model_id.strip(), headers, timeout, api)
     request = urllib.request.Request(f"{normalized}/models", headers=headers)
     payload: bytes = b""
     try:

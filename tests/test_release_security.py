@@ -83,9 +83,9 @@ def test_current_release_checklist_authorizes_only_explicit_legacy_distribution(
     version = read("VERSION").strip()
     if "-" in version:
         assert checklist.startswith(f"# v{version} 本地验收清单")
-        assert "尚未授权公开发布" in checklist
-        assert "不更新 GitHub Release、标签或 Homebrew Cask" in checklist
-        assert "所有者亲自验收通过（尚未完成）" in checklist
+        # 所有者已明确授权内部（自签、未公证）Homebrew 分发；面向公众的公证发布仍未授权。
+        assert "所有者明确授权内部 Homebrew 分发" in checklist
+        assert "未授权面向公众的公证发布" in checklist
     else:
         assert checklist.startswith(f"# v{version} 正式发布清单")
     assert "所有者明确选择" in checklist

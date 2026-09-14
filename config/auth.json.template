@@ -2,5 +2,13 @@
   "deepseek": {
     "type": "api_key",
     "key": "sk-在此填入你的-DeepSeek-Key"
+  },
+  "codewiz": {
+    "type": "api_key",
+    "key": "$CODEWIZ_API_KEY"
+  },
+  "codewiz-gemini": {
+    "type": "api_key",
+    "key": "$CODEWIZ_API_KEY"
   }
 }

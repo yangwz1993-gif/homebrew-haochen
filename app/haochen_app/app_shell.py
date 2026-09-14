@@ -283,8 +283,36 @@ class AppShell:
 
     def any_key_configured(self) -> bool:
         try:
-            return any(self.store.key_status(provider.id)[0] for provider in self.store.providers())
+            from .keychain import credential_env_name
+            for provider in self.store.providers():
+                if not self.store.key_status(provider.id)[0]:
+                    continue
+                key = self.store.get_key(provider.id)
+                # 外部环境变量引用（如 CodeWiz 内网 $CODEWIZ_API_KEY，不同于本机 keychain 的
+                # $HAOCHEN_*_API_KEY）只有在运行时真能解析出来才算“已配置”——否则一个填不满的
+                # 占位符会误让普通用户跳过 onboarding 却无可用模型。
+                if (isinstance(key, str) and key.startswith("$")
+                        and key != f"${credential_env_name(provider.id)}"
+                        and not self._external_key_resolves(key)):
+                    continue
+                return True
+            return False
         except Exception:  # noqa: BLE001 — 配置损坏时不阻塞启动
+            return False
+
+    def _external_key_resolves(self, key_ref: str) -> bool:
+        """Whether an external ``$VAR`` key reference resolves to real credentials now.
+
+        CodeWiz 内网必须 key + SSO cookie 同时可解析（缺 SSO 报“无登录信息”），所以两者都在
+        才算可用。SSO 由 codewiz-cc 会话现解，绝不落盘、不打印。"""
+        try:
+            from .codewiz import codewiz_env
+            var = key_ref[1:]
+            env = {**codewiz_env(self.store.home), **os.environ}
+            if var.startswith("CODEWIZ"):
+                return bool(env.get("CODEWIZ_API_KEY") and env.get("CODEWIZ_SSO_COOKIE"))
+            return bool(env.get(var))
+        except Exception:  # noqa: BLE001
             return False
 
     def _request_onboarding_permission(self, permission: str) -> None:

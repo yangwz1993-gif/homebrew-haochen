@@ -158,12 +158,18 @@ class OttyAdapter:
                     self._previous, self._baseline_valid, self._last_success = previous, baseline, success
         groups: dict[str, list[dict]] = {}
         unrecognized = 0
+        unrecognized_names: list[str] = []
         for event in snapshot.get("events", []):
             if not event.get("agent"):
                 continue
             kind = agent_kind(event["agent"])
             if kind is None:
                 unrecognized += 1
+                # Surface the raw name so the user can find it in Otty settings,
+                # but never guess its kind or install a hook for it.
+                name = _text(event["agent"], 40)
+                if name and name not in unrecognized_names and len(unrecognized_names) < 8:
+                    unrecognized_names.append(name)
             else:
                 groups.setdefault(kind, []).append(event)
         setup = OttyIntegrationSetup(self._cli, self._user_home)
@@ -181,6 +187,7 @@ class OttyAdapter:
             agents.append(result)
         return {"status": snapshot["status"], "checkedAt": snapshot["checkedAt"],
                 "message": snapshot["message"], "agents": agents, "unrecognizedAgents": unrecognized,
+                "unrecognizedNames": unrecognized_names,
                 "paneCount": len(snapshot.get("events", [])), "helpUrl": HOOKS_HELP_URL}
 
     def setup(self, kind: str, *, apply: bool = False) -> dict:

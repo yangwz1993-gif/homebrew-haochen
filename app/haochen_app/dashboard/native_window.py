@@ -217,6 +217,20 @@ class NativeDashboard(QObject):
         self.viewport.layer().setCornerRadius_(28)
         self.viewport.layer().setMasksToBounds_(True)
         self.viewport.addSubview_(self.webview)
+        # Real macOS vibrancy behind a transparent WebView: this is the material
+        # that separates a system-grade surface from a flat web page. The dark
+        # frosted glass shows the desktop through, and the web content (with a
+        # transparent body) floats on top of it.
+        self.webview.setValue_forKey_(False, "drawsBackground")
+        self.effect = AK.NSVisualEffectView.alloc().initWithFrame_(AK.NSMakeRect(0, 0, 1020, 700))
+        self.effect.setMaterial_(AK.NSVisualEffectMaterialHUDWindow)
+        self.effect.setBlendingMode_(AK.NSVisualEffectBlendingModeBehindWindow)
+        self.effect.setState_(AK.NSVisualEffectStateActive)
+        self.effect.setAppearance_(AK.NSAppearance.appearanceNamed_(AK.NSAppearanceNameVibrantDark))
+        self.effect.setWantsLayer_(True)
+        self.effect.layer().setCornerRadius_(28)
+        self.effect.layer().setMasksToBounds_(True)
+        self.viewport.addSubview_positioned_relativeTo_(self.effect, AK.NSWindowBelow, self.webview)
         self.panel = Panel.alloc().initWithContentRect_styleMask_backing_defer_(
             AK.NSMakeRect(100, 100, 1020, 700), AK.NSWindowStyleMaskBorderless,
             AK.NSBackingStoreBuffered, False)
@@ -284,7 +298,12 @@ class NativeDashboard(QObject):
 
     def _place_handle(self):
         frame, attached = self._entrance_geometry()
-        self.handle.place(frame, attached, self._reduced_motion())
+        inset = 0.0
+        if attached:
+            screen = self._ns_screen()
+            if screen.respondsToSelector_("safeAreaInsets"):
+                inset = float(screen.safeAreaInsets().top)
+        self.handle.place(frame, attached, self._reduced_motion(), inset)
 
     def _show_handle(self):
         if self.settings.get("dock") != "pet":
@@ -352,6 +371,8 @@ class NativeDashboard(QObject):
         self.panel.setFrame_display_(AK.NSMakeRect(*frame), True)
         width, height = self._content_size
         self.webview.setFrameOrigin_(AK.NSMakePoint((frame[2] - width) / 2, (frame[3] - height) / 2))
+        # The vibrancy layer fills the whole surface as it grows/shrinks.
+        self.effect.setFrame_(AK.NSMakeRect(0, 0, frame[2], frame[3]))
 
     def _size_webview(self, frame):
         import AppKit as AK
@@ -373,8 +394,11 @@ class NativeDashboard(QObject):
         animation = QVariantAnimation(self)
         animation.setStartValue(0.0)
         animation.setEndValue(1.0)
-        animation.setDuration(0 if reduced else (400 if opening else 300))
-        animation.setEasingCurve(QEasingCurve.Type.OutCubic if opening else QEasingCurve.Type.InOutCubic)
+        animation.setDuration(0 if reduced else (360 if opening else 300))
+        # Same decelerating curve in both directions: a mid-flight reversal
+        # (⌘M / Esc / re-summon) resumes from the current frame on a continuous
+        # curve instead of blending two different easings and visibly hitching.
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         def step(value):
             if self.closed or generation != self._generation:

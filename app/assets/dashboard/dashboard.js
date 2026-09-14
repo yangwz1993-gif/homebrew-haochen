@@ -5,7 +5,7 @@
  */
 (function (global) {
   'use strict';
-  const PALETTES = Object.freeze({sage:'浅雾绿', stone:'暖白石墨', mist:'冷白雾蓝', carbon:'中性炭灰'});
+  const PALETTES = Object.freeze({glass:'玻璃质感', sage:'浅雾绿', stone:'暖白石墨', mist:'冷白雾蓝', carbon:'中性炭灰'});
   const FREQUENCIES = Object.freeze({manual:'仅手动', quarter:'每 15 分钟', hourly:'每小时', daily:'每天'});
   const ACTIONS = new Set(['ready','refresh','openSource','trackCreate','trackUpdate','trackPause','trackRefresh','trackDelete','reportGet','pickFolder','fileRemove','askHaochen','openSettings','collapse','connectorEnable','settingsUpdate','browserInstall','browserExtensionFolder','calendarList','calendarSelect','ottyCheck','ottySetup','eventRead']);
   const STATUS = Object.freeze({connected:'已连接', disconnected:'连接已断开', not_connected:'尚未连接', disabled:'未开启', available:'内容可用', permission_required:'需要授权', limited:'能力受限', partial:'内容不完整', unavailable:'暂不可用', not_running:'应用未运行', tab_closed:'标签页已关闭', target_changed:'原标签页已切换', suspended:'标签页已休眠', reading:'读取中', error:'检查失败', failed:'检查失败', running:'进行中', processing:'处理中', working:'进行中', busy:'检查中', checking:'检查中', awaiting:'等待确认', waiting:'等待确认', needs_attention:'需要关注', completed:'已完成', complete:'已完成', success:'已更新', changed:'有变化', unchanged:'未发现变化', idle:'就绪', paused:'已暂停', pending:'等待检查', unknown:'状态未知', unavailable_source:'来源不可用', stale:'状态已过期', unsupported:'暂不支持', warning:'需要关注', ready:'就绪'});
@@ -141,9 +141,17 @@
     if (/otty|agent|codex|terminal/.test(name)) return 'terminal';
     if (/chrome|browser|浏览器|safari/.test(name)) return 'globe';
     if (/calendar|日历/.test(name)) return 'calendar';
-    if (/wechat|微信|飞书|feishu|lark/.test(name)) return 'message';
+    if (/^hi$|hi:|hi 待|hi消息/.test(name)) return 'hi';
+    if (/wechat|微信/.test(name)) return 'wechat';
+    if (/飞书|feishu|lark/.test(name)) return 'message';
     if (/file|folder|文件/.test(name)) return 'folder';
     return 'bell';
+  }
+  function appLabel(source) {
+    const key = text(source,60);
+    const connector = (ui.state?.connectors || []).find(item => item.id === key);
+    if (connector && connector.name) return connector.name;
+    return {otty:'Otty', browser:'Chrome', wechat:'微信', calendar:'日历', hi:'Hi'}[key] || key || '其他';
   }
   function validateTrackDraft(value) {
     const raw = record(value);
@@ -344,23 +352,78 @@
     overviewFrame = requestAnimationFrame(() => { if (overviewPending) renderOverview(); });
   }
   function renderEvents() {
-    const events = ui.state.events.filter(item => item.type !== 'calendar' && item.kind !== 'calendar');
+    // Hi messages are notifications: once handled (read), drop them so they
+    // don't keep nagging. Other sources stay (they reflect live status).
+    const events = ui.state.events.filter(item => item.type !== 'calendar' && item.kind !== 'calendar'
+      && !(String(item.id).startsWith('hi:msg:') && item.unread === false));
     const connected = ui.state.connectors.some(item => item.status === 'connected');
-    if (!overviewChanged('events',[events.length,events.length ? null : [ui.received,connected],events.slice(0,30).map(item=>[item.id,item.source,item.sourceId,item.title,item.summary || item.description,item.status,item.stale,item.unread,item.attentionVersion,timeLabel(item.occurredAt || item.updatedAt)])])) return;
+    if (!overviewChanged('events',[events.length,events.length ? null : [ui.received,connected],events.slice(0,80).map(item=>[item.id,item.source,item.sourceId,item.title,item.summary || item.description,item.status,item.stale,item.unread,item.attentionVersion,timeLabel(item.occurredAt || item.updatedAt)])])) return;
     const target = $('#event-list'); target.replaceChildren();
     const unread = events.filter(item=>item.unread===true).length;
     $('#event-count').textContent = unread ? `${unread} 条未读` : events.length ? `${events.length} 条` : '';
     if (!events.length) {
       target.append(empty(ui.received ? connected ? '此刻，没有新的动态。' : '给重要的消息，留一个位置。' : '正在连接你的本机服务', ui.received ? connected ? '已连接来源的真实变化会出现在这里。不打扰，也不遗漏。' : '连接 Agent、浏览器或日历，让真实变化自然浮现。' : '正在读取本地连接状态，不会载入示例消息。','bell',ui.received ? 'connections' : null,'连接应用')); return;
     }
-    for (const event of events.slice(0,30)) {
-      const id = text(event.id,200), el = button('','event',{className:'event-card',id,key:`event-${id}`});
+    // A top "需要处理" module (attention/error across all apps) + one module per
+    // app, flowed into a 2-column masonry so the whole feed fits one screen.
+    const shown = events.slice(0,80);
+    const priorityOf = (event) => {
+      const st = text(event.status || event.state);
+      return event.stale ? '' : ['error','failed','permission_required'].includes(st) ? 'err'
+        : ['waiting','awaiting','needs_attention','warning','awaiting_input'].includes(st) ? 'attn'
+        : (event.unread===true && ['available','idle','completed','done','upcoming','ongoing','scheduled'].includes(st)) ? 'new'
+        : ['running','processing','working','checking','reading','busy'].includes(st) ? 'run' : '';
+    };
+    const buildRow = (event) => {
+      const id = text(event.id,200), kind = sourceKind(event.source || event.sourceId);
+      const row = node('div','event-row');
+      const el = button('','event',{className:'event-card',id,key:`event-${id}`});
       el.classList.toggle('is-unread',event.unread===true);
+      const pr = priorityOf(event); if (pr) el.dataset.priority = pr;
       if (event.unread===true) el.setAttribute('aria-label',`未读 · ${text(event.title) || '应用动态'}`);
-      const kind = sourceKind(event.source || event.sourceId), glyph = node('span',`source-glyph${kind === 'terminal' ? ' agent' : ''}`); glyph.append(icon(kind));
-      const copy = node('span','event-copy'); copy.append(node('span','event-title',event.title || '未命名动态'),node('span','event-summary',[text(event.source),text(event.summary || event.description)].filter(Boolean).join(' · ')));
-      const meta = node('span','event-meta'), label = node('span'); label.append(node('span',`status-dot ${event.stale ? '' : ['error','failed'].includes(event.status) ? 'error' : ['running','processing','working','checking'].includes(event.status) ? 'running' : ['waiting','awaiting','needs_attention','warning'].includes(event.status) ? 'warning' : ''}`),document.createTextNode(eventStateLabel(event)));
-      meta.append(label,node('span','',timeLabel(event.occurredAt || event.updatedAt))); el.append(glyph,copy,meta); target.append(el);
+      const glyph = node('span',`source-glyph${kind === 'terminal' ? ' agent' : ''}`); glyph.append(icon(kind));
+      const copy = node('span','event-copy'); copy.append(node('span','event-title',event.title || '未命名动态'),node('span','event-summary',text(event.summary || event.description)));
+      const meta = node('span','event-meta'), label = node('span');
+      const dot = event.stale ? '' : ['error','failed'].includes(event.status) ? 'error' : ['running','processing','working','checking'].includes(event.status) ? 'running' : ['waiting','awaiting','needs_attention','warning'].includes(event.status) ? 'warning' : '';
+      label.append(node('span',`status-dot ${dot}`),document.createTextNode(eventStateLabel(event)));
+      meta.append(label,node('span','',timeLabel(event.occurredAt || event.updatedAt))); el.append(glyph,copy,meta);
+      row.append(el);
+      if (event.target && typeof event.target === 'object') {
+        const jump = button('','event-source',{className:'event-jump',id,key:`jump-${id}`});
+        jump.append(icon('arrow-up-right')); jump.title = '跳转到来源'; jump.setAttribute('aria-label',`跳转到来源：${text(event.title) || '动态'}`);
+        row.append(jump);
+      }
+      return row;
+    };
+    const buildModule = (opts, items) => {
+      const mod = node('section',`feed-module${opts.priority ? ' is-priority' : ''}`);
+      const head = node('div','module-head');
+      const badge = node('span',`group-glyph${opts.kind === 'terminal' ? ' agent' : ''}${opts.priority ? ' pri' : ''}`); badge.append(icon(opts.kind));
+      head.append(badge,node('span','module-name',opts.name),node('span','module-count',String(items.length)));
+      const rows = node('div','module-rows');
+      for (const event of items) rows.append(buildRow(event));
+      mod.append(head,rows); target.append(mod);
+    };
+    // No separate "priority" column: keep every event inside its own app module
+    // and let colour (attention/error left-bar) mark what needs handling. Within
+    // a module, attention/error float to the top.
+    const groups = [], byKey = new Map();
+    for (const event of shown) {
+      const key = text(event.source || event.sourceId || 'other',60);
+      let g = byKey.get(key);
+      if (!g) { g = {key, source:event.source || event.sourceId, items:[]}; byKey.set(key,g); groups.push(g); }
+      g.items.push(event);
+    }
+    // Fixed module order so modules never swap places as events refresh; only a
+    // brand-new app appends after the known ones (then alphabetical, stable).
+    const ORDER = ['otty','hi','browser','wechat','calendar'];
+    const rank = (s) => { const i = ORDER.indexOf(text(s)); return i < 0 ? ORDER.length : i; };
+    groups.sort((a,b) => (rank(a.source) - rank(b.source)) || text(a.source).localeCompare(text(b.source)));
+    const attnRank = (e) => ['err','attn'].includes(priorityOf(e)) ? 0 : 1;
+    for (const g of groups) {
+      const ordered = g.items.map((item, i) => [item, i]);
+      ordered.sort((a,b) => (attnRank(a[0]) - attnRank(b[0])) || (a[1] - b[1]));
+      buildModule({name:appLabel(g.source), kind:sourceKind(g.source), source:g.source}, ordered.map(x => x[0]));
     }
     if (events.length > 30) target.append(paragraph(`先展示最近 30 条，共 ${events.length} 条；日报中可回顾今日变化。`,'compact-empty'));
   }
@@ -369,10 +432,12 @@
     if (!overviewChanged('connector-overview',connectors.map(item=>[item.id,item.name,item.status,item.enabled,connectorLabel(item)]))) return;
     const target = $('#connector-overview'); target.replaceChildren(); target.hidden = !connectors.length;
     for (const connector of connectors) {
-      const id = text(connector.id,200), el = button('','connector-open',{className:'connector-chip',id,key:`connection-${id}`});
-      el.dataset.status = connector.status === 'connected' ? 'connected' : 'pending';
-      const copy = node('span'); copy.append(node('strong','',connector.name || id),node('small','',connectorLabel(connector)));
-      el.append(icon(sourceKind(id)),copy,icon('chevron-right')); target.append(el);
+      const id = text(connector.id,200), connected = connector.status === 'connected';
+      const el = button('','auth-dot',{className:'auth-dot',id,key:`auth-${id}`});
+      el.dataset.status = connected ? 'connected' : 'pending';
+      el.title = `${connector.name || id} · ${connectorLabel(connector)}` + (connected ? '' : '（点击一键连接/授权）');
+      el.setAttribute('aria-label', el.title);
+      el.append(icon(sourceKind(id))); target.append(el);
     }
   }
   function trackState(track) { return track.completed ? '已完成' : track.paused ? '已暂停' : statusLabel(track.status); }
@@ -564,7 +629,13 @@
     if (coverage) { const info = notice(coverage.copy); if (coverage.action) info.append(button(coverage.label,coverage.action,{className:'text-button',key:'event-status-check'})); body.append(info); }
     if (event.error) body.append(notice(event.error,'error'));
     body.append(paragraph(event.summary || event.description || '来源尚未提供这条动态的摘要。','body-copy'));
-    const actions = node('div','detail-actions'); actions.append(button(event.reasonCode==='dock_badge_only'?'打开微信':'打开来源','event-source',{icon:'arrow-up-right',id:view.id,key:'event-source'}),button('问 haochen','event-ask',{className:'primary-button',icon:'sparkles',id:view.id,key:'event-ask'})); body.append(actions);
+    const actions = node('div','detail-actions');
+    // Only offer "open source" when there is an actual jump target (e.g. Otty
+    // pane, browser tab) or the WeChat dock case. Hi follow-ups have no place to
+    // jump to, so we don't show a dead button.
+    const canOpen = event.reasonCode==='dock_badge_only' || (event.target && typeof event.target==='object');
+    if (canOpen) actions.append(button(event.reasonCode==='dock_badge_only'?'打开微信':'打开来源','event-source',{icon:'arrow-up-right',id:view.id,key:'event-source'}));
+    actions.append(button('问 haochen','event-ask',{className:'primary-button',icon:'sparkles',id:view.id,key:'event-ask'})); body.append(actions);
     const evidence = section('内容与依据'); if (list(event.evidence).length) renderEvidence(event.evidence,evidence); else evidence.append(paragraph('这条动态未附带额外正文。haochen 不会将缺失内容当作已读。')); body.append(evidence);
   }
   function renderTrackDetail(view) {
@@ -704,7 +775,9 @@
       card.append(paragraph(connector.summary || connector.description || '此来源尚未提供连接说明。'));
       if (connector.error) card.append(paragraph(connector.error,'form-error'));
       const actions = node('div','detail-actions');
-      if (connector.enabled || connector.status!=='unsupported') actions.append(button(connector.enabled?'关闭连接':connector.status === 'permission_required'?'开启并授权':'开启连接','connector-toggle',{className:connector.enabled?'secondary-button':'primary-button',id,key:`connector-${id}`}));
+      // 按钮反映“是否真的连接上”，不是“是否启用”：没连上就一直显示“开启连接”，点击会重新探测并尝试完成。
+      const isConnected = connector.status === 'connected';
+      if (connector.enabled || connector.status!=='unsupported') actions.append(button(isConnected?'关闭连接':connector.status === 'permission_required'?'开启并授权':'开启连接','connector-toggle',{className:isConnected?'secondary-button':'primary-button',id,key:`connector-${id}`}));
       if (safeURL(connector.helpUrl)) { const help = button('连接帮助','evidence-open',{icon:'arrow-up-right',className:'text-button'}); help.dataset.url = safeURL(connector.helpUrl); actions.append(help); }
       if (actions.childNodes.length) card.append(actions);
       if (/otty/.test(id)) renderOttyConnection(connector,card);
@@ -732,6 +805,7 @@
       if (/chrome|browser/.test(id)) {
         renderBrowserConnection(connector,card);
       }
+      if (id==='hi') renderHiConnection(connector,card);
       body.append(card);
     }
     if (ui.state.connectors.some(item=>/^(lark|feishu)$/.test(text(item.id)))) body.append(paragraph('飞书接入已延期，本轮先把以上来源接好。','field-help'));
@@ -740,6 +814,29 @@
     const dock = node('div','settings-row'), dockLabel = node('label','','总览入口'), dockSelect = select('dock',{notch:'刘海 + 桌面助手',pet:'仅桌面助手',side:'侧边 + 桌面助手'},ui.state.settings.dock); dockLabel.htmlFor='dock-setting'; dockSelect.id='dock-setting'; dock.append(dockLabel,dockSelect);
     const motion = node('div','settings-row'), motionLabel = node('label','','界面动效'), motionSelect = select('motion',{system:'跟随系统',reduced:'减少动态效果'},ui.state.settings.motion); motionLabel.htmlFor='motion-setting'; motionSelect.id='motion-setting'; motion.append(motionLabel,motionSelect); appearance.append(dock,paragraph('总览在前台时按 ⌘M 收起，重新唤起会回到刚才的位置。无刘海屏幕使用顶部胶囊；桌面助手始终可打开同一个总览。','field-help'),motion); body.append(appearance);
     const model = section('对话与模型'); model.append(paragraph('继续使用你已配置的模型和本机安全存储。这里不会显示 API Key。'),button('打开 haochen 设置','settings',{className:'secondary-button',icon:'settings',key:'model-settings'})); body.append(model);
+  }
+
+  function renderHiConnection(connector,card) {
+    // Hi authorization happens in the terminal via the hi CLI's OAuth login,
+    // not inside this app. Tell the user exactly where, tailored to the state.
+    const help = node('div','connector-help'), code = text(connector.reasonCode);
+    const steps = node('ol','connection-steps');
+    const step = (title, done, current, copy) => {
+      const row = node('li',`connection-step${done?' is-complete':''}${current?' is-current':''}`);
+      const mark = node('span','step-mark',done?'':String(steps.childNodes.length+1)); if (done) mark.append(icon('check'));
+      const body = node('div','step-copy'); body.append(node('strong','',title),node('span','step-status',done?'已就绪':current?'下一步':'待完成'));
+      body.append(paragraph(copy,'')); row.append(mark,body); return row;
+    };
+    const hasCli = code !== 'cli_missing';
+    const authed = code !== 'cli_missing' && code !== 'not_authenticated';
+    steps.append(step('安装本机 hi 命令行', hasCli, !hasCli,
+      '在终端执行：npm install -g @xhs/hi-cli --registry=http://npm.devops.xiaohongshu.com:7001（内网源）。'));
+    steps.append(step('在终端登录 hi', authed, hasCli && !authed,
+      '在终端运行 hi search:me，按提示完成内部账号 OAuth 登录。授权发生在终端，不在本应用内；haochen 只调用本机命令，不读取或上传你的登录令牌。'));
+    steps.append(step('回到这里开启连接', authed && connector.enabled, authed && !connector.enabled,
+      '登录后点上方“开启连接”。haochen 只读聚合你本人的今日待跟进日程与待处理任务，不发消息、不读聊天正文，任务计数不是聊天未读数。'));
+    help.append(steps);
+    card.append(help);
   }
 
   function renderOttyConnection(connector,card) {
@@ -760,6 +857,15 @@
         }
       } else if (agent.nextAction==='open_otty_settings') row.append(paragraph('请在 Otty 设置 → Agents 中检查该 Agent 的官方集成。haochen 不会自动重写它的配置。','field-help'));
       if (agent.needsRestart) row.append(paragraph('集成已有配置，但当前会话可能尚未加载；重启对应 Agent 后再检查。','field-help'));
+      help.append(row);
+    }
+    const unrecognized = list(diagnosis.unrecognizedNames,8);
+    if (unrecognized.length || Number(diagnosis.unrecognizedAgents) > 0) {
+      const row = node('div','agent-diagnostic');
+      const names = unrecognized.map(n=>text(n,40)).filter(Boolean).join('、');
+      row.append(node('strong','',`未识别的 Agent（${Number(diagnosis.unrecognizedAgents)||unrecognized.length} 个）`));
+      row.append(paragraph(names?`已发现终端：${names}。haochen 不会猜测它的类型，也不会替它改写配置。`:'已发现终端，但无法识别其 Agent 类型。',''));
+      row.append(paragraph('请在 Otty 设置 → Agents 中为它安装官方状态集成，再重启该会话。','field-help'));
       help.append(row);
     }
     card.append(help);
@@ -795,6 +901,13 @@
     else if (action === 'refresh') perform('refresh',{},el);
     else if (action === 'retry-ready') perform('ready',{},el);
     else if (action === 'connections') openModal('connections',null,el);
+    else if (action === 'auth-dot') {
+      const connector = ui.state.connectors.find(c => c.id === id);
+      // One click: enable a not-yet-enabled source (calendar → system prompt fires,
+      // 微信 enables); for connected or step-requiring sources, open its guide.
+      if (connector && !connector.enabled) perform('connectorEnable',{id,enabled:true},el);
+      else openModal('connections',null,el,{focusConnector:id});
+    }
     else if (action === 'connector-open') openModal('connections',null,el,{focusConnector:id});
     else if (action === 'report') openModal('report',null,el);
     else if (action === 'event') { if (ui.state.events.some(item=>text(item.id)===id)) openModal('event',id,el); else toast('这条动态已移出当前列表，请查看最新动态。'); }
@@ -803,7 +916,13 @@
     else if (action === 'track-new') openModal('edit',null,el);
     else if (action === 'track-edit') openModal('edit',id,el);
     else if (action === 'modal-back') closeModal();
-    else if (action === 'event-source') perform('openSource',{eventId:id},el);
+    else if (action === 'event-source') {
+      // Going to handle it counts as handled: mark read so a Hi message drops
+      // from the feed when you come back (other sources just lose the dot).
+      const ev = ui.state.events.find(e => e.id === id || e.sourceId === id);
+      if (ev && ev.attentionVersion) perform('eventRead',{eventId:ev.id, version:ev.attentionVersion});
+      perform('openSource',{eventId:id},el);
+    }
     else if (action === 'evidence-open' && safeURL(el.dataset.url)) perform('openSource',{url:safeURL(el.dataset.url)},el);
     else if (action === 'file-open') perform('openSource',{fileId:id},el);
     else if (action === 'file-add') perform('pickFolder',{},el);
@@ -824,7 +943,14 @@
     else if (action === 'report-refresh') loadReport(top()?.date || localDate(),true);
     else if (action === 'connector-toggle') {
       const connector = ui.state.connectors.find(item => text(item.id)===id); if (!connector) return;
-      const result = await perform('connectorEnable',{id,enabled:!connector.enabled},el); if (result && top()?.kind==='connections') renderModal(false);
+      if (connector.status === 'connected') {
+        const result = await perform('connectorEnable',{id,enabled:false},el); if (result && top()?.kind==='connections') renderModal(false);
+      } else {
+        // 未连接：确保启用 → 尽力完成连接（浏览器桥接如已知扩展 ID 就一并装）→ 重新探测。
+        if (!connector.enabled) await perform('connectorEnable',{id,enabled:true},el);
+        if (id === 'browser') { const ext = text($('[name="extension-id"]')?.value || ui.extensionId,100).trim(); if (/^[a-p]{32}$/.test(ext)) await perform('browserInstall',{extensionId:ext},el); }
+        const result = await perform('refresh',{},el); if (result && top()?.kind==='connections') renderModal(false);
+      }
     }
     else if (action === 'palette') {
       const palette = el.dataset.palette; if (!Object.hasOwn(PALETTES,palette)) return;
@@ -910,5 +1036,15 @@
   global.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',() => { if (top()) morph(true,false); });
   global.addEventListener('pagehide',() => { clearTimeout(ui.calendarTimer); bridge.destroy(); },{once:true});
   global.HaochenIcons.hydrate(document); renderOverview();
+  (function clock() {
+    const t = document.getElementById('clock-time'), d = document.getElementById('clock-date');
+    const wk = ['周日','周一','周二','周三','周四','周五','周六'];
+    const tick = () => {
+      const n = new Date();
+      if (t) t.textContent = `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;
+      if (d) d.textContent = `${n.getMonth()+1}月${n.getDate()}日 ${wk[n.getDay()]}`;
+    };
+    tick(); global.setInterval(tick, 1000);
+  })();
   bridge.request('ready').catch(error => { ui.error = errorText(error); renderService(); });
 })(globalThis);

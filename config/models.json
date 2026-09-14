@@ -85,6 +85,99 @@
           }
         }
       ]
+    },
+    "codewiz": {
+      "baseUrl": "https://codewizllmproxy.devops.xiaohongshu.com/llmadapterproxy/v3/openai/v1",
+      "api": "openai-completions",
+      "apiKey": "$CODEWIZ_API_KEY",
+      "headers": {
+        "Cookie": "$CODEWIZ_SSO_COOKIE",
+        "X-Adapter-Source": "codewiz-cli",
+        "X-Adapter-Scenario": "codewiz-opencode-cli",
+        "X-Adapter-Source-Version": "0.1.93",
+        "X-Adapter-User-Email": "$CODEWIZ_USER_EMAIL"
+      },
+      "models": [
+        {
+          "id": "kimi-k3",
+          "name": "Kimi K3（内网）",
+          "input": [
+            "text"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 16000
+        },
+        {
+          "id": "deepseek-v4-pro-0813-ali",
+          "name": "DeepSeek V4 Pro（内网）",
+          "input": [
+            "text"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 16000
+        },
+        {
+          "id": "glm-5.3",
+          "name": "GLM 5.3（内网）",
+          "input": [
+            "text"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 16000
+        },
+        {
+          "id": "dots.llm2.inst",
+          "name": "小红书 Dots LLM2（内网）",
+          "input": [
+            "text"
+          ],
+          "contextWindow": 256000,
+          "maxTokens": 16000
+        },
+        {
+          "id": "glm-5.3-flash",
+          "name": "GLM 5.3 Flash（内网）",
+          "input": [
+            "text"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 16000
+        }
+      ]
+    },
+    "codewiz-gemini": {
+      "baseUrl": "https://codewizllmproxy.devops.xiaohongshu.com/llmadapterproxy/v3/gemini/v1beta",
+      "api": "google-generative-ai",
+      "apiKey": "$CODEWIZ_API_KEY",
+      "headers": {
+        "Cookie": "$CODEWIZ_SSO_COOKIE",
+        "X-Adapter-Source": "codewiz-cli",
+        "X-Adapter-Scenario": "codewiz-opencode-cli",
+        "X-Adapter-Source-Version": "0.1.93",
+        "X-Adapter-User-Email": "$CODEWIZ_USER_EMAIL"
+      },
+      "models": [
+        {
+          "id": "gemini-3.7-flash",
+          "name": "Gemini 3.7 Flash（内网）",
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 16000
+        },
+        {
+          "id": "gemini-3.1-pro-preview",
+          "name": "Gemini 3.1 Pro（内网）",
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 16000
+        }
+      ]
     }
   }
 }

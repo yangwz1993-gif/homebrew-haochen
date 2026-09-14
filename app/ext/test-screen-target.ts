@@ -30,7 +30,7 @@ process.env.HAOCHEN_PETREAD = reader;
 process.env.HAOCHEN_PET = "1";
 const hooks: Record<string, Function> = {};
 let tool: any;
-(await import("./index.ts")).default({ on(name: string, fn: Function) { hooks[name] = fn; }, registerTool(t: any) { tool = t; } } as any);
+(await import("./index.ts")).default({ on(name: string, fn: Function) { hooks[name] = fn; }, registerTool(t: any) { if (t.name === "read_screen") tool = t; } } as any);
 const a = { pid: 20, window_id: 40, app: "A", title: "Page A", fingerprint: "first" };
 const b = { pid: 30, window_id: 50, app: "B", title: "Page B", fingerprint: "second" };
 const publish = (target: any, session = "one") => writeFileSync(join(home, "question-target.json"), JSON.stringify({token:"turn",session,target}));

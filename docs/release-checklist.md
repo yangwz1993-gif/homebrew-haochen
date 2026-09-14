@@ -1,48 +1,31 @@
-# v0.5.0-beta.3 本地验收清单
+# v0.6.2-beta.2 本地验收清单
 
-> 以下保留本次公开测试授权前的本地验收记录。2026-09-13 所有者另行授权独立 Homebrew Beta 交接包；新范围见 [Beta 发布说明](releases/v0.5.0-beta.3.md)，不代表下方尚未完成的产品验收已通过。
+> 在 0.6.2-beta.1 基础上继续：内网模型（CodeWiz）应用内接入、Hi 精准跳转、hi 探测覆盖、连接卡片交互、预装 Hi 技能。**所有者明确授权内部 Homebrew 分发**（自签、未经 Apple 公证，仅面向内部同事试用）；**未授权面向公众的公证发布**。上一轮记录见 [v0.6.2-beta.1 之前的清单历史]。
 
-本轮所有者授权开发并交付本机测试，尚未验收通过，尚未授权公开发布 0.5。所有者明确选择继续沿用 legacy DMG 路线；本包未经 Apple 公证，必须使用稳定自签身份，禁止回落 ad-hoc，也不得描述为 Developer ID 或 Notarized。
+所有者明确选择继续沿用 legacy DMG 路线并**授权更新内部 Homebrew tap（GitHub Release + Cask）供内部安装**；本包未经 Apple 公证，必须使用稳定自签身份（`haochen Local Signing`），禁止回落 ad-hoc，也不得描述为 Developer ID 或 Notarized。打包与签名在具备该身份的所有者机器上完成，不在无身份的新机上回落 ad-hoc。面向公众的公证渠道（Developer ID + notarization）本轮仍未授权、未执行。
 
 ## 本轮边界
 
-- 源码在 `feat/v0.5-dashboard` 开发，不直接改远程 main。
-- 所有者本轮明确要求：构建完成后退出并移除现有 App，再安装新包、验证实际体验；旧 App 可恢复。
-- 保留原配置、会话、日志、钥匙串和系统授权；本轮用户已明确确认安装 Chrome 配套扩展并仅测试本机网页。不自动安装 Otty hooks。
-- 飞书延期；其他连接的权限、未配置与不支持状态必须真实可见。
-- 不更新 GitHub Release、标签或 Homebrew Cask，不以历史发布授权代替本版验收。
+- 源码在 `feat/v0.5-dashboard` 开发；Cask 发布到 tap 的 `main` 分支（brew 只读 main）。
+- 内部分发：GitHub Release 传 `haochen-<version>.dmg`，Cask 由 `scripts/version.py render-cask --legacy` 从该 DMG 渲染，sha256 自动对齐。
+- 构建完成后退出并移除现有 App，再安装新包、验证实际体验；旧数据可从备份恢复。
+- 保留原配置、会话、日志、钥匙串和系统授权；权限（辅助功能/屏幕录制）由用户各自授权，Cask 只去 quarantine。
 
 ## 本机交付门禁
 
-- [x] 完成 beta.3 最终 `make check`：Python 795 passed / 1 opt-in skipped，Node 42/42。首次运行只有当前清单版本未同步导致失败，已修正并全量重跑，不改弱化测试。
-- [x] 本轮前端 Node 31/31、权限事务 Node 11/11、实际生产 WK 76/76；beta.2 原生入口/⌘M/输入候选/窗口层级 18/18、原桌宠 71/71 与聊天五组 mock 场景通过。
-- [x] 最终修正候选已使用 legacy 模式重建 DMG。
-- [x] 核对最终 App / 内嵌 VERSION / DMG 版本一致（Apple 数字版本 0.5.0 / build 3，SemVer 0.5.0-beta.3，扩展 0.5.0.3）。
-- [x] 完成 beta.3 冻结包自检 15/15、源包与安装包稳定签名验证和 DMG 完整性校验；SHA 见本地交付说明。
-- [x] 完成 beta.3 替换安装：旧 App 移入废纸篓，保留配置/会话/钥匙串/系统授权，安装并启动新包；不重复触发本人钥匙串授权。
-- [x] 准备启用/验收说明（`docs/releases/v0.5.0-beta.3-local.md`）。
-- [ ] 所有者亲自验收通过（尚未完成）。
+- [x] 完成 `make check`：Python 813 passed / 1 opt-in skipped，Node 42/42。
+- [x] 用 legacy 模式重建 DMG，`scripts/version.py render-cask --legacy` 生成 Cask，sha256 与 DMG 一致。
+- [x] 核对 App / 内嵌 VERSION / DMG 版本一致（SemVer 0.6.2-beta.2，Apple 0.6.2 / build 2，扩展 0.6.2.2）。
+- [x] 替换安装：移除旧 App，安装并启动新包；稳定自签身份跨重装保权限。
+- [x] 内网模型应用内校验实测（真实端点 `/chat/completions` 200）、Hi 精准跳转端到端实测（单聊/群聊/应用号）。
+- [ ] 所有者对本内部版本的最终体验验收（进行中）。
 
-## 实际体验与连接验收
+## 面向公众的正式发布门禁（本轮不执行）
 
-- [x] 首次安装的 beta.2 候选：菜单打开总览、⌘M 收起并还原同一详情。
-- [x] 首次安装的 beta.2 候选：打开文件夹后让出前台，不再跨应用遮挡。
-- [x] 首次安装的 beta.2 候选：实际观察 Otty processing → idle。
-- [x] beta.2 最终候选安装版：⌘M 收起；真实测试 Agent 的处理中展示、准确来源跳转、来源关闭后的详情失效。beta.3 沿用此部分，未重复此套实装测试；完整结果见工程记录。
-- [x] Chrome：用户已确认安装扩展；真实本机页面读取、正文更新、输入框排除、精确跳转 focused 回执及切页保护已验证。
-- [x] Chrome：修复后撤回测试站点权限，从未授权状态一次点击，实际 Chrome 原生允许后自动完成首次追踪；安装版详情显示“已读取页面文字”。
-- [ ] 微信：真实来信产生公开 Dock 未读标记并完成提醒/查看；正向链路尚未验证。
-- [ ] 模型：本人完成 macOS 钥匙串授权后核对配置读取与请求；当前授权未完成，不能记为模型连接成功。
-- [ ] 日历用户授权与多屏实机体验。
-
-连接器代码与隔离测试通过不等于用户账号已授权。已验证 Otty 安装版状态变化、Chrome 实际读取与首次授权，不代表所有 Agent 集成都已启用，更不代表微信或模型已全部接通。Chrome 临时测试站点已撤权且测试来源已移除，等待用户选择自己的网页。当前只交付本地候选，不宣称可公开交付。
-
-## 未来正式发布门禁（本轮不执行）
-
-1. 获得所有者对本版本的验收与公开发布确认，再确定正式版本并完成 PR / CI。
-2. 构建最终 legacy 包；用 `scripts/version.py render-cask --legacy` 从最终 DMG 生成配方。
-3. 执行 `scripts/release_preflight.sh legacy-artifacts`，核对 DMG/Cask SHA、版本和稳定签名。
-4. 经确认后合并源码与 Cask、创建不可变标签及 Release，复核 Homebrew 安装。
+1. 获得所有者对**公开发布**的确认，确定正式版本并完成 PR / CI。
+2. 构建最终 **release**（Developer ID + hardened runtime + notarization）包，而非 legacy。
+3. 执行 `scripts/release_preflight.sh legacy-artifacts` 或对应的公证校验，核对签名/公证/版本。
+4. 经确认后合并、创建不可变标签及公开 Release。
 
 legacy Cask 的 quarantine 处理沿用既定路线，不代表 Apple 公证。验收失败仅修改候选，不覆盖既有线上版本。
 

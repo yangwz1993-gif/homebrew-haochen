@@ -24,6 +24,7 @@
     'globe': ['M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0', 'M3 12h18', 'M12 3c5 5 5 13 0 18-5-5-5-13 0-18'],
     'terminal': ['M3 4h18v16H3Z', 'm7 8 4 4-4 4', 'M13 16h4'],
     'message': ['M3 4h18v13H9l-6 4Z', 'M7 9h10', 'M7 13h6'],
+    'wechat': ['M8.5 4C4.9 4 2 6.5 2 9.6c0 1.8 1 3.4 2.6 4.4l-.7 2.2 2.5-1.3c.6.2 1.3.3 2 .3 3.6 0 6.5-2.5 6.5-5.6S12.1 4 8.5 4Z', 'M15.5 10c-3 0-5.5 2.1-5.5 4.7s2.5 4.7 5.5 4.7c.6 0 1.2-.1 1.8-.3l2.2 1.1-.6-1.9c1.3-.9 2.1-2.2 2.1-3.6C21 12.1 18.5 10 15.5 10Z', 'M6.4 9h.01', 'M10.6 9h.01', 'M13.9 14.4h.01', 'M17.1 14.4h.01'],
     'clock': ['M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0', 'M12 7v5l3 2'],
     'sparkles': ['m12 3 2.7 6.3L21 12l-6.3 2.7L12 21l-2.7-6.3L3 12l6.3-2.7Z'],
     'target': ['M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0', 'M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0', 'M12 10v4', 'M10 12h4'],
@@ -37,6 +38,12 @@
   function icon(name) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     for (const [key, value] of Object.entries({viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', 'stroke-width':'1.65', 'stroke-linecap':'round', 'stroke-linejoin':'round', 'aria-hidden':'true', focusable:'false'})) svg.setAttribute(key, value);
+    // Hi is a wordmark, not a line glyph: render the literal "hi".
+    if (name === 'hi') {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      for (const [key, value] of Object.entries({x:'12', y:'17', 'text-anchor':'middle', 'font-size':'15', 'font-weight':'800', 'letter-spacing':'-0.5', fill:'currentColor', stroke:'none', 'font-family':'-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif'})) t.setAttribute(key, value);
+      t.textContent = 'hi'; svg.appendChild(t); return svg;
+    }
     for (const value of paths[name] || paths.info) {
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', value); svg.appendChild(path);

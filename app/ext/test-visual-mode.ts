@@ -58,7 +58,7 @@ let tool: {
     isError?: boolean;
   }>;
 } | null = null;
-mod.default({ on() {}, registerTool(def: typeof tool) { tool = def; } });
+mod.default({ on() {}, registerTool(def: typeof tool) { if ((def as any)?.name === "read_screen") tool = def; } });
 if (!tool) {
   console.error("[FAIL] read_screen 工具未注册");
   process.exit(1);

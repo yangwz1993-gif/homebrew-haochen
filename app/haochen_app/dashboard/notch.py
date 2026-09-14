@@ -37,6 +37,21 @@ def activity_from(data) -> Activity:
     return Activity(kind, count, label, accessible or default_accessible)
 
 
+# Visible band below the notch's lower edge where the status label/dot/badge is
+# drawn. The attached surface is this tall PLUS the notch height (safe area top).
+NOTCH_DROP = 34.0
+
+
+def _pixel_round(frame):
+    """Snap a frame to the whole-point grid.
+
+    Fractional origins/sizes let AppKit antialias the pill edge, which shows up
+    as a hairline seam where the attached entrance meets the hardware notch.
+    Whole points are pixel-aligned on both 1x and 2x (Retina) displays.
+    """
+    return tuple(float(round(v)) for v in frame)
+
+
 def entrance_geometry(frame, visible, safe_top=0, left=None, right=None, dock="notch"):
     """Return (AppKit frame, physically attached).
 
@@ -44,12 +59,13 @@ def entrance_geometry(frame, visible, safe_top=0, left=None, right=None, dock="n
     and is no wider than the public auxiliary-area gap. Its entire hit region is
     below the reserved top area. On other screens it is a normal top capsule.
     All coordinates stay in AppKit's global coordinate space, including screens
-    placed to the left or above the primary display.
+    placed to the left or above the primary display. Every returned frame is
+    snapped to the pixel grid so the join with the notch has no antialiased seam.
     """
     x, y, width, height = frame
     vx, vy, vw, vh = visible
     if dock == "side":
-        return (vx + vw - 194, vy + vh * 2 / 3 - 40, 186, 40), False
+        return _pixel_round((vx + vw - 194, vy + vh * 2 / 3 - 40, 186, 40)), False
     top = y + height
     safe_top = max(0, min(float(safe_top), 100))
     if safe_top > 0 and left and right:
@@ -57,9 +73,37 @@ def entrance_geometry(frame, visible, safe_top=0, left=None, right=None, dock="n
         gap_right = min(x + width, right[0])
         gap = gap_right - gap_left
         if 100 <= gap <= min(400, width / 2):
-            return (gap_left, top - safe_top - 36, gap, 36), True
+            # Seamless notch: the surface is flush with the screen's top edge and
+            # the same width as the physical notch gap, so its pure-black fill is
+            # continuous with the hardware notch (it looks like the notch grew
+            # downward, per boring.notch / DynamicNotchKit) rather than a separate
+            # capsule hanging below it. It stays inside the gap, so no menu-bar or
+            # status item on either side is covered. The label lives in the
+            # NOTCH_DROP band below the notch's lower edge.
+            return _pixel_round((gap_left, top - safe_top - NOTCH_DROP, gap, safe_top + NOTCH_DROP)), True
     w = min(206, vw - 16)
-    return (vx + (vw - w) / 2, min(top - safe_top, vy + vh) - 44, w, 38), False
+    return _pixel_round((vx + (vw - w) / 2, min(top - safe_top, vy + vh) - 44, w, 38)), False
+
+
+# --- Pure, testable appearance of the entrance surface -----------------------
+
+def entrance_fill(attached: bool, highlighted: bool = False) -> tuple[float, float]:
+    """(calibrated white, alpha) for the entrance background.
+
+    Attached to a hardware notch it must be *pure black* so it is the same
+    material as the notch and reads as one continuous shape — a near-black fill
+    is the seam users report. The free-floating capsule (no notch / side dock)
+    stays a visible dark chip over arbitrary wallpaper.
+    """
+    if attached:
+        return (0.14 if highlighted else 0.0), 1.0
+    return (0.20 if highlighted else 0.10), 0.94
+
+
+def entrance_corner_radius(attached: bool) -> float:
+    """Bottom-corner radius. Attached mirrors the hardware notch's tighter
+    curve; the floating capsule is rounder."""
+    return 13.0 if attached else 17.0
 
 
 def command_m(characters, flags, command, shift, option, control) -> bool:
@@ -90,38 +134,48 @@ def _entrance_classes():
         def drawRect_(self, _dirty):
             bounds = self.bounds()
             width, height = bounds.size.width, bounds.size.height
-            path = AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(bounds, 17, 17)
+            radius = entrance_corner_radius(self.attached)
+            path = AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(bounds, radius, radius)
             if self.attached:
-                # Square top edge joins the hardware notch. Only the lower
-                # corners are rounded; no transparent catcher surrounds it.
+                # Square top edge is flush with the screen top and continuous with
+                # the hardware notch; only the lower corners are rounded.
                 top_y = 0 if self.isFlipped() else height / 2
                 path.appendBezierPathWithRect_(AK.NSMakeRect(0, top_y, width, height / 2))
-            AK.NSColor.colorWithCalibratedWhite_alpha_(0.12 if self.isHighlighted() else 0.025, 1).setFill()
+            white, alpha = entrance_fill(self.attached, self.isHighlighted())
+            AK.NSColor.colorWithCalibratedWhite_alpha_(white, alpha).setFill()
             path.fill()
             palette = {"attention": (1, 0.76, 0.39), "error": (1, 0.48, 0.42),
                        "new": (0.70, 0.89, 0.73), "running": (0.65, 0.77, 0.98),
                        "idle": (0.65, 0.72, 0.67)}
             activity = self.activity
             red, green, blue = palette[activity.kind]
-            center_y = height / 2
+            # When attached the top `notch_inset` points sit under the physical
+            # notch/camera, so the label/dot are centered in the band below it.
+            inset = self.notch_inset if self.attached else 0.0
+            # Center the label/dot in the band BELOW the notch. The notch occupies
+            # the top `inset` points; where "top" is depends on the flip:
+            #   flipped (y=0 at top): band is [inset, height]  -> center inset + b/2
+            #   non-flipped (y=0 bottom): band is [0, height-inset] -> center b/2
+            band = height - inset
+            center_y = (inset + band / 2) if self.isFlipped() else (band / 2)
             AK.NSColor.colorWithCalibratedRed_green_blue_alpha_(red, green, blue, self.pulse).setFill()
             AK.NSBezierPath.bezierPathWithOvalInRect_(AK.NSMakeRect(15, center_y - 3, 6, 6)).fill()
             paragraph = AK.NSMutableParagraphStyle.alloc().init()
             paragraph.setLineBreakMode_(AK.NSLineBreakByTruncatingTail)
-            attrs = {AK.NSFontAttributeName: AK.NSFont.systemFontOfSize_weight_(12, AK.NSFontWeightMedium),
-                     AK.NSForegroundColorAttributeName: AK.NSColor.colorWithCalibratedWhite_alpha_(0.92, 1),
+            attrs = {AK.NSFontAttributeName: AK.NSFont.systemFontOfSize_weight_(13, AK.NSFontWeightSemibold),
+                     AK.NSForegroundColorAttributeName: AK.NSColor.colorWithCalibratedWhite_alpha_(0.96, 1),
                      AK.NSParagraphStyleAttributeName: paragraph}
             badge = "99+" if activity.count > 99 else str(activity.count) if activity.count else ""
             reserve = 30 if badge else 12
             AK.NSString.stringWithString_(activity.label).drawInRect_withAttributes_(
-                AK.NSMakeRect(30, center_y - 8, width - 30 - reserve, 17), attrs)
+                AK.NSMakeRect(30, center_y - 9, width - 30 - reserve, 18), attrs)
             if badge:
                 attrs[AK.NSForegroundColorAttributeName] = AK.NSColor.colorWithCalibratedRed_green_blue_alpha_(
                     red, green, blue, 1)
                 attrs[AK.NSFontAttributeName] = AK.NSFont.monospacedDigitSystemFontOfSize_weight_(
-                    11, AK.NSFontWeightSemibold)
+                    12, AK.NSFontWeightBold)
                 AK.NSString.stringWithString_(badge).drawInRect_withAttributes_(
-                    AK.NSMakeRect(width - 30, center_y - 7, 26, 17), attrs)
+                    AK.NSMakeRect(width - 30, center_y - 8, 26, 18), attrs)
 
         def invoke_(self, _sender):
             if self.owner is not None:
@@ -166,6 +220,7 @@ class NativeEntrance:
         self.button.activity = Activity()
         self.button.pulse = 1.0
         self.button.attached = False
+        self.button.notch_inset = 0.0
         self.button.setBordered_(False)
         self.button.setTitle_("")
         self.button.setTarget_(self.button)
@@ -191,7 +246,11 @@ class NativeEntrance:
         from PyQt6.QtCore import QAbstractAnimation
 
         running = self.animation.state() == QAbstractAnimation.State.Running
-        should_animate = self.panel.isVisible() and self.button.activity.kind == "running" and not self.reduced_motion
+        # Pulse not only while working, but also when something needs the user:
+        # @-mentions / approvals (attention) and connection errors breathe so the
+        # entrance actively reminds instead of sitting as a static coloured dot.
+        should_animate = (self.panel.isVisible() and not self.reduced_motion
+                          and self.button.activity.kind in ("running", "attention", "error"))
         if should_animate and not running:
             self.animation.start()
         elif not should_animate:
@@ -209,12 +268,13 @@ class NativeEntrance:
             self.button.setNeedsDisplay_(True)
             self._sync_animation()
 
-    def place(self, frame, attached, reduced=False):
+    def place(self, frame, attached, reduced=False, notch_inset=0.0):
         import AppKit as AK
 
         self.panel.setFrame_display_(AK.NSMakeRect(*frame), True)
         self.button.setFrame_(AK.NSMakeRect(0, 0, frame[2], frame[3]))
         self.button.attached = attached
+        self.button.notch_inset = float(notch_inset) if attached else 0.0
         self.button.setNeedsDisplay_(True)
         self.reduced_motion = reduced
         self._sync_animation()

@@ -133,8 +133,19 @@ class KeyPage(QWizardPage):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("连接成功后，API Key 会安全保存在 macOS 钥匙串中。"))
         self.mode_combo = QComboBox()
-        self.mode_combo.addItem("DeepSeek（预设）", "deepseek")
-        self.mode_combo.addItem("自定义 OpenAI 兼容模型", "custom")
+        self.mode_combo.addItem("DeepSeek（外网·预设）", "deepseek")
+        self.mode_combo.addItem("自定义 OpenAI 兼容模型（外网）", "custom")
+        # 内网 provider（外部 $ 引用 key，如 CodeWiz）收拢成单独一档「内网」；具体用哪个模型/协议
+        # 由下面的模型下拉决定，我们自己路由。用户自定义模型存进 keychain 后是 $HAOCHEN_* 自引用，
+        # 靠这个前缀区分，别把自定义模型误当内网。
+        self._internal = [
+            info for info in store.providers()
+            if (not info.builtin and info.models
+                and isinstance((k := store.get_key(info.id)), str)
+                and k.startswith("$") and not k.startswith("$HAOCHEN_"))
+        ]
+        if self._internal:
+            self.mode_combo.addItem("CodeWiz 内网模型", "codewiz")
         self.mode_combo.setMinimumHeight(36)
         layout.addWidget(self.mode_combo)
         self.custom_panel = QWidget()
@@ -156,11 +167,27 @@ class KeyPage(QWizardPage):
         custom_layout.addWidget(self.model_id_edit)
         custom_layout.addWidget(self.model_name_edit)
         layout.addWidget(self.custom_panel)
+        self.email_edit = QLineEdit()
+        self.email_edit.setMaxLength(160)
+        self.email_edit.setMinimumHeight(36)
+        self.email_edit.setPlaceholderText("公司邮箱，例如 you@xiaohongshu.com")
+        self.email_edit.setVisible(False)
+        layout.addWidget(self.email_edit)
         self.key_edit = QLineEdit()
         self.key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.key_edit.setMinimumHeight(36)
         self.key_edit.setPlaceholderText("输入 DeepSeek API Key")
         layout.addWidget(self.key_edit)
+        # 内网模型选择器：列出所有内网模型（跨 codewiz / codewiz-gemini 等 provider）；用户只需选，
+        # 具体属于哪个 provider、走什么协议由 data(f"{pid}:{mid}") 携带，我们自己路由。
+        self.model_combo = QComboBox()
+        self.model_combo.setMinimumHeight(36)
+        for info in self._internal:
+            for model in info.models:
+                self.model_combo.addItem(str(model.get("name") or model.get("id")),
+                                         f"{info.id}:{model['id']}")
+        self.model_combo.setVisible(False)
+        layout.addWidget(self.model_combo)
         self.verify_button = QPushButton(CONNECT)
         self.verify_button.setMinimumHeight(38)
         self.verify_button.setObjectName("primaryBtn")
@@ -176,11 +203,13 @@ class KeyPage(QWizardPage):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.validation_finished.connect(self._finish_validation)
+        self._pending_codewiz: dict | None = None
         self._load_configured_custom_model()
         self.mode_combo.currentIndexChanged.connect(self._mode_changed)
         self.url_edit.textEdited.connect(self._custom_value_edited)
         self.model_id_edit.textEdited.connect(self._custom_value_edited)
         self.model_name_edit.textEdited.connect(self._custom_value_edited)
+        self.email_edit.textEdited.connect(self._custom_value_edited)
         self.key_edit.textEdited.connect(self._custom_value_edited)
         self._mode_changed()
 
@@ -197,6 +226,17 @@ class KeyPage(QWizardPage):
             None,
         )
         if model is None:
+            return
+        # 内网 env-provider（外部 $ 引用 key，如 CodeWiz）有独立的「内网」档 + 模型下拉，别塞进
+        # 自定义表单；自定义模型是 $HAOCHEN_* 自引用，不受影响。
+        key = self.store.get_key(provider_id)
+        if isinstance(key, str) and key.startswith("$") and not key.startswith("$HAOCHEN_"):
+            mode_index = self.mode_combo.findData("codewiz")
+            if mode_index >= 0:
+                self.mode_combo.setCurrentIndex(mode_index)
+                model_index = self.model_combo.findData(f"{provider_id}:{model_id}")
+                if model_index >= 0:
+                    self.model_combo.setCurrentIndex(model_index)
             return
         model_name = str(model.get("name") or model_id)
         self.url_edit.setText(provider.base_url)
@@ -227,6 +267,12 @@ class KeyPage(QWizardPage):
         self._connected = False
         self.verify_button.setText(CONNECT)
         self.verify_button.setEnabled(not self._working)
+        if self._is_codewiz_mode():
+            # 改了邮箱或 Key 就得重新校验（校验会带上已登录的 SSO）。
+            self._verified = False
+            self.status.setText("修改后请点“连接模型”重新校验")
+            self.completeChanged.emit()
+            return
         if self.mode_combo.currentData() != "custom":
             self._verified = False
             self.status.setText("修改后请重新验证")
@@ -244,8 +290,8 @@ class KeyPage(QWizardPage):
 
     def _set_working(self, working: bool) -> None:
         self._working = working
-        for widget in (self.verify_button, self.mode_combo, self.key_edit,
-                       self.url_edit, self.model_id_edit, self.model_name_edit):
+        for widget in (self.verify_button, self.mode_combo, self.key_edit, self.email_edit,
+                       self.model_combo, self.url_edit, self.model_id_edit, self.model_name_edit):
             widget.setEnabled(not working)
         if self._connected:
             self.verify_button.setEnabled(False)
@@ -264,6 +310,9 @@ class KeyPage(QWizardPage):
 
     def _verify(self) -> None:
         if self._working:
+            return
+        if self._is_codewiz_mode():
+            self._verify_codewiz()
             return
         candidate = self.key_edit.text().strip()
         mode = self.mode_combo.currentData()
@@ -401,10 +450,151 @@ class KeyPage(QWizardPage):
 
         run_in_background(self, save, saved)
 
+    def _is_codewiz_mode(self) -> bool:
+        return self.mode_combo.currentData() == "codewiz"
+
+    def _codewiz_model(self) -> tuple[str, str] | None:
+        """The (provider_id, model_id) the user picked in the internal-model dropdown."""
+        data = self.model_combo.currentData()
+        if isinstance(data, str) and ":" in data:
+            provider_id, model_id = data.split(":", 1)
+            return provider_id, model_id
+        return None
+
+    def _codewiz_probe(self) -> tuple[str, str] | None:
+        """A reachable OpenAI-protocol internal endpoint to prove key+SSO once.
+
+        Internal auth (key + SSO) is uniform across providers, so we validate credentials
+        against the OpenAI endpoint regardless of which model was picked — the Gemini
+        endpoint speaks Google's protocol and would 404 an OpenAI probe. Runtime routes
+        each model by its own declared api, so the chosen model still works."""
+        for info in self._internal:
+            if info.api == "openai-completions" and info.base_url and info.models:
+                return info.base_url, info.models[0]["id"]
+        return None
+
+    def _verify_codewiz(self) -> None:
+        """Fill email+key + pick model → validate key+SSO once → save codewiz.json + route."""
+        from . import codewiz
+        selection = self._codewiz_model()
+        if selection is None:
+            self.status.setText("请选择要连接的内网模型")
+            return
+        email = self.email_edit.text().strip()
+        key = self.key_edit.text().strip()
+        if not email or not key:
+            self.status.setText("请填写公司邮箱和 API Key")
+            return
+        headers = codewiz.validation_headers(email)
+        if headers is None:
+            self.status.setText("未检测到 codewiz 登录态；请先在本机登录 codewiz 后再点校验。")
+            return
+        probe = self._codewiz_probe()
+        if probe is None:
+            self.status.setText("内网模型地址缺失，请重装或联系维护者。")
+            return
+        provider_id, model_id = selection
+        probe_url, probe_model = probe
+        self._pending_codewiz = {"provider_id": provider_id, "model_id": model_id,
+                                 "email": email, "key": key}
+        self._set_working(True)
+        self._verified = False
+        self.verify_button.setText(CONNECTING)
+        self.status.setText("正在校验内网登录态与 Key（已带上你的登录态）…")
+
+        def run():
+            # 直接走 /chat/completions 试答：CodeWiz 代理的 /models 会 500，列表优先会误判失败。
+            return validate_custom_model(probe_url, probe_model, key, api="openai-completions",
+                                         extra_headers=headers, probe_completion_only=True)
+
+        def done(result, error):
+            if error or result is None:
+                self._set_working(False)
+                self.verify_button.setText(CONNECT)
+                self.status.setText("校验未完成，请重试。")
+                self._pending_codewiz = None
+                return
+            self._finish_codewiz(result.ok, result.message)
+
+        run_in_background(self, run, done)
+
+    def _finish_codewiz(self, ok: bool, message: str) -> None:
+        pending = dict(self._pending_codewiz) if self._pending_codewiz is not None else None
+        if not ok or pending is None:
+            self._set_working(False)
+            self.verify_button.setText(CONNECT)
+            self.status.setText(f"校验失败：{message}")
+            self._pending_codewiz = None
+            return
+        self._set_working(True)
+        self.status.setText("校验通过，正在保存…")
+
+        def save():
+            from . import codewiz
+            codewiz.save_credentials(self.store.home, pending["key"], pending["email"])
+            self.store.set_default_model(pending["provider_id"], pending["model_id"])
+            return None
+
+        def saved(_result, error):
+            from PyQt6.sip import isdeleted
+            if isdeleted(self):
+                return
+            self._pending_codewiz = None
+            self._set_working(False)
+            if error:
+                self.verify_button.setText(CONNECT)
+                self.status.setText("校验通过，但保存未完成，请重试。")
+                return
+            self.key_edit.clear()
+            self._verified = self._connected = True
+            self.verify_button.setText(CONNECTED)
+            self.verify_button.setEnabled(False)
+            self.status.setText("内网模型已连接并保存，可以点“下一步”了。")
+            self.completeChanged.emit()
+
+        run_in_background(self, save, saved)
+
+    def validatePage(self) -> bool:
+        # An already-ready CodeWiz selection (creds resolve, user didn't re-validate this
+        # session) still needs its picked model committed as default when advancing.
+        selection = self._codewiz_model() if self._is_codewiz_mode() else None
+        if selection and self._verified:
+            try:
+                self.store.set_default_model(*selection)
+            except (OSError, ValueError):
+                pass  # non-fatal: model can still be picked later in the bubble
+        return True
+
     def _mode_changed(self) -> None:
         self._connected = False
         self.verify_button.setText(CONNECT)
         self.verify_button.setEnabled(not self._working)
+        if self._is_codewiz_mode():
+            from . import codewiz
+            self.custom_panel.setVisible(False)
+            self.email_edit.setVisible(True)
+            self.key_edit.setVisible(True)
+            self.model_combo.setVisible(True)
+            self.verify_button.setVisible(True)
+            self.key_edit.setPlaceholderText("输入 CodeWiz API Key")
+            self.key_edit.clear()
+            self._pending_custom = None
+            saved_email = codewiz.saved_email(self.store.home)
+            if saved_email and not self.email_edit.text():
+                self.email_edit.setText(saved_email)
+            ready = codewiz.credentials_ready(self.store.home)
+            self._verified = self._connected = ready
+            self.verify_button.setText(CONNECTED if ready else CONNECT)
+            self.verify_button.setEnabled(not ready)
+            self.status.setText(
+                "内网模型已就绪，选好模型可直接点“下一步”；也可改邮箱/Key 后重新校验。" if ready else
+                "填公司邮箱和 API Key、选择模型，点“连接模型”校验（本机需已登录 codewiz）。")
+            self.completeChanged.emit()
+            return
+        self.email_edit.setVisible(False)
+        self.model_combo.setVisible(False)
+        self.key_edit.setVisible(True)
+        self.verify_button.setVisible(True)
         custom = self.mode_combo.currentData() == "custom"
         self.custom_panel.setVisible(custom)
         self.key_edit.setPlaceholderText("输入 API Key" if custom else "输入 DeepSeek API Key")

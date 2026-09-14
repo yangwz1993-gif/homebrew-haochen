@@ -4,20 +4,31 @@ cask "haochen" do
 
   url "https://github.com/yangwz1993-gif/homebrew-haochen/releases/download/v#{version}/haochen-#{version}.dmg"
   name "haochen"
-  desc "桌面 AI 伙伴（读屏/看图/聊天的桌宠）"
+  desc "桌面 AI 伙伴（看板/读屏/看图/聊天的桌宠，支持内网模型与 Hi 集成）"
   homepage "https://github.com/yangwz1993-gif/homebrew-haochen"
 
-  depends_on :macos
+  depends_on macos: ">= :monterey"
+  depends_on arch: :arm64
 
-  # 发布模式说明（所有者决定，2026-09-09）：App 由发布者自签身份签名，未经 Apple 公证。
-  # postflight 移除 quarantine 使 Homebrew 安装路径可用（延续已发布版本的机制）。
-  # 注意：仍需用户在系统设置授权「辅助功能 + 屏幕录制」（系统机制，无法通过 cask 跳过）。
   app "haochen.app"
 
+  # 发布模式说明（所有者决定）：App 由发布者稳定自签身份签名，未经 Apple 公证。
+  # postflight 移除 quarantine，让 `brew install --cask` 无需 --no-quarantine 即可直接打开。
+  # 注意：仍需用户在系统设置授权「辅助功能 + 屏幕录制」（系统机制，无法通过 cask 跳过）。
   postflight_steps do
     run "/usr/bin/xattr",
         args: ["-dr", "com.apple.quarantine", "{{staged_path}}/haochen.app"]
   end
+
+  caveats <<~EOS
+    这是内部里程碑版，本地自签、未经 Apple 公证，仅供内部试用。
+
+    首次使用按需配置（不配也能用外网 DeepSeek 聊天）：
+      • 内网模型（Kimi/GLM/Gemini 等）：先登录本机 codewiz-cc，再在向导「连接模型」里
+        选「CodeWiz 内网模型」，填自己的公司邮箱 + API Key，点连接即可。
+      • Hi 状态监控 / 精准跳转 / 让 haochen 查 Hi：需本机已安装内部 `hi` CLI。
+      • 读屏 / 看图：首次在系统设置授权「辅助功能」「屏幕录制」。
+  EOS
 
   zap trash: "~/Library/Application Support/haochen"
 end

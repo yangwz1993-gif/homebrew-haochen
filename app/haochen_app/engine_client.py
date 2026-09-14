@@ -52,6 +52,38 @@ def haochen_home() -> Path:
         "HAOCHEN_HOME", Path.home() / "Library" / "Application Support" / "haochen"))
 
 
+_AGENTS_MD = (
+    "# haochen 工作情境\n\n"
+    "hi 是用户高频使用的企业级 IM（内部沟通、文档、日历、审批都在其中）。"
+    "当需要检索用户相关的工作类信息（Hi 消息、文档、日程、待办、协作者等），"
+    "可使用已预装的「hi 全家桶」技能（skills/hi全家桶/SKILL.md），或调用 hi_lookup 工具。\n"
+)
+
+
+def _install_agent_resources(home: Path, cwd: Path) -> None:
+    """Pre-install bundled skills into the agent dir + write a global AGENTS.md.
+
+    pi auto-discovers ``<agentDir>/skills`` (agentDir=<home>/agent via PI_CODING_AGENT_DIR)
+    and loads ``AGENTS.md`` from the working dir, so this ships the Hi skill and a short
+    pointer telling the agent when to reach for it. Best-effort; never blocks startup.
+    """
+    import shutil
+    try:
+        skills_src = paths.config_templates() / "skills"
+        if skills_src.is_dir():
+            dst = home / "agent" / "skills"
+            dst.mkdir(parents=True, exist_ok=True)
+            for entry in skills_src.iterdir():
+                if entry.is_dir():
+                    shutil.copytree(entry, dst / entry.name, dirs_exist_ok=True)
+    except OSError:
+        pass
+    try:
+        (cwd / "AGENTS.md").write_text(_AGENTS_MD, encoding="utf-8")
+    except OSError:
+        pass
+
+
 def spawn_argv(
     engine: Path,
     ext: Path | None,
@@ -67,6 +99,20 @@ def spawn_argv(
     reader = paths.reader_binary()
     if reader is not None:
         env["HAOCHEN_PETREAD"] = str(reader)  # 内嵌读屏执行体（P5，不依赖 ~/.local/bin/haochen）
+    # hi_lookup 工具用：解析本地 hi CLI 绝对路径（冻结 App 的 PATH 不含 nvm bin）。
+    try:
+        from .dashboard.adapters.hi import _find_cli as _find_hi_cli
+        hi_bin = _find_hi_cli()
+        if hi_bin:
+            env["HAOCHEN_HI"] = hi_bin
+    except Exception:
+        pass
+    # CodeWiz 内网代理：自动注入 key/cookie（token 每次实时解出，不落盘、不入库）。
+    try:
+        from .codewiz import codewiz_env
+        env.update(codewiz_env(home))
+    except Exception:
+        pass
     argv = [str(engine), "--mode", "rpc", "--no-extensions",
             "--session-dir", str(home / "pi-sessions")]
     if ext and ext.exists():
@@ -76,6 +122,7 @@ def spawn_argv(
     cwd = ensure_private_directory(home / "pi-home")
     ensure_private_directory(home / "pi-sessions")
     ensure_private_directory(home / "logs")
+    _install_agent_resources(home, cwd)
     if credentials is not None:
         export_keychain_credentials(home / "agent" / "auth.json", env, credentials)
     return argv, env, cwd

@@ -221,40 +221,55 @@ class _NativeKeychainBackend:
             finally:
                 self.security.SecKeychainSetUserInteractionAllowed(previous.value)
 
+    def _find_ref(self, service: str, account: str) -> tuple[int, int]:
+        """Locate an item WITHOUT decrypting its data, so no ACL prompt fires.
+
+        Passing NULL for the password length/data means SecurityAgent is never
+        asked, even for an item whose ACL no longer trusts this build.
+        """
+        service_bytes, service_buffer = self._bytes(service)
+        account_bytes, account_buffer = self._bytes(account)
+        item = ctypes.c_void_p()
+        status = self.security.SecKeychainFindGenericPassword(
+            None,
+            len(service_bytes),
+            ctypes.cast(service_buffer, ctypes.c_void_p),
+            len(account_bytes),
+            ctypes.cast(account_buffer, ctypes.c_void_p),
+            None,
+            None,
+            ctypes.byref(item),
+        )
+        return status, item.value or 0
+
     def _set(self, service: str, account: str, secret: str) -> None:
-        status, _length, data, item = self._find(service, account)
-        if data:
-            self.security.SecKeychainItemFreeContent(None, ctypes.c_void_p(data))
+        # Recreate the item so its access control trusts THIS build. Modifying
+        # in place keeps a stale ACL from an earlier code signature, which then
+        # fails silent reads on the next launch and forces endless re-onboarding
+        # (keychain.py:418). A ref-only delete (no decrypt, no prompt) followed
+        # by add mints a fresh ACL bound to the current signed app.
         secret_bytes, secret_buffer = self._bytes(secret)
-        try:
-            if status == 0 and item:
-                result = self.security.SecKeychainItemModifyAttributesAndData(
-                    ctypes.c_void_p(item),
-                    None,
-                    len(secret_bytes),
-                    ctypes.cast(secret_buffer, ctypes.c_void_p),
-                )
-            elif status == self.ITEM_NOT_FOUND:
-                service_bytes, service_buffer = self._bytes(service)
-                account_bytes, account_buffer = self._bytes(account)
-                created = ctypes.c_void_p()
-                result = self.security.SecKeychainAddGenericPassword(
-                    None,
-                    len(service_bytes),
-                    ctypes.cast(service_buffer, ctypes.c_void_p),
-                    len(account_bytes),
-                    ctypes.cast(account_buffer, ctypes.c_void_p),
-                    len(secret_bytes),
-                    ctypes.cast(secret_buffer, ctypes.c_void_p),
-                    ctypes.byref(created),
-                )
-                if created.value:
-                    self.core_foundation.CFRelease(created)
-            else:
-                raise KeychainError("无法写入 macOS Keychain")
-        finally:
-            if item:
-                self.core_foundation.CFRelease(ctypes.c_void_p(item))
+        service_bytes, service_buffer = self._bytes(service)
+        account_bytes, account_buffer = self._bytes(account)
+        status, item = self._find_ref(service, account)
+        if status not in (0, self.ITEM_NOT_FOUND):
+            raise KeychainError("无法写入 macOS Keychain")
+        if item:
+            self.security.SecKeychainItemDelete(ctypes.c_void_p(item))
+            self.core_foundation.CFRelease(ctypes.c_void_p(item))
+        created = ctypes.c_void_p()
+        result = self.security.SecKeychainAddGenericPassword(
+            None,
+            len(service_bytes),
+            ctypes.cast(service_buffer, ctypes.c_void_p),
+            len(account_bytes),
+            ctypes.cast(account_buffer, ctypes.c_void_p),
+            len(secret_bytes),
+            ctypes.cast(secret_buffer, ctypes.c_void_p),
+            ctypes.byref(created),
+        )
+        if created.value:
+            self.core_foundation.CFRelease(created)
         if result != 0:
             raise KeychainError("无法写入 macOS Keychain")
 

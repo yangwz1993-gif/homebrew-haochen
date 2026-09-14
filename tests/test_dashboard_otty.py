@@ -58,6 +58,17 @@ def test_initial_idle_is_not_a_completion(monkeypatch, adapter):
     assert calls == [("pane", "list"), ("tab", "list"), ("window", "list")]
 
 
+def test_unrecognized_agent_is_named_not_guessed(monkeypatch, adapter):
+    # Reproduces the documented "kind=null" case: a terminal whose agent name is
+    # not in the recognized set must be surfaced by name, never guessed a kind.
+    feed(monkeypatch, adapter, [pane("processing", agent="cmux")])
+    snap = adapter.snapshot()
+    diagnosis = adapter.diagnostic(snap)
+    assert diagnosis["unrecognizedAgents"] == 1
+    assert diagnosis["unrecognizedNames"] == ["cmux"]
+    assert diagnosis["agents"] == []  # no recognized kind → no install plan fabricated
+
+
 @pytest.mark.parametrize("state", ["", "unexpected-value", "completed", None, 7])
 def test_missing_or_unknown_lifecycle_never_inferred(monkeypatch, adapter, state):
     feed(monkeypatch, adapter, [pane(state)])

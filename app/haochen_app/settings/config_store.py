@@ -113,8 +113,36 @@ class ConfigStore:
                 created.append(target)
             else:
                 ensure_private_file(target)
+        self._seed_indirect_providers()
         self._migrate_plaintext_keys()
         return created
+
+    def _seed_indirect_providers(self) -> None:
+        """Merge env-ref providers shipped in the auth template (e.g. CodeWiz 内网) into an
+        existing user auth.json when absent. Only ``$ENV``-referenced entries are added, so
+        this never injects a placeholder over a real key nor writes any secret — it just lets
+        newly-shipped internal providers surface without forcing a config reset."""
+        target = self.agent_dir / AUTH_FILE
+        template = TEMPLATE_DIR / AUTH_TEMPLATE
+        if not target.exists() or not template.exists():
+            return
+        try:
+            auth = json.loads(target.read_text(encoding="utf-8"))
+            seed = json.loads(template.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return
+        if not isinstance(auth, dict) or not isinstance(seed, dict):
+            return
+        changed = False
+        for provider, entry in seed.items():
+            if provider in auth or not isinstance(entry, dict):
+                continue
+            key = entry.get("key")
+            if isinstance(key, str) and key.startswith("$"):  # only env-ref providers
+                auth[provider] = entry
+                changed = True
+        if changed:
+            self._save(AUTH_FILE, auth)
 
     def reset_to_default(self, name: str) -> Path:
         """把某个配置文件重置为模板默认（损坏恢复入口）。name 为文件名常量。"""

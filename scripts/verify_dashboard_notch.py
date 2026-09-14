@@ -57,10 +57,13 @@ def main():
         frame = window.handle.panel.frame()
         screen = window._ns_screen()
         if screen.safeAreaInsets().top > 0:
+            # Seamless notch: the surface is flush with the screen's top edge and
+            # covers the notch gap, so its top (origin.y + height) equals the top
+            # of the screen rather than the notch's lower edge.
             outcomes["physical_notch_attachment"] = (
                 window.handle.button.attached and
                 frame.origin.y + frame.size.height == screen.frame().size.height +
-                screen.frame().origin.y - screen.safeAreaInsets().top)
+                screen.frame().origin.y)
         else:
             outcomes["physical_notch_attachment"] = not window.handle.button.attached
         outcomes["screen_retained"] = window._ns_screen() in native_screens

@@ -41,10 +41,15 @@ def test_providers_parses_template(tmp_path: Path) -> None:
     store, _ = make_store(tmp_path)
     store.ensure_initialized()
     providers = store.providers()
-    assert [p.id for p in providers] == ["deepseek"]
-    assert providers[0].name == "deepseek"  # 模板无 name → 回退 id
-    assert providers[0].builtin is True
-    assert len(providers[0].models) == 3
+    ids = [p.id for p in providers]
+    # deepseek 仍是默认外网 provider；codewiz* 是内网代理，仅内置 $ENV 占位（无密钥），
+    # 供分发后每位用户自填 key 使用（见 codewiz.py / config/models.json）。
+    assert ids[0] == "deepseek"
+    assert set(ids) == {"deepseek", "codewiz", "codewiz-gemini"}
+    deepseek = providers[0]
+    assert deepseek.name == "deepseek"  # 模板无 name → 回退 id
+    assert deepseek.builtin is True
+    assert len(deepseek.models) == 3
 
 
 def test_providers_skips_invalid_entries(tmp_path: Path) -> None:

@@ -12,14 +12,40 @@ notch = importlib.import_module("haochen_app.dashboard.notch")
 native = importlib.import_module("haochen_app.dashboard.native_window")
 
 
-def test_notch_entrance_is_attached_below_not_over_menu_or_camera():
+def test_notch_entrance_is_flush_and_seamless_within_the_gap():
     frame, attached = notch.entrance_geometry(
         (0, 0, 1470, 956), (0, 76, 1470, 847), 32,
         (0, 924, 646, 32), (825, 924, 645, 32))
     assert attached
-    assert frame == (646, 888, 179, 36)
-    assert frame[1] + frame[3] == 924  # exactly the notch's lower edge
-    assert frame[0] + frame[2] == 825  # no side menu items are intercepted
+    # Flush with the screen top so the pure-black fill is continuous with the
+    # hardware notch (it grows downward, not a capsule hanging below).
+    assert frame[1] + frame[3] == 956
+    assert frame[3] == 32 + notch.NOTCH_DROP  # notch height + label band
+    # Stays inside the notch gap: no side menu/status item is covered.
+    assert frame[0] == 646 and frame[0] + frame[2] == 825
+
+
+def test_attached_entrance_is_pure_black_to_match_the_notch():
+    # A near-black fill is the seam users report; attached must be pure black
+    # so it is the same material as the hardware notch.
+    assert notch.entrance_fill(True) == (0.0, 1.0)
+    assert notch.entrance_fill(True, highlighted=True)[1] == 1.0
+    # The free-floating capsule stays a visible dark chip over any wallpaper.
+    white, alpha = notch.entrance_fill(False)
+    assert white > 0 and alpha < 1.0
+
+
+def test_attached_corner_radius_is_tighter_than_floating_capsule():
+    assert notch.entrance_corner_radius(True) < notch.entrance_corner_radius(False)
+
+
+def test_geometry_is_snapped_to_the_pixel_grid():
+    # Fractional screen metrics must not leave an antialiased seam.
+    frame, attached = notch.entrance_geometry(
+        (0, 0, 1471, 957), (0, 76, 1471, 847), 32,
+        (0, 924, 646.4, 32), (825.6, 924, 645, 32))
+    assert attached
+    assert all(v == round(v) for v in frame)
 
 
 @pytest.mark.parametrize("origin", [(-1920, 0), (0, 956), (1470, -200)])
@@ -31,12 +57,14 @@ def test_external_display_capsule_stays_within_its_own_visible_frame(origin):
     assert y <= frame[1] < frame[1] + frame[3] < y + 1055
 
 
-def test_hidden_menu_does_not_expand_hit_area_over_notch():
+def test_hidden_menu_keeps_entrance_inside_the_notch_gap():
     frame, attached = notch.entrance_geometry(
         (0, 0, 1470, 956), (0, 0, 1470, 956), 32,
         (0, 924, 646, 32), (825, 924, 645, 32))
     assert attached
-    assert frame[1] + frame[3] <= 924
+    # Even with the menu bar auto-hidden, the width never spills past the gap
+    # into where side menu/status items sit.
+    assert frame[0] >= 646 and frame[0] + frame[2] <= 825
 
 
 def test_empty_or_invalid_auxiliary_gap_falls_back_to_capsule():

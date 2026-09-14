@@ -239,7 +239,10 @@ def test_custom_reconnect_preserves_protocol_and_has_one_active_button(qtbot, tm
     qtbot.waitUntil(lambda: not window._working)
     assert calls == [(provider.base_url, "test-model", "test-only-old-key", "openai-responses")]
     assert window._custom_form.isHidden()
-    assert [b.text() for b in window._custom_list.findChildren(QPushButton)] == [CONNECTED]
+    # 模板现在内置 codewiz* 内网 provider（供分发自填 key），它们在列表中以未连接的
+    # 「连接模型」出现；本用例只关心「刚重连的这个模型是唯一处于已连接态的」。
+    buttons = [b.text() for b in window._custom_list.findChildren(QPushButton)]
+    assert buttons.count(CONNECTED) == 1
 
 
 def test_onboarding_reconnect_existing_custom_keeps_responses_api(qtbot, tmp_path, monkeypatch):

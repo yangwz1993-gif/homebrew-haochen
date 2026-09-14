@@ -11,13 +11,14 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from ..background import run_in_background
 from .adapters.browser import BrowserAdapter
 from .adapters.calendar import CalendarAdapter
+from .adapters.hi import HiAdapter
 from .adapters.otty import OttyAdapter
 from .adapters.wechat import WeChatAdapter
 from .attention import activity
 from .store import FREQUENCIES, DashboardStore, now
 from .tracking import SummaryWorker, daily_report, refresh_track
 
-NAMES = {"otty": "Otty", "browser": "Chrome", "calendar": "日历", "wechat": "微信"}
+NAMES = {"otty": "Otty", "browser": "Chrome", "calendar": "日历", "wechat": "微信", "hi": "Hi"}
 
 
 class DashboardService(QObject):
@@ -29,7 +30,8 @@ class DashboardService(QObject):
         self.store = DashboardStore(config.home)
         settings = self.store.snapshot()["settings"]
         self.adapters = {"otty": OttyAdapter(), "browser": BrowserAdapter(config.home),
-                         "calendar": CalendarAdapter(settings.get("calendarIds")), "wechat": WeChatAdapter()}
+                         "calendar": CalendarAdapter(settings.get("calendarIds")), "wechat": WeChatAdapter(),
+                         "hi": HiAdapter()}
         self.adapters["browser"].set_enabled(settings["connectors"].get("browser", False))
         self.summarizer = SummaryWorker(config)
         self.connectors = {}
@@ -69,7 +71,16 @@ class DashboardService(QObject):
             return
         snapshot = self.store.snapshot()
         for identifier in self.adapters:
-            interval = 120 if identifier == "calendar" else (3 if self.visible or identifier == "otty" else 20)
+            # Hi and calendar hit network APIs with the user's OAuth; poll them
+            # on a slow cadence regardless of visibility to avoid rate limits.
+            if identifier == "calendar":
+                interval = 120
+            elif identifier == "hi":
+                interval = 90
+            elif self.visible or identifier == "otty":
+                interval = 3
+            else:
+                interval = 20
             if time.monotonic() - self.last_poll.get(identifier, 0) >= interval:
                 self._collect(identifier)
         if not self._track_busy:
@@ -183,6 +194,13 @@ class DashboardService(QObject):
                                              "不读取聊天正文或私人数据库"]
                 if not enabled:
                     connector["summary"] = "可按需观察微信 Dock 未读标记；不含聊天正文，未暴露标记时明确显示未知。"
+            if identifier == "hi":
+                connector["reasonCode"] = raw.get("reasonCode")
+                connector["capabilities"] = ["仅聚合你本人的待跟进日程与待处理任务", "只读，不发消息、不读聊天正文",
+                                             "任务计数不是聊天未读数"]
+                if not enabled:
+                    connector["summary"] = ("可按需聚合 Hi 的今日待跟进日程与待处理任务；"
+                                            "只读、不发消息，不代表真实未读数。")
             connectors.append(connector)
         connectors.extend([
             {"id": "lark", "name": "飞书", "enabled": False, "status": "disabled", "summary": "按计划延期接入。"},

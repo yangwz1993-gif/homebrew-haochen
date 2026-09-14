@@ -18,7 +18,7 @@ from ..secure_storage import atomic_write_private, ensure_private_directory, ens
 from .attention import ERRORS, WAITING, decorate, version
 
 FREQUENCIES = {"manual": 0, "quarter": 900, "hourly": 3600, "daily": 86400}
-PALETTES = {"sage", "stone", "mist", "carbon"}
+PALETTES = {"glass", "sage", "stone", "mist", "carbon"}
 MAX_STATE_BYTES = 32 * 1024 * 1024
 
 
@@ -54,9 +54,10 @@ class DashboardStore:
         self._revoked_sources = set()
         self.data = {
             "schema": 1, "events": [], "history": [], "tracks": [], "files": [], "reports": [],
-            "readVersions": {}, "entranceRevision": 2,
-            "settings": {"palette": "sage", "motion": "system", "dock": "notch", "aiDaily": False,
-                         "connectors": {"otty": True, "browser": True, "calendar": False, "wechat": False}},
+            "readVersions": {}, "entranceRevision": 5,
+            "settings": {"palette": "glass", "motion": "system", "dock": "notch", "aiDaily": False,
+                         "connectors": {"otty": True, "browser": True, "calendar": False, "wechat": False,
+                                        "hi": True}},
         }
         migrate_reads = False
         if self.path.exists():
@@ -73,9 +74,18 @@ class DashboardStore:
             self.data.update(loaded)
             # beta.1 defaulted to a side button; migrate that initial UI once.
             # Subsequent explicit choices (including pet-only) remain intact.
-            if loaded.get("entranceRevision", 0) < 2:
+            rev = loaded.get("entranceRevision", 0)
+            if rev < 2:
                 self.data["settings"]["dock"] = "notch"
-                self.data["entranceRevision"] = 2
+            # 0.6.2 glass redesign: adopt the glass theme once. After this runs the
+            # rev is 4, so a later explicit palette choice sticks (never re-forced).
+            if rev < 4:
+                self.data["settings"]["palette"] = "glass"
+            # 0.6.2: Hi is on by default now (hi CLI is already logged in);
+            # enable it once for existing profiles too.
+            if rev < 5:
+                self.data["settings"]["connectors"]["hi"] = True
+                self.data["entranceRevision"] = 5
         if not isinstance(self.data.get("readVersions"), dict):
             self.data["readVersions"] = {}
         if migrate_reads:
@@ -145,7 +155,7 @@ class DashboardStore:
             self._save()
 
     def enable(self, connector, enabled):
-        if connector not in ("otty", "browser", "calendar", "wechat"):
+        if connector not in ("otty", "browser", "calendar", "wechat", "hi"):
             raise ValueError("此来源尚无可靠连接器")
         with self.lock:
             self._source_versions[connector] = self._source_versions.get(connector, 0) + 1
