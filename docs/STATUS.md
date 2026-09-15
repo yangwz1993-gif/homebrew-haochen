@@ -21,7 +21,7 @@
 - 未回私聊=推断式标注，两步法全量验证群/私聊（9b7a7e9）→ 影响：不谎称「精确未读」
 
 ## 3. 关键事实速查
-- 仓库：本目录，分支 feat/v0.5-dashboard@9b7a7e9（截至 11:05，复核：`git rev-parse --short HEAD`）→ 影响：改动都在此提交
+- 仓库：本目录，分支 feat/v0.5-dashboard@7717b1b（截至 09-16 冷启动复核：`git rev-parse --short HEAD`；9b7a7e9 之上多了 docs 提交）→ 影响：改动都在此提交
 - 包：packaging/dist/haochen-0.6.2-beta.3.dmg（已构建）→ 影响：分发放大前先过冒烟
 - 治理总表：~/Desktop/doc/haochen问题治理总表_20260915_v2.md（v1 作废）→ 影响：bug 编号以此为准
 - 冒烟清单：evidence/真机冒烟清单_0.6.2-beta.3.md → 影响：验收入口
