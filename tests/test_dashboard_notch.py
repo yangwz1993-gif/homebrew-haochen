@@ -446,3 +446,15 @@ def test_hover_hint_text_attention_loop():
     assert notch.hover_hint_text(idle) == "点击打开桌面总览"
     # 计数为 0 的 attention 不得虚报数量
     assert notch.hover_hint_text(notch.Activity(kind="attention", count=0)) == "点击打开桌面总览"
+
+
+def test_entrance_classes_register_cleanly():
+    """回归：AppKit 类创建必须能过 PyObjC 注册（真机 BadPrototypeError 的探针）。
+
+    纯函数测试覆盖不到类创建；本用例直接调用 _entrance_classes()——选择器签名
+    错误（如 updateTrackingAreas_ 多了下划线）会在这一步被 ObjC 运行时拒绝。
+    只调用一次：重复注册同一 ObjC 类名本就违规（_CLASSES 由调用方缓存）。
+    """
+    panel_cls, button_cls = notch._entrance_classes()
+    assert panel_cls is not None and button_cls is not None
+    # 再来一次必须是「另一个名字冲突」级别的失败隔离之外——这里只验证首次注册成功。

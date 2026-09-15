@@ -280,7 +280,7 @@ def _entrance_classes():
             return frame
 
     class HaochenNotchButton(AK.NSButton):
-        def updateTrackingAreas_(self):  # noqa: N802 - AppKit 虚方法
+        def updateTrackingAreas(self):  # noqa: N802 - AppKit 虚方法（无参，选择器不带冒号）
             objc.super(HaochenNotchButton, self).updateTrackingAreas()
             old = getattr(self, "_hover_tracking", None)
             if old is not None:
