@@ -64,6 +64,27 @@
     return list(events,200).filter(item => item && item.type !== 'calendar' && item.kind !== 'calendar'
       && !(String(item.id || '').startsWith('hi:msg:') && item.unread === false));
   }
+  function isNotifiableUnread(event) {
+    // 未读且值得提醒：Otty 的常态实时状态卡（无 kind）不算「新内容」，不打红点。
+    if (!event || event.unread !== true) return false;
+    if (text(event.source)==='otty' && !event.kind) return false;
+    return true;
+  }
+  function injectConnectedEmptySlots(events, connectors) {
+    // 已开启且已连接但无可见动态的来源：留「已连接，暂无动态」空位（日历走独立区除外）。
+    const out = list(events,200).slice();
+    const visible = new Set(out.map(e => text(e.source || '')));
+    for (const c of list(connectors,20)) {
+      const id = text(c && c.id);
+      if (!id || id==='calendar') continue;
+      if (!c.enabled || (c.connection || c.status) !== 'connected') continue;
+      if (visible.has(id)) continue;
+      out.push({id:`${id}:empty-slot`, source:id, title:text(c.name) || id,
+                summary:'已连接，暂无动态', status:'available', state:'available',
+                reasonCode:'empty', unread:false});
+    }
+    return out;
+  }
   function injectClearedPlaceholders(events, allEvents) {
     // F2：某来源的动态全部被已读过滤后，注入「已清空」占位，避免整个模块蒸发。
     // （目前只有 hi 消息会被已读剔除；占位卡走 reasonCode=empty 的弱化呈现。）
@@ -290,7 +311,7 @@
       this.pending.clear();
     }
   }
-  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,feedEmptyState,injectClearedPlaceholders,feedTimeBucket,feedEventSignature,computeFeedDiff,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
+  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,feedEmptyState,injectClearedPlaceholders,injectConnectedEmptySlots,isNotifiableUnread,feedTimeBucket,feedEventSignature,computeFeedDiff,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
   if (typeof module === 'object' && module.exports) module.exports = core;
   global.HaochenDashboardCore = core;
   if (typeof document === 'undefined') return;
@@ -448,7 +469,8 @@
     if (ui.feedEmpty) { ui.feedEmpty.remove(); ui.feedEmpty = null; }
     // A top "需要处理" module (attention/error across all apps) + one module per
     // app, flowed into a 2-column masonry so the whole feed fits one screen.
-    const shown = injectClearedPlaceholders(events, ui.state.events).slice(0,80);
+    const shown = injectConnectedEmptySlots(
+      injectClearedPlaceholders(events, ui.state.events), ui.state.connectors).slice(0,80);
     const priorityOf = (event) => {
       const st = text(event.status || event.state);
       return event.stale ? '' : ['error','failed','permission_required'].includes(st) ? 'err'
@@ -470,7 +492,7 @@
         return row;
       }
       const el = button('','event',{className:'event-card',id,key:`event-${id}`});
-      el.classList.toggle('is-unread',event.unread===true);
+      el.classList.toggle('is-unread',isNotifiableUnread(event));
       const pr = priorityOf(event); if (pr) el.dataset.priority = pr;
       if (event.unread===true) el.setAttribute('aria-label',`未读 · ${text(event.title) || '应用动态'}`);
       const glyph = node('span',`source-glyph${kind === 'terminal' ? ' agent' : ''}`); glyph.append(icon(kind));
@@ -525,15 +547,24 @@
         const head = node('div','module-head');
         const badge = node('span',`group-glyph${sourceKind(g.source) === 'terminal' ? ' agent' : ''}`); badge.append(icon(sourceKind(g.source)));
         const countEl = node('span','module-count','');
-        head.append(badge,node('span','module-name',appLabel(g.source)),countEl);
+        const unreadEl = node('span','module-unread');
+        unreadEl.hidden = true;
+        head.append(badge,node('span','module-name',appLabel(g.source)),unreadEl,countEl);
         const rows = node('div','module-rows');
         section.append(head,rows);
-        mod = {mod:section, rows, countEl};
+        mod = {mod:section, rows, countEl, unreadEl};
         ui.feedModules.set(g.key, mod);
       }
       target.append(mod.mod);  // 按固定顺序归位：已有节点是移动不是重建，不触发动画
       const countText = String(g.items.length);
       if (mod.countEl.textContent !== countText) mod.countEl.textContent = countText;
+      // 模块标题的未读红点：让「哪个应用有新内容」一眼可见（Otty 常态卡不算）。
+      const unreadN = g.items.filter(isNotifiableUnread).length;
+      if (mod.unreadEl) {
+        mod.unreadEl.hidden = unreadN === 0;
+        const unreadText = `●${unreadN}`;
+        if (mod.unreadEl.textContent !== unreadText) mod.unreadEl.textContent = unreadText;
+      }
       const ordered = g.items.map((item, i) => [item, i]);
       ordered.sort((a,b) => (attnRank(a[0]) - attnRank(b[0])) || (a[1] - b[1]));
       for (const [event] of ordered) {

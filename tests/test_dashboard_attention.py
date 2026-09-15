@@ -187,3 +187,18 @@ def test_unread_error_event_still_shows_at_notch():
     """保留语义：未读的错误类动态仍在刘海提醒（连接卡片和事件是两个层面）。"""
     state = attention.activity([{"status": "error", "unread": True, "source": "browser"}], [])
     assert state["kind"] == "error" and state["count"] == 1
+
+
+def test_new_results_label_names_source_app():
+    """「有新结果」也要指名哪个应用。"""
+    state = attention.activity([{"status": "available", "unread": True, "source": "browser"}], [])
+    assert state["kind"] == "new" and "网页" in state["label"]
+
+
+def test_otty_idle_status_card_is_not_a_new_result():
+    """Otty 常态实时状态卡（无 kind）不算新结果；turn_finished 等通知类（有 kind）才算。"""
+    state = attention.activity([{"status": "idle", "unread": True, "source": "otty"}], [])
+    assert state["kind"] == "idle"
+    state = attention.activity(
+        [{"status": "idle", "unread": True, "source": "otty", "kind": "turn_finished"}], [])
+    assert state["kind"] == "new" and "Agent" in state["label"]

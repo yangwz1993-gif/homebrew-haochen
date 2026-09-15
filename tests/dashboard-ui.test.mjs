@@ -366,3 +366,30 @@ test('已读清空的来源保留「已清空」占位，不再整模块蒸发',
   // 从未有过 hi 事件不注入
   assert.deepEqual(ui.injectClearedPlaceholders([], []).map(e=>e.id), []);
 });
+
+test('空位机制：已开启且已连接但无内容的来源留「已连接，暂无动态」占位',() => {
+  const connectors = [
+    {id:'hi', name:'Hi', enabled:true, connection:'connected'},
+    {id:'wechat', name:'微信', enabled:true, connection:'connected'},
+    {id:'browser', name:'Chrome', enabled:true, connection:'unavailable'},
+    {id:'calendar', name:'日历', enabled:true, connection:'connected'},
+  ];
+  const events = [{id:'hi:msg:1', source:'hi', unread:true, status:'needs_attention'}];
+  const out = ui.injectConnectedEmptySlots(events, connectors);
+  const ids = out.map(e=>e.id);
+  assert.ok(ids.includes('hi:msg:1'), '原有事件保留');
+  assert.ok(ids.includes('wechat:empty-slot'), '已连接无内容的微信留空位');
+  assert.ok(!ids.some(i=>i.startsWith('browser:')), '连接不可用的不留空位');
+  assert.ok(!ids.some(i=>i.startsWith('calendar')), '日历走独立区，不在动态区留空位');
+  const slot = out.find(e=>e.id==='wechat:empty-slot');
+  assert.equal(slot.summary, '已连接，暂无动态');
+  assert.equal(slot.reasonCode, 'empty');
+  assert.notEqual(slot.unread, true);
+});
+
+test('未读红点口径：Otty 常态卡不打点，真新内容才打点',() => {
+  assert.equal(ui.isNotifiableUnread({unread:true, source:'hi'}), true);
+  assert.equal(ui.isNotifiableUnread({unread:true, source:'otty'}), false);
+  assert.equal(ui.isNotifiableUnread({unread:true, source:'otty', kind:'turn_finished'}), true);
+  assert.equal(ui.isNotifiableUnread({unread:false, source:'hi'}), false);
+});

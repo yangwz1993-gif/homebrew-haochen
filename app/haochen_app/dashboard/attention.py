@@ -36,6 +36,25 @@ def decorate(events, read_versions):
 _SOURCE_NAMES = {"hi": "Hi 消息", "otty": "Agent", "browser": "网页", "wechat": "微信", "calendar": "日历"}
 
 
+def _source_names(events) -> list[str]:
+    """事件中涉及的来源名（去重、保序、最多两个）。"""
+    names: list[str] = []
+    for item in events:
+        name = _SOURCE_NAMES.get(item.get("source"), "动态")
+        if name not in names:
+            names.append(name)
+    return names[:2]
+
+
+def _is_notifiable_unread(event) -> bool:
+    """未读且值得提醒：Otty 的常态实时状态卡（无 kind）不算「新内容」，不打红点。"""
+    if not event.get("unread"):
+        return False
+    if event.get("source") == "otty" and not event.get("kind"):
+        return False
+    return True
+
+
 def activity(events, connectors):
     """只提醒「未读且待处理」的事，并指名是哪个应用（0.6.2-beta.3 行为变更）。
 
@@ -47,20 +66,19 @@ def activity(events, connectors):
                if event.get("status") in WAITING and event.get("unread")]
     errors = [event for event in reliable
               if event.get("status") in ERRORS and event.get("unread")]
-    unread = [event for event in reliable if event.get("unread") and event.get("status") in RESULTS]
+    unread = [event for event in reliable
+              if _is_notifiable_unread(event) and event.get("status") in RESULTS]
     running = [event for event in reliable if event.get("status") in RUNNING]
     if waiting:
         kind, count = "attention", len(waiting)
-        names = []
-        for item in waiting:
-            name = _SOURCE_NAMES.get(item.get("source"), "动态")
-            if name not in names:
-                names.append(name)
-        label = f"{'、'.join(names[:2])}等你处理" if names else "有事项等你处理"
+        names = _source_names(waiting)
+        label = f"{'、'.join(names)}等你处理" if names else "有事项等你处理"
     elif errors:
         kind, count, label = "error", len(errors), "有连接需处理"
     elif unread:
-        kind, count, label = "new", len(unread), "有新结果"
+        kind, count = "new", len(unread)
+        names = _source_names(unread)
+        label = f"{'、'.join(names)}有新结果" if names else "有新结果"
     elif running:
         kind, count, label = "running", len(running), "正在处理"
     else:
