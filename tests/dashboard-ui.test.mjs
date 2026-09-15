@@ -340,3 +340,11 @@ test('时间桶：分钟内跳动不触发签名变化，跨小时才变',() => 
   const diff = ui.computeFeedDiff(known, [{...base[0], occurredAt:'2026-09-15T10:47:00+08:00'}]);
   assert.deepEqual(diff.reuse, ['hi:none']); assert.deepEqual(diff.update, []);
 });
+
+test('空态占位：有内容时必须返回 null（空→非空切换不残留僵尸卡）',() => {
+  assert.equal(ui.feedEmptyState([{id:'hi:none'}], true, true), null);
+  assert.equal(ui.feedEmptyState([], false, false).title, '正在连接你的本机服务');
+  assert.equal(ui.feedEmptyState([], true, true).title, '此刻，没有新的动态。');
+  assert.equal(ui.feedEmptyState([], true, false).title, '给重要的消息，留一个位置。');
+  assert.equal(ui.feedEmptyState([], false, true).title, '正在连接你的本机服务');
+});

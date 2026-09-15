@@ -541,3 +541,33 @@ def test_extension_permission_transaction_survives_popup_teardown():
         capture_output=True, text=True, timeout=20,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_aged_closed_tab_archives_and_stops_downgrading_connection(tmp_path, monkeypatch):
+    """B-9：关闭超 12h 的旧追踪页归档，不再把整体拖成「能力受限」；刚关闭的仍会降级。"""
+    t0 = time.time()
+    store = BrowserStore(tmp_path)
+    session = store.connect(CLIENT, t0)
+    try:
+        store.observe(observation(), session, CLIENT, t0)  # 正常可用页
+        store.observe(observation(sourceId="synthetic-old", url="https://example.com/old",
+                                  status="tab_closed", content=""), session, CLIENT, t0)
+        # 时间前进 13 小时：会话仍活着（ping），好页刚读过（新鲜），旧关闭页一直没再更新
+        now = t0 + 13 * 3600
+        monkeypatch.setattr("haochen_app.dashboard.adapters.browser.time.time", lambda: now)
+        store.ping(session, now)
+        store.observe(observation(), session, CLIENT, now)
+        adapter = BrowserAdapter(tmp_path)
+        result = adapter.snapshot()
+        assert result["status"] == "connected", result["message"]
+        by_id = {e["sourceId"]: e for e in result["events"]}
+        assert by_id["synthetic-old"]["archived"] is True
+        assert not by_id[SOURCE].get("archived")
+        # 对照：刚刚关闭的追踪页（当前时刻）仍会如实降级 partial
+        store.observe(observation(sourceId="synthetic-fresh", url="https://example.com/fresh",
+                                  status="tab_closed", content=""), session, CLIENT, now)
+        result = adapter.snapshot()
+        assert result["status"] == "partial"
+        assert not {e["sourceId"]: e for e in result["events"]}["synthetic-fresh"].get("archived")
+    finally:
+        store.close()

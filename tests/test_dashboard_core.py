@@ -1031,3 +1031,37 @@ def test_service_stop_prevents_inflight_result_mutation(service_setup):
     result = jobs[0][0]()
     jobs[0][1](result, None)
     assert "AFTER-STOP" not in json.dumps(controller.store.snapshot())
+
+
+def test_connection_and_coverage_are_separate_dimensions(service_setup):
+    """C-11：连接态与内容态分离——partial（内容降级）也是「已连接」；失效计数不含归档/过期。"""
+    controller, _jobs, _ = service_setup
+    store = controller.store
+    store.enable("browser", True)
+    # 连接器快照直接放到 service 的 connectors 表（采集器回调路径），事件走 store
+    controller.connectors["browser"] = {"status": "partial", "checkedAt": "now"}
+    store.observe("browser", {"status": "partial", "checkedAt": "now", "events": [
+        {"id": "browser:ok", "state": "available", "fingerprint": "a"},
+        {"id": "browser:closed", "state": "tab_closed", "fingerprint": "b"},
+        {"id": "browser:old", "state": "tab_closed", "fingerprint": "c", "archived": True},
+    ]})
+    state = controller.state()
+    connector = next(c for c in state["connectors"] if c["id"] == "browser")
+    assert connector["connection"] == "connected", "内容降级不得拖成未连接"
+    assert connector["coverage"]["level"] == "partial"
+    assert connector["coverage"]["broken"] == 1, "归档的旧追踪页不计入失效"
+    assert connector["coverage"]["total"] == 3
+
+
+def test_connection_dimensions_cover_disabled_and_unavailable(service_setup):
+    controller, _jobs, _ = service_setup
+    state = controller.state()
+    by_id = {c["id"]: c for c in state["connectors"]}
+    assert by_id["wechat"]["connection"] == "disabled"       # 默认未开启
+    assert by_id["browser"]["connection"] == "unavailable"   # 默认开启但无数据 → 暂不可用
+    store = controller.store
+    store.enable("hi", True)
+    store.observe("hi", {"status": "not_running", "checkedAt": "now", "events": []})
+    state = controller.state()
+    hi = next(c for c in state["connectors"] if c["id"] == "hi")
+    assert hi["connection"] == "unavailable" and hi["coverage"]["level"] == "empty"

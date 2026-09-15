@@ -64,6 +64,14 @@
     return list(events,200).filter(item => item && item.type !== 'calendar' && item.kind !== 'calendar'
       && !(String(item.id || '').startsWith('hi:msg:') && item.unread === false));
   }
+  function feedEmptyState(events, received, connected) {
+    // 动态区空态占位：有内容时返回 null（绝不应显示空态卡）；空态按连接进度分文案。
+    // 抽出为纯函数：空→非空切换的决策可单测（B-10 防回归）。
+    if (list(events,200).length) return null;
+    if (!received) return {title:'正在连接你的本机服务', copy:'正在读取本地连接状态，不会载入示例消息。', glyph:'bell', action:null, actionText:null};
+    if (connected) return {title:'此刻，没有新的动态。', copy:'已连接来源的真实变化会出现在这里。不打扰，也不遗漏。', glyph:'bell', action:'connections', actionText:'连接应用'};
+    return {title:'给重要的消息，留一个位置。', copy:'连接 Agent、浏览器或日历，让真实变化自然浮现。', glyph:'bell', action:'connections', actionText:'连接应用'};
+  }
   function feedTimeBucket(value) {
     // 小时粒度同桶：动态列表的刷新签名用它，避免分钟级时间跳动触发全列表重建。
     // 注意：时间戳是绝对值（适配器每次轮询会刷新 updatedAt），桶只随「数据时间跨小时」变化。
@@ -99,6 +107,9 @@
   }
   function connectorLabel(connector) {
     const item = record(connector), stage = record(item.setup).stage;
+    // C-11：二维状态优先——连接态只管管道；内容态的问题以「· N 项待处理」跟在已连接后面，
+    // 不再把内容问题降级成「能力受限」这种四不像。
+    const conn = item.connection, cov = record(item.coverage);
     if (item.id==='wechat') {
       if (item.enabled===false || item.status==='disabled') return '未开启';
       if (item.status==='connected' || item.status==='ready') return '未读标记可读';
@@ -110,9 +121,18 @@
       if (stage === 'extension') return '待确认扩展连接';
       if (stage === 'bridge') return '待连接本机';
       if (stage === 'site' || stage === 'authorization') return '待授权页面';
-      if (stage === 'ready' && item.status === 'connected') return '已连接';
+      if (stage === 'ready' && (conn ? conn === 'connected' : item.status === 'connected')) {
+        return cov.level === 'partial' && cov.broken > 0 ? `已连接 · ${cov.broken} 项待处理` : '已连接';
+      }
     }
     if (/otty/.test(text(item.id)) && ['unknown','partial','limited'].includes(item.status)) return '待确认 Agent 状态';
+    if (conn) {
+      if (conn === 'connected') return cov.level === 'partial' && cov.broken > 0 ? `已连接 · ${cov.broken} 项待处理` : '已连接';
+      if (conn === 'disabled') return '未开启';
+      if (conn === 'permission_required') return '需要授权';
+      if (conn === 'error') return '连接异常';
+      if (conn === 'unavailable') return '暂不可用';
+    }
     return statusLabel(item.status);
   }
   function browserSteps(connector) {
@@ -254,7 +274,7 @@
       this.pending.clear();
     }
   }
-  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,feedTimeBucket,feedEventSignature,computeFeedDiff,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
+  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,feedEmptyState,feedTimeBucket,feedEventSignature,computeFeedDiff,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
   if (typeof module === 'object' && module.exports) module.exports = core;
   global.HaochenDashboardCore = core;
   if (typeof document === 'undefined') return;
@@ -399,13 +419,17 @@
     const target = $('#event-list');
     const unread = events.filter(item=>item.unread===true).length;
     $('#event-count').textContent = unread ? `${unread} 条未读` : events.length ? `${events.length} 条` : '';
-    if (!events.length) {
+    const emptyState = feedEmptyState(events, ui.received, connected);
+    if (emptyState) {
       // 空态整体替换：注册表一并清空，避免残留节点被误复用。
       ui.feedRows = new Map(); ui.feedModules = new Map();
       if (ui.feedFooter) { ui.feedFooter.remove(); ui.feedFooter = null; }
       target.replaceChildren();
-      target.append(empty(ui.received ? connected ? '此刻，没有新的动态。' : '给重要的消息，留一个位置。' : '正在连接你的本机服务', ui.received ? connected ? '已连接来源的真实变化会出现在这里。不打扰，也不遗漏。' : '连接 Agent、浏览器或日历，让真实变化自然浮现。' : '正在读取本地连接状态，不会载入示例消息。','bell',ui.received ? 'connections' : null,'连接应用')); return;
+      ui.feedEmpty = empty(emptyState.title, emptyState.copy, emptyState.glyph, emptyState.action, emptyState.actionText);
+      target.append(ui.feedEmpty); return;
     }
+    // 空→非空切换：启动占位卡不在增量注册表里，必须显式撤掉，否则它会烂在原地（B-10）。
+    if (ui.feedEmpty) { ui.feedEmpty.remove(); ui.feedEmpty = null; }
     // A top "需要处理" module (attention/error across all apps) + one module per
     // app, flowed into a 2-column masonry so the whole feed fits one screen.
     const shown = events.slice(0,80);
@@ -533,7 +557,7 @@
     if (!overviewChanged('connector-overview',connectors.map(item=>[item.id,item.name,item.status,item.enabled,connectorLabel(item)]))) return;
     const target = $('#connector-overview'); target.replaceChildren(); target.hidden = !connectors.length;
     for (const connector of connectors) {
-      const id = text(connector.id,200), connected = connector.status === 'connected';
+      const id = text(connector.id,200), connected = (connector.connection || connector.status) === 'connected';
       const el = button('','auth-dot',{className:'auth-dot',id,key:`auth-${id}`});
       el.dataset.status = connected ? 'connected' : 'pending';
       el.title = `${connector.name || id} · ${connectorLabel(connector)}` + (connected ? '' : '（点击一键连接/授权）');
@@ -874,10 +898,15 @@
       card.dataset.connector = id;
       const name = node('h2','connector-name'); name.append(icon(sourceKind(id)),document.createTextNode(text(connector.name) || id)); header.append(name,node('span','connector-status',connectorLabel(connector))); card.append(header);
       card.append(paragraph(connector.summary || connector.description || '此来源尚未提供连接说明。'));
+      // C-11 内容态副文案：连接正常但有内容失效时，单独指出（不污染连接态判定）。
+      const cov = record(connector.coverage);
+      if ((connector.connection || '') === 'connected' && cov.level === 'partial' && cov.broken > 0) {
+        card.append(paragraph(`${cov.broken} 个追踪项需要处理（如旧标签页已关闭）；连接本身正常。`,'field-help'));
+      }
       if (connector.error) card.append(paragraph(connector.error,'form-error'));
       const actions = node('div','detail-actions');
-      // 按钮反映“是否真的连接上”，不是“是否启用”：没连上就一直显示“开启连接”，点击会重新探测并尝试完成。
-      const isConnected = connector.status === 'connected';
+      // 按钮反映“是否真的连接上”（二维状态里的连接态），不是“是否启用”：没连上就一直显示“开启连接”。
+      const isConnected = (connector.connection || connector.status) === 'connected';
       if (connector.enabled || connector.status!=='unsupported') actions.append(button(isConnected?'关闭连接':connector.status === 'permission_required'?'开启并授权':'开启连接','connector-toggle',{className:isConnected?'secondary-button':'primary-button',id,key:`connector-${id}`}));
       if (safeURL(connector.helpUrl)) { const help = button('连接帮助','evidence-open',{icon:'arrow-up-right',className:'text-button'}); help.dataset.url = safeURL(connector.helpUrl); actions.append(help); }
       if (actions.childNodes.length) card.append(actions);

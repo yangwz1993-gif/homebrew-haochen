@@ -29,6 +29,9 @@ from haochen_app.dashboard.browser_host import (
 )
 from haochen_app.secure_storage import atomic_write_private
 
+# 已关闭标签页超过该时长即归档：不再参与连接状态降级（B-9，旧账不许拖黄现在的卡片）。
+CLOSED_ARCHIVE_AFTER = 12 * 3600
+
 MESSAGES = {
     "available": "已读取授权页面的主框架文字；图片、跨域框架及未加载内容不在本次范围内",
     "permission_required": "此网站的读取授权已撤回或尚未授予，请在 Chrome 扩展中授权",
@@ -212,6 +215,9 @@ class BrowserAdapter:
             if now - row["checked"] > RETENTION_SECONDS:
                 continue
             status = self._status(row, now)
+            # 保质期（B-9）：已关闭的标签页超过 12 小时属「历史已结束」，不再把整体
+            # 连接拖成「能力受限」；事件本身保留在动态里如实展示。
+            archived = status == "tab_closed" and now - row["checked"] > CLOSED_ARCHIVE_AFTER
             events.append(
                 {
                     "id": "browser:" + row["id"],
@@ -221,6 +227,7 @@ class BrowserAdapter:
                     "summary": row["content"][:180] if status == "available" and row["content"] else MESSAGES[status],
                     "fingerprint": row["digest"],
                     "state": status,
+                    "archived": archived,
                     "updatedAt": iso_time(row["updated"]),
                     "checkedAt": iso_time(row["checked"]),
                     "target": source_target(row),
@@ -241,7 +248,7 @@ class BrowserAdapter:
                 }
             )
         status = "connected" if connected else ("disconnected" if session else "not_connected")
-        if connected and any(event["state"] != "available" for event in events):
+        if connected and any(event["state"] != "available" and not event.get("archived") for event in events):
             status = "partial"
         message = (
             "Chrome 已连接；仅追踪在扩展中明确选择的页面"

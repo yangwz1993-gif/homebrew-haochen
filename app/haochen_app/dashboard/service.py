@@ -20,6 +20,16 @@ from .tracking import SummaryWorker, daily_report, refresh_track
 
 NAMES = {"otty": "Otty", "browser": "Chrome", "calendar": "日历", "wechat": "微信", "hi": "Hi"}
 
+# C-11 二维状态：内容态的「失效」按来源定义（连接态由适配器 status 映射）。
+# 归档（archived，如关闭超 12h 的旧追踪页）与过期（stale）不参与失效计数。
+_COVERAGE_BROKEN = {
+    "browser": {"tab_closed", "suspended", "target_changed", "permission_required", "error", "failed"},
+    "otty": {"unknown"},
+    "hi": {"error", "failed", "permission_required"},
+    "wechat": {"error", "failed", "permission_required"},
+    "calendar": {"error", "failed", "permission_required"},
+}
+
 
 class DashboardService(QObject):
     changed = pyqtSignal()
@@ -175,8 +185,29 @@ class DashboardService(QObject):
                       "pending": "unavailable", "not_connected": "unavailable",
                       "disconnected": "unavailable"}.get(status, status)
             message = raw.get("message", "准备连接" if enabled else "尚未连接；点击后按需授权")
+            # 二维状态（C-11）：连接态只管管道活没活（partial 也是已连接）；
+            # 内容态只管追踪的东西还产不产出。两者分离，互不污染。
+            connection = "disabled" if not enabled else {
+                "ready": "connected", "connected": "connected", "partial": "connected",
+                "not_running": "unavailable", "pending": "unavailable",
+                "not_connected": "unavailable", "disconnected": "unavailable",
+                "error": "error", "permission_required": "permission_required",
+            }.get(raw.get("status", "pending"), raw.get("status", "pending"))
+            source_events = [e for e in state["events"] if e.get("source") == identifier]
+            if identifier == "otty":
+                # 有 agent 但未上报生命周期才算失效；无 agent 的普通终端不算
+                broken = [e for e in source_events
+                          if e.get("reasonCode") == "lifecycle_not_reported" and not e.get("stale")]
+            else:
+                broken_states = _COVERAGE_BROKEN.get(identifier, {"error", "failed"})
+                broken = [e for e in source_events
+                          if (e.get("state") or e.get("status")) in broken_states
+                          and not e.get("stale") and not e.get("archived")]
+            coverage = {"total": len(source_events), "broken": len(broken),
+                        "level": "partial" if broken else ("full" if source_events else "empty")}
             connector = {"id": identifier, "name": NAMES[identifier], "enabled": enabled,
                          "status": status, "summary": message, "checkedAt": raw.get("checkedAt"),
+                         "connection": connection, "coverage": coverage,
                          "hasConnected": identifier in self._seen_connected,
                          "checking": identifier in self.active or (
                              identifier == "calendar" and self._calendar_selection_generation is not None)}
