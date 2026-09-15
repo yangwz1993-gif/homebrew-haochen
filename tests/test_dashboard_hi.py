@@ -249,3 +249,46 @@ def test_store_keeps_at_me_message(tmp_path):
     event = store.snapshot()["events"][0]
     assert event["source"] == "hi"
     assert event["id"] == "hi:msg:u1"
+
+
+def _msg(mid, sender, sender_id, content, minutes_ago, chat):
+    ts = (datetime.now().astimezone() - timedelta(minutes=minutes_ago)).isoformat(timespec="seconds")
+    return {"messageId": mid, "senderName": sender, "senderId": sender_id,
+            "content": content, "sendTime": ts, "chatId": chat}
+
+
+def test_unreplied_private_chat_detected():
+    """未回私聊：两人会话且最后一条是对方发的才报；已回/群聊/机器人都不报。"""
+    responses = {
+        "search:me": IDENTITY,
+        "calendar:get-user-schedules": [{"scheduleList": [], "hasDetailPermission": True}],
+        "search:message": {"items": [
+            _msg("m1", "赵咪", "zhaomi@xiaohongshu.net", "帮我看下", 60, "CHAT_A"),  # 私聊·对方最新 → 未回
+            _msg("m2", "对方", "other@xiaohongshu.net", "在吗", 50, "CHAT_B"),
+            _msg("m3", "我", "user@xiaohongshu.com", "在的", 40, "CHAT_B"),          # 私聊·我最新 → 已回
+            _msg("m4", "甲", "a@xiaohongshu.net", "x", 30, "CHAT_C"),
+            _msg("m5", "乙", "b@xiaohongshu.net", "y", 25, "CHAT_C"),
+            _msg("m6", "丙", "c@xiaohongshu.net", "z", 20, "CHAT_C"),                # 三人会话 → 群聊
+            _msg("m7", "考勤排班", "xxx@bot.com", "提醒", 10, "CHAT_D"),              # 机器人
+        ]},
+    }
+    result = adapter(responses).snapshot()
+    unreplied = [e for e in result["events"] if e.get("reasonCode") == "unreplied_private"]
+    assert [e["chatId"] for e in unreplied] == ["CHAT_A"]
+    assert "未回私聊" in unreplied[0]["title"] and "赵咪" in unreplied[0]["title"]
+    assert unreplied[0]["status"] == "needs_attention"
+    # 判定依据如实标注（推断式，非官方未读数）
+    assert any("推断式" in ev.get("text", "") for ev in unreplied[0]["evidence"])
+
+
+def test_unreplied_empty_when_i_replied_last():
+    responses = {
+        "search:me": IDENTITY,
+        "calendar:get-user-schedules": [{"scheduleList": [], "hasDetailPermission": True}],
+        "search:message": {"items": [
+            _msg("m1", "赵咪", "zhaomi@xiaohongshu.net", "看下", 60, "CHAT_A"),
+            _msg("m2", "我", "user@xiaohongshu.com", "看了", 30, "CHAT_A"),
+        ]},
+    }
+    result = adapter(responses).snapshot()
+    assert not [e for e in result["events"] if e.get("reasonCode") == "unreplied_private"]

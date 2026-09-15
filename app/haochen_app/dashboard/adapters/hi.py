@@ -209,6 +209,70 @@ class HiAdapter:
     def _cli(self) -> str | None:
         return self._explicit_cli or _find_cli()
 
+    def _unreplied(self, cli: str, email: str, reference: datetime) -> list[dict]:
+        """私聊未回（推断式，非官方未读数）：两人会话中最后一条消息是对方发的。
+
+        判定规则（实测校准过）：
+        - 会话窗口内发过消息的「人类账号」≤ 2 个（我 + 对方）≈ 私聊；≥3 个算群聊不拦
+        - 机器人/服务号发送人（senderId 以 @bot.com 结尾）不参与
+        - 最后一条消息非我所发 → 未回
+        只读；结果会随「我回复了」或「对方又发来新消息」自动更新。
+        """
+        end = int(reference.timestamp() * 1000)
+        start = end - 24 * 3600 * 1000
+        data = self._runner(cli, "search:message", "--message-include-chat-member", email,
+                            "--message-send-time-stamp-start", str(start),
+                            "--message-send-time-stamp-end", str(end), "--page-size", "50")
+        items = data.get("items", []) if isinstance(data, dict) else []
+        by_chat: dict[str, list[dict]] = {}
+        for msg in items:
+            if not isinstance(msg, dict):
+                continue
+            cid = _text(msg.get("chatId"), 120)
+            if cid:
+                by_chat.setdefault(cid, []).append(msg)
+        out: list[dict] = []
+        for cid, msgs in by_chat.items():
+            valid = [m for m in msgs if isinstance(m, dict)]
+            human_senders = {
+                str(m.get("senderId", "")).lower()
+                for m in valid if str(m.get("senderId", "")).strip()
+                and not str(m.get("senderId", "")).lower().endswith("@bot.com")
+            }
+            others = human_senders - {email.lower()}
+            if not others or len(human_senders) > 2:
+                continue  # 只有我在说话，或三人以上说过话（群聊）
+            valid.sort(key=lambda m: str(m.get("sendTime") or ""))
+            last = valid[-1]
+            if str(last.get("senderId", "")).lower() == email.lower():
+                continue  # 最后一条是我发的 → 已回
+            sender = _text(last.get("senderName"), 40) or "对方"
+            sent = _parse_iso(last.get("sendTime"))
+            when = sent.strftime("%m-%d %H:%M") if sent else _text(last.get("sendTime"), 40)
+            full = _text(last.get("content"), 400)
+            fingerprint_key = _text(last.get("messageId"), 120) or _text(last.get("sendTime"), 40)
+            out.append({
+                "id": f"hi:unreplied:{cid}",
+                "sourceId": f"hi:unreplied:{cid}",
+                "title": f"{sender}（未回私聊）",
+                "state": "needs_attention",
+                "status": "needs_attention",
+                "summary": _text(last.get("content"), 120) or "对方发来消息，你还没回",
+                "reasonCode": "unreplied_private",
+                "fingerprint": f"unreplied:{cid}:{fingerprint_key}",
+                "updatedAt": now(),
+                "evidence": [
+                    {"label": "发送人", "text": sender},
+                    {"label": "时间", "text": when},
+                    {"label": "消息", "text": full},
+                    {"label": "判定", "text": "推断式：两人会话中最后一条为对方所发；非官方未读数"},
+                ],
+                "chatId": cid,
+            })
+        # 最近未回的排前面
+        out.sort(key=lambda e: e["evidence"][1]["text"], reverse=True)
+        return out[:_MAX_MSGS]
+
     def _schedules(self, cli: str, reference: datetime) -> list[dict]:
         begin, end = _today_window()
         data = self._runner(cli, "calendar:get-user-schedules",
@@ -332,6 +396,10 @@ class HiAdapter:
         except HiError:
             followups, partial = [], True
         try:
+            unreplied = self._unreplied(cli, email, reference)
+        except HiError:
+            unreplied, partial = [], True
+        try:
             schedule_events = self._schedules(cli, reference)
         except HiError:
             schedule_events, partial = [], True
@@ -361,6 +429,12 @@ class HiAdapter:
                 # Precise jump: open this exact conversation in Hi when we know it.
                 event["target"] = {**target, "chatId": msg["chatId"]} if msg.get("chatId") else target
             events.append(event)
+        # 未回私聊紧跟 @ 消息之后（同样需要处理的会话类信号）
+        for item in unreplied:
+            event = dict(item)
+            if target:
+                event["target"] = {**target, "chatId": item["chatId"]}
+            events.append(event)
         if target:
             for schedule in schedule_events:
                 schedule["target"] = target
@@ -369,10 +443,13 @@ class HiAdapter:
         summary_bits = []
         if followups:
             summary_bits.append(f"{len(followups)} 条 @ 你的消息")
+        if unreplied:
+            summary_bits.append(f"{len(unreplied)} 条未回私聊")
         if schedule_events:
             summary_bits.append(f"今日 {len(schedule_events)} 个待跟进日程")
-        headline = "、".join(summary_bits) if summary_bits else "暂无 @ 你的消息或今日日程"
-        message = f"已连接 Hi：{headline}。只聚合 @ 你的消息与今日日程，不含群聊其他消息，也不代表真实未读数。"
+        headline = "、".join(summary_bits) if summary_bits else "暂无 @ 你的消息、未回私聊或今日日程"
+        message = (f"已连接 Hi：{headline}。聚合 @ 你的消息、未回私聊（推断式：两人会话最后一条为对方所发）"
+                   f"与今日日程，不含群聊其他消息，也不代表真实未读数。")
         # Only downgrade to "partial" when we truly got nothing; if any signal
         # loaded, the connector is connected (green), with a soft refresh note.
         if partial and not events:
@@ -390,7 +467,7 @@ class HiAdapter:
             events = [{
                 "id": "hi:none", "sourceId": "hi:none", "title": "Hi",
                 "state": "available", "status": "available",
-                "summary": "当前没有 @ 你的待处理消息。",
+                "summary": "当前没有 @ 你的消息或未回私聊。",
                 "reasonCode": "empty", "fingerprint": "hi:none",
                 "updatedAt": checked, "evidence": note,
             }]
