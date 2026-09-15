@@ -1,6 +1,6 @@
-# v0.6.2-beta.2 本地验收清单
+# v0.6.2-beta.3 本地验收清单
 
-> 在 0.6.2-beta.1 基础上继续：内网模型（CodeWiz）应用内接入、Hi 精准跳转、hi 探测覆盖、连接卡片交互、预装 Hi 技能。**所有者明确授权内部 Homebrew 分发**（自签、未经 Apple 公证，仅面向内部同事试用）；**未授权面向公众的公证发布**。上一轮记录见 [v0.6.2-beta.1 之前的清单历史]。
+> 在 0.6.2-beta.2 基础上集中修复七项用户视角问题：Hi 空占位覆盖降级态、应用动态列表增量渲染（消除抖动）、Otty 分发闭环（CW 目录探测 + 版本门禁 + 文档前置）、模型切换锁死修复与排队接续、刘海对齐 MioIsland 动效（hover 展开 + 弹簧形变 + 交叉淡化）、补丁债偿还、git 操作提速（默认模型切 deepseek-v4-flash-0731-baidu + 思考档调低 + 浏览器三原语工具化 + 空回复兜底）。**所有者明确授权内部 Homebrew 分发**（自签、未经 Apple 公证，仅面向内部同事试用）；**未授权面向公众的公证发布**。上一轮记录见 v0.6.2-beta.2 清单。
 
 所有者明确选择继续沿用 legacy DMG 路线并**授权更新内部 Homebrew tap（GitHub Release + Cask）供内部安装**；本包未经 Apple 公证，必须使用稳定自签身份（`haochen Local Signing`），禁止回落 ad-hoc，也不得描述为 Developer ID 或 Notarized。打包与签名在具备该身份的所有者机器上完成，不在无身份的新机上回落 ad-hoc。面向公众的公证渠道（Developer ID + notarization）本轮仍未授权、未执行。
 
@@ -13,12 +13,13 @@
 
 ## 本机交付门禁
 
-- [x] 完成 `make check`：Python 813 passed / 1 opt-in skipped，Node 42/42。
-- [x] 用 legacy 模式重建 DMG，`scripts/version.py render-cask --legacy` 生成 Cask，sha256 与 DMG 一致。
-- [x] 核对 App / 内嵌 VERSION / DMG 版本一致（SemVer 0.6.2-beta.2，Apple 0.6.2 / build 2，扩展 0.6.2.2）。
-- [x] 替换安装：移除旧 App，安装并启动新包；稳定自签身份跨重装保权限。
-- [x] 内网模型应用内校验实测（真实端点 `/chat/completions` 200）、Hi 精准跳转端到端实测（单聊/群聊/应用号）。
-- [ ] 所有者对本内部版本的最终体验验收（进行中）。
+- [x] 完成 `make check`：Python 853 passed（含新增 test integrity ratchet），Node 43/43。
+- [ ] 用 legacy 模式重建 DMG，`scripts/version.py render-cask --legacy` 生成 Cask，sha256 与 DMG 一致。
+- [ ] 核对 App / 内嵌 VERSION / DMG 版本一致（SemVer 0.6.2-beta.3，Apple 0.6.2 / build 3，扩展 0.6.2.3）。
+- [ ] 替换安装：移除旧 App，安装并启动新包；稳定自签身份跨重装保权限。
+- [ ] 默认模型实测（`deepseek-v4-flash-0731-baidu` 应答延迟显著优于 glm-5.3-flash）。
+- [ ] 所有者逐项过真机冒烟清单（`evidence/真机冒烟清单_0.6.2-beta.3.md`，抖动/刘海/模型切换/Hi 占位/速度）并签字。
+- [ ] 所有者对本内部版本的最终体验验收。
 
 ## 面向公众的正式发布门禁（本轮不执行）
 
