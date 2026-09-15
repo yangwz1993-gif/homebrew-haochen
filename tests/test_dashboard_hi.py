@@ -20,11 +20,20 @@ def _iso(delta_minutes):
     return (datetime.now().astimezone() + timedelta(minutes=delta_minutes)).isoformat(timespec="seconds")
 
 
-def make_runner(responses):
-    """Dispatch by the hi subcommand (first arg); values may be data or Exception."""
+def make_runner(responses, calls=None):
+    """Dispatch by the hi subcommand (first arg); values may be data or Exception.
+    定向拉取（--chat-ids <id>）按 "chat:<id>" 键取 fixture；calls 传入列表可记录调用。"""
 
     def runner(_cli, *args):
+        if calls is not None:
+            calls.append(args)
         cmd = args[0]
+        if cmd == "search:message" and "--chat-ids" in args:
+            cid = args[args.index("--chat-ids") + 1]
+            value = responses.get(f"chat:{cid}", {"items": []})
+            if isinstance(value, Exception):
+                raise value
+            return value
         if cmd not in responses:
             if cmd == "search:message":
                 return {"items": []}  # default: no follow-up messages
@@ -39,8 +48,8 @@ def make_runner(responses):
     return runner
 
 
-def adapter(responses):
-    return module.HiAdapter(cli_path="/fake/hi", runner=make_runner(responses))
+def adapter(responses, calls=None):
+    return module.HiAdapter(cli_path="/fake/hi", runner=make_runner(responses, calls))
 
 
 def test_missing_cli_is_not_running(monkeypatch):
@@ -258,18 +267,29 @@ def _msg(mid, sender, sender_id, content, minutes_ago, chat):
 
 
 def test_unreplied_private_chat_detected():
-    """未回私聊：两人会话且最后一条是对方发的才报；已回/群聊/机器人都不报。"""
+    """未回私聊（两步法）：定向验证为两人会话且最后一条是对方发的才报；
+    已回/群聊（定向拉出人多于 2）/机器人都不报。"""
     responses = {
         "search:me": IDENTITY,
         "calendar:get-user-schedules": [{"scheduleList": [], "hasDetailPermission": True}],
         "search:message": {"items": [
-            _msg("m1", "赵咪", "zhaomi@xiaohongshu.net", "帮我看下", 60, "CHAT_A"),  # 私聊·对方最新 → 未回
+            _msg("m1", "赵咪", "zhaomi@xiaohongshu.net", "帮我看下", 60, "CHAT_A"),
             _msg("m2", "对方", "other@xiaohongshu.net", "在吗", 50, "CHAT_B"),
-            _msg("m3", "我", "user@xiaohongshu.com", "在的", 40, "CHAT_B"),          # 私聊·我最新 → 已回
+            _msg("m3", "我", "user@xiaohongshu.com", "在的", 40, "CHAT_B"),
             _msg("m4", "甲", "a@xiaohongshu.net", "x", 30, "CHAT_C"),
-            _msg("m5", "乙", "b@xiaohongshu.net", "y", 25, "CHAT_C"),
-            _msg("m6", "丙", "c@xiaohongshu.net", "z", 20, "CHAT_C"),                # 三人会话 → 群聊
-            _msg("m7", "考勤排班", "xxx@bot.com", "提醒", 10, "CHAT_D"),              # 机器人
+            _msg("m7", "考勤排班", "xxx@bot.com", "提醒", 10, "CHAT_D"),
+        ]},
+        # 第二步定向验证的全量消息流
+        "chat:CHAT_A": {"items": [
+            _msg("m1", "赵咪", "zhaomi@xiaohongshu.net", "帮我看下", 60, "CHAT_A"),
+        ]},
+        "chat:CHAT_C": {"items": [  # 定向拉出 3 个真人 → 群聊，别误判
+            _msg("g1", "甲", "a@xiaohongshu.net", "x", 30, "CHAT_C"),
+            _msg("g2", "乙", "b@xiaohongshu.net", "y", 25, "CHAT_C"),
+            _msg("g3", "丙", "c@xiaohongshu.net", "z", 20, "CHAT_C"),
+        ]},
+        "chat:CHAT_D": {"items": [  # 纯机器人 → 排除
+            _msg("b1", "考勤排班", "xxx@bot.com", "提醒", 10, "CHAT_D"),
         ]},
     }
     result = adapter(responses).snapshot()
@@ -277,11 +297,12 @@ def test_unreplied_private_chat_detected():
     assert [e["chatId"] for e in unreplied] == ["CHAT_A"]
     assert "未回私聊" in unreplied[0]["title"] and "赵咪" in unreplied[0]["title"]
     assert unreplied[0]["status"] == "needs_attention"
-    # 判定依据如实标注（推断式，非官方未读数）
-    assert any("推断式" in ev.get("text", "") for ev in unreplied[0]["evidence"])
+    assert any("两步法" in ev.get("text", "") for ev in unreplied[0]["evidence"])
 
 
 def test_unreplied_empty_when_i_replied_last():
+    """粗筛层就拦掉（我最后发言 → 已回），不再做定向验证。"""
+    calls = []
     responses = {
         "search:me": IDENTITY,
         "calendar:get-user-schedules": [{"scheduleList": [], "hasDetailPermission": True}],
@@ -290,5 +311,26 @@ def test_unreplied_empty_when_i_replied_last():
             _msg("m2", "我", "user@xiaohongshu.com", "看了", 30, "CHAT_A"),
         ]},
     }
-    result = adapter(responses).snapshot()
+    result = adapter(responses, calls=calls).snapshot()
     assert not [e for e in result["events"] if e.get("reasonCode") == "unreplied_private"]
+    # 粗筛生效：没有发生任何定向验证调用
+    assert not any("--chat-ids" in args for args in calls)
+
+
+def test_unreplied_handles_naive_timestamps():
+    """回归：hi 返回的无时区时间戳不得导致比较崩溃（实测发现）。"""
+    naive = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")  # 无时区
+    responses = {
+        "search:me": IDENTITY,
+        "calendar:get-user-schedules": [{"scheduleList": [], "hasDetailPermission": True}],
+        "search:message": {"items": [
+            {"messageId": "m1", "senderName": "赵咪", "senderId": "zhaomi@xiaohongshu.net",
+             "content": "看下", "sendTime": naive, "chatId": "CHAT_A"},
+        ]},
+        "chat:CHAT_A": {"items": [
+            {"messageId": "m1", "senderName": "赵咪", "senderId": "zhaomi@xiaohongshu.net",
+             "content": "看下", "sendTime": naive, "chatId": "CHAT_A"},
+        ]},
+    }
+    result = adapter(responses).snapshot()
+    assert [e["chatId"] for e in result["events"] if e.get("reasonCode") == "unreplied_private"] == ["CHAT_A"]

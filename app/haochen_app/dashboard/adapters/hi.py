@@ -23,7 +23,7 @@ import json
 import os
 import signal
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..store import now
@@ -210,13 +210,13 @@ class HiAdapter:
         return self._explicit_cli or _find_cli()
 
     def _unreplied(self, cli: str, email: str, reference: datetime) -> list[dict]:
-        """私聊未回（推断式，非官方未读数）：两人会话中最后一条消息是对方发的。
+        """私聊未回（两步法，推断式，非官方未读数）。
 
-        判定规则（实测校准过）：
-        - 会话窗口内发过消息的「人类账号」≤ 2 个（我 + 对方）≈ 私聊；≥3 个算群聊不拦
-        - 机器人/服务号发送人（senderId 以 @bot.com 结尾）不参与
-        - 最后一条消息非我所发 → 未回
-        只读；结果会随「我回复了」或「对方又发来新消息」自动更新。
+        第一步「按人搜」找候选会话；第二步对每个候选用 --chat-ids 定向拉该会话的
+        完整消息流，数真实发言人数判定群/私聊（按人搜的全局配额会让群的消息残缺，
+        单步判定会把群误当私聊——实测审批群 11 人发言只命中 1 条）。
+        判定：真实发言人类数 ≤2 且窗口内最后一条非我所发 → 未回私聊。
+        机器人（senderId 以 @bot.com 结尾）全程排除。只读；我回复或对方新消息自动更新。
         """
         end = int(reference.timestamp() * 1000)
         start = end - 24 * 3600 * 1000
@@ -226,26 +226,44 @@ class HiAdapter:
         items = data.get("items", []) if isinstance(data, dict) else []
         by_chat: dict[str, list[dict]] = {}
         for msg in items:
-            if not isinstance(msg, dict):
-                continue
-            cid = _text(msg.get("chatId"), 120)
-            if cid:
-                by_chat.setdefault(cid, []).append(msg)
+            if isinstance(msg, dict) and _text(msg.get("chatId"), 120):
+                by_chat.setdefault(_text(msg["chatId"], 120), []).append(msg)
+        me = email.lower()
+        cutoff = reference - timedelta(hours=24)
         out: list[dict] = []
         for cid, msgs in by_chat.items():
-            valid = [m for m in msgs if isinstance(m, dict)]
-            human_senders = {
+            # 粗筛：窗口内最后一条是我发的 → 已回，不值得定向验证（省一次调用）
+            valid = sorted((m for m in msgs if isinstance(m, dict)),
+                           key=lambda m: str(m.get("sendTime") or ""))
+            if not valid or str(valid[-1].get("senderId", "")).lower() == me:
+                continue
+            # 第二步：定向拉该会话完整消息流，数真实发言人数
+            full = self._runner(cli, "search:message", "--chat-ids", cid, "--page-size", "50")
+            full_items = full.get("items", []) if isinstance(full, dict) else []
+            humans = {
                 str(m.get("senderId", "")).lower()
-                for m in valid if str(m.get("senderId", "")).strip()
+                for m in full_items if isinstance(m, dict)
+                and str(m.get("senderId", "")).strip()
                 and not str(m.get("senderId", "")).lower().endswith("@bot.com")
             }
-            others = human_senders - {email.lower()}
-            if not others or len(human_senders) > 2:
-                continue  # 只有我在说话，或三人以上说过话（群聊）
-            valid.sort(key=lambda m: str(m.get("sendTime") or ""))
-            last = valid[-1]
-            if str(last.get("senderId", "")).lower() == email.lower():
-                continue  # 最后一条是我发的 → 已回
+            if len(humans) > 2:
+                continue  # 群聊（真实发言人数 > 2）
+            recent = []
+            for m in full_items:
+                if not isinstance(m, dict):
+                    continue
+                ts = _parse_iso(m.get("sendTime"))
+                if ts is not None and ts.tzinfo is None:
+                    ts = ts.astimezone()  # 无时区时间戳按本机时区归一（实测 hi 会返回裸格式）
+                if ts and ts >= cutoff:
+                    recent.append(m)
+            recent.sort(key=lambda m: str(m.get("sendTime") or ""))
+            if not recent:
+                continue
+            last = recent[-1]
+            last_sender = str(last.get("senderId", "")).lower()
+            if last_sender == me or last_sender.endswith("@bot.com"):
+                continue  # 已回，或最后一条是机器人
             sender = _text(last.get("senderName"), 40) or "对方"
             sent = _parse_iso(last.get("sendTime"))
             when = sent.strftime("%m-%d %H:%M") if sent else _text(last.get("sendTime"), 40)
@@ -265,12 +283,12 @@ class HiAdapter:
                     {"label": "发送人", "text": sender},
                     {"label": "时间", "text": when},
                     {"label": "消息", "text": full},
-                    {"label": "判定", "text": "推断式：两人会话中最后一条为对方所发；非官方未读数"},
+                    {"label": "判定", "text": "两步法推断（定向验证为两人会话，最后一条对方所发）；非官方未读数"},
                 ],
                 "chatId": cid,
+                "_sort": str(last.get("sendTime") or ""),
             })
-        # 最近未回的排前面
-        out.sort(key=lambda e: e["evidence"][1]["text"], reverse=True)
+        out.sort(key=lambda e: e.pop("_sort"), reverse=True)
         return out[:_MAX_MSGS]
 
     def _schedules(self, cli: str, reference: datetime) -> list[dict]:

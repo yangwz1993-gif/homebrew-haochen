@@ -86,7 +86,7 @@ class DashboardService(QObject):
             if identifier == "calendar":
                 interval = 120
             elif identifier == "hi":
-                interval = 90
+                interval = 60
             elif self.visible or identifier == "otty":
                 interval = 3
             else:
