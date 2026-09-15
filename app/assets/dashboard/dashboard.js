@@ -64,6 +64,22 @@
     return list(events,200).filter(item => item && item.type !== 'calendar' && item.kind !== 'calendar'
       && !(String(item.id || '').startsWith('hi:msg:') && item.unread === false));
   }
+  function injectClearedPlaceholders(events, allEvents) {
+    // F2：某来源的动态全部被已读过滤后，注入「已清空」占位，避免整个模块蒸发。
+    // （目前只有 hi 消息会被已读剔除；占位卡走 reasonCode=empty 的弱化呈现。）
+    const out = list(events,200).slice();
+    const visible = new Set(out.map(e => text(e.source || '')));
+    const injected = {};
+    for (const e of list(allEvents,200)) {
+      const s = text(e.source || '');
+      if (!s || visible.has(s) || injected[s]) continue;
+      if (!String(e.id || '').startsWith('hi:msg:')) continue;
+      injected[s] = true;
+      out.push({id:'hi:cleared', source:'hi', title:'Hi', summary:'@ 你的消息都处理完了。',
+                status:'available', state:'available', reasonCode:'empty', unread:false});
+    }
+    return out;
+  }
   function feedEmptyState(events, received, connected) {
     // 动态区空态占位：有内容时返回 null（绝不应显示空态卡）；空态按连接进度分文案。
     // 抽出为纯函数：空→非空切换的决策可单测（B-10 防回归）。
@@ -274,7 +290,7 @@
       this.pending.clear();
     }
   }
-  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,feedEmptyState,feedTimeBucket,feedEventSignature,computeFeedDiff,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
+  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,feedEmptyState,injectClearedPlaceholders,feedTimeBucket,feedEventSignature,computeFeedDiff,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
   if (typeof module === 'object' && module.exports) module.exports = core;
   global.HaochenDashboardCore = core;
   if (typeof document === 'undefined') return;
@@ -432,7 +448,7 @@
     if (ui.feedEmpty) { ui.feedEmpty.remove(); ui.feedEmpty = null; }
     // A top "需要处理" module (attention/error across all apps) + one module per
     // app, flowed into a 2-column masonry so the whole feed fits one screen.
-    const shown = events.slice(0,80);
+    const shown = injectClearedPlaceholders(events, ui.state.events).slice(0,80);
     const priorityOf = (event) => {
       const st = text(event.status || event.state);
       return event.stale ? '' : ['error','failed','permission_required'].includes(st) ? 'err'

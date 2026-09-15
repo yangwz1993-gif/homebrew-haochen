@@ -33,23 +33,32 @@ def decorate(events, read_versions):
     return result
 
 
+_SOURCE_NAMES = {"hi": "Hi 消息", "otty": "Agent", "browser": "网页", "wechat": "微信", "calendar": "日历"}
+
+
 def activity(events, connectors):
-    """Prioritize actionable states without pretending unknown means working."""
+    """只提醒「未读且待处理」的事，并指名是哪个应用（0.6.2-beta.3 行为变更）。
+
+    旧语义「已读但没解决也继续提醒」会让刘海在零待办时仍挂「等你确认」（误报）；
+    连接类问题不再在刘海常驻提醒（它们持续显示在连接卡片上），避免警报疲劳。
+    """
     reliable = [event for event in events if not event.get("stale")]
-    waiting = [event for event in reliable if event.get("status") in WAITING]
-    errors = [event for event in reliable if event.get("status") in ERRORS]
+    waiting = [event for event in reliable
+               if event.get("status") in WAITING and event.get("unread")]
+    errors = [event for event in reliable
+              if event.get("status") in ERRORS and event.get("unread")]
     unread = [event for event in reliable if event.get("unread") and event.get("status") in RESULTS]
     running = [event for event in reliable if event.get("status") in RUNNING]
-    broken = [connector for connector in connectors if connector.get("enabled") and
-              (connector.get("status") in {"error", "permission_required"}
-               or connector.get("status") == "unavailable" and connector.get("hasConnected"))]
     if waiting:
-        kind, count, label = "attention", sum(bool(item.get("unread")) for item in waiting), "等你确认"
-    elif errors or broken:
-        error_sources = {event.get("source") for event in errors}
-        count = sum(bool(item.get("unread")) for item in errors)
-        count += sum(connector.get("id") not in error_sources for connector in broken)
-        kind, label = "error", "连接需处理"
+        kind, count = "attention", len(waiting)
+        names = []
+        for item in waiting:
+            name = _SOURCE_NAMES.get(item.get("source"), "动态")
+            if name not in names:
+                names.append(name)
+        label = f"{'、'.join(names[:2])}等你处理" if names else "有事项等你处理"
+    elif errors:
+        kind, count, label = "error", len(errors), "有连接需处理"
     elif unread:
         kind, count, label = "new", len(unread), "有新结果"
     elif running:

@@ -949,7 +949,11 @@ def test_collector_exception_invalidates_old_running_state(service_setup):
     assert controller.store.snapshot()["events"][0]["stale"] is True
     assert result["status"] == "error"
     assert "SYNTHETIC-PRIVATE-ERROR" not in str(result)
-    assert controller.state()["activity"]["kind"] == "error"
+    # 行为变更（0.6.2-beta.3）：连接器自身的错误在连接卡片上常驻展示，刘海不常驻提醒；
+    # 卡片上能看到错误状态
+    connector = next(c for c in controller.state()["connectors"] if c["id"] == "otty")
+    assert connector["status"] == "error"
+    assert controller.state()["activity"]["kind"] == "idle"
 
 
 def test_lost_connector_remembers_was_connected_until_explicit_disconnect(service_setup):
@@ -960,7 +964,10 @@ def test_lost_connector_remembers_was_connected_until_explicit_disconnect(servic
     controller.adapters["otty"] = SimpleNamespace(snapshot=lambda: {"status": "not_running", "events": []})
     controller._collect("otty")
     jobs[1][1](jobs[1][0](), None)
-    assert controller.state()["activity"]["kind"] == "error"
+    # 行为变更（0.6.2-beta.3）：连接器掉线不再在刘海常驻提醒；连接卡片显示「暂不可用」
+    connector = next(c for c in controller.state()["connectors"] if c["id"] == "otty")
+    assert connector["connection"] == "unavailable"
+    assert controller.state()["activity"]["kind"] == "idle"
     controller.enable("otty", False)
     assert controller.state()["activity"]["kind"] == "idle"
 

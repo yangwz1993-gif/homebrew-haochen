@@ -99,9 +99,11 @@ def test_stale_events_never_claim_current_work_or_new_results():
     assert attention.activity([{"status": "processing", "stale": True, "unread": True}], [])["kind"] == "idle"
 
 
-def test_connector_permission_problem_remains_visible_without_disclosing_contents():
+def test_connector_permission_problem_stays_on_card_not_notch():
+    """行为变更（0.6.2-beta.3）：连接权限问题改由连接卡片持续展示，刘海不再常驻提醒；
+    且任何地方都不得泄露摘要内容。"""
     state = attention.activity([], [{"enabled": True, "status": "permission_required", "summary": "SECRET"}])
-    assert state["kind"] == "error"
+    assert state["kind"] == "idle"
     assert "SECRET" not in json.dumps(state)
 
 
@@ -119,17 +121,35 @@ def test_browser_reading_is_working_not_a_result():
     assert attention.activity([{"status": "reading", "unread": True}], [])["kind"] == "running"
 
 
-def test_lost_previously_connected_source_is_actionable_but_unconfigured_is_quiet():
+def test_lost_connector_does_not_nag_at_notch():
+    """行为变更（0.6.2-beta.3）：连接中断不再在刘海常驻提醒（警报疲劳）；
+    它持续显示在连接卡片上。未配置的连接器保持安静。"""
     connector = {"enabled": True, "status": "unavailable", "hasConnected": False}
     assert attention.activity([], [connector])["kind"] == "idle"
     connector["hasConnected"] = True
-    assert attention.activity([], [connector])["kind"] == "error"
+    assert attention.activity([], [connector])["kind"] == "idle"
 
 
-@pytest.mark.parametrize("status,kind", [("awaiting", "attention"), ("error", "error")])
-def test_read_does_not_mean_resolved(status, kind):
+@pytest.mark.parametrize("status", ["awaiting", "error"])
+def test_read_means_no_nagging(status):
+    """行为变更（0.6.2-beta.3）：已读 = 不再提醒。旧语义「已读未解决仍提醒」会让
+    刘海在零待办时仍挂「等你确认」（误报）；现在已读项不再驱动提醒。"""
     value = attention.activity([{"status": status, "unread": False}], [])
-    assert value["kind"] == kind and value["count"] == 0
+    assert value["kind"] == "idle" and value["count"] == 0
+
+
+def test_attention_label_names_the_source_app():
+    """提醒文案必须指名是哪个应用（用户在刘海就要知道去哪处理）。"""
+    state = attention.activity(
+        [{"status": "needs_attention", "unread": True, "source": "hi"}], [])
+    assert state["kind"] == "attention" and "Hi" in state["label"]
+    state = attention.activity(
+        [{"status": "awaiting", "unread": True, "source": "otty"}], [])
+    assert "Agent" in state["label"]
+    state = attention.activity(
+        [{"status": "awaiting", "unread": True, "source": "hi"},
+         {"status": "needs_attention", "unread": True, "source": "calendar"}], [])
+    assert "Hi" in state["label"] and "日历" in state["label"]
 
 
 def test_failed_read_save_rolls_back_and_can_retry(tmp_path, monkeypatch):
@@ -161,3 +181,9 @@ def test_calendar_duration_change_has_its_own_unread_version_and_history(tmp_pat
     assert current["unread"] is True and current["attentionVersion"] != previous["attentionVersion"]
     assert store.mark_read(previous["id"], previous["attentionVersion"])["acknowledged"] is False
     assert store.snapshot()["history"][-1]["changeType"] == "changed"
+
+
+def test_unread_error_event_still_shows_at_notch():
+    """保留语义：未读的错误类动态仍在刘海提醒（连接卡片和事件是两个层面）。"""
+    state = attention.activity([{"status": "error", "unread": True, "source": "browser"}], [])
+    assert state["kind"] == "error" and state["count"] == 1

@@ -348,3 +348,21 @@ test('空态占位：有内容时必须返回 null（空→非空切换不残留
   assert.equal(ui.feedEmptyState([], true, false).title, '给重要的消息，留一个位置。');
   assert.equal(ui.feedEmptyState([], false, true).title, '正在连接你的本机服务');
 });
+
+test('已读清空的来源保留「已清空」占位，不再整模块蒸发',() => {
+  const all = [
+    {id:'hi:msg:1', source:'hi', unread:false, status:'available'},
+    {id:'otty:p_1', source:'otty', unread:false, status:'idle'},
+  ];
+  const filtered = ui.feedEvents(all);  // hi:msg 已读被剔除
+  assert.deepEqual(filtered.map(e=>e.id), ['otty:p_1']);
+  const shown = ui.injectClearedPlaceholders(filtered, all);
+  const hi = shown.find(e=>e.source==='hi');
+  assert.ok(hi && hi.id==='hi:cleared' && hi.reasonCode==='empty', 'hi 模块应有「已清空」占位');
+  assert.match(hi.summary, /都处理完了/);
+  // 还有可见 hi 内容时不注入
+  const withUnread = [{id:'hi:msg:2', source:'hi', unread:true, status:'needs_attention'}];
+  assert.deepEqual(ui.injectClearedPlaceholders(withUnread, withUnread).map(e=>e.id), ['hi:msg:2']);
+  // 从未有过 hi 事件不注入
+  assert.deepEqual(ui.injectClearedPlaceholders([], []).map(e=>e.id), []);
+});
