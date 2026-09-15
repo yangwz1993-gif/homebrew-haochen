@@ -30,6 +30,8 @@ def test_failed_validation_does_not_replace_existing_key(qtbot, tmp_path: Path) 
     )
     qtbot.addWidget(wizard)
     page = wizard.key_page
+    # 0.6.2-beta.3：默认档已切为 codewiz 内网；本用例测外网 DeepSeek 的 Key 流程，显式选档。
+    page.mode_combo.setCurrentIndex(page.mode_combo.findData("deepseek"))
     page.key_edit.setText("new-private-value")
     page.verify_button.click()
     qtbot.waitUntil(lambda: page.verify_button.isEnabled(), timeout=1000)
@@ -46,6 +48,8 @@ def test_successful_validation_saves_keychain_reference_only(qtbot, tmp_path: Pa
     )
     qtbot.addWidget(wizard)
     page = wizard.key_page
+    # 默认档已切为 codewiz 内网；本用例测外网 DeepSeek 的 Keychain 引用，显式选档。
+    page.mode_combo.setCurrentIndex(page.mode_combo.findData("deepseek"))
     page.key_edit.setText("new-private-value")
     page.verify_button.click()
     qtbot.waitUntil(page.isComplete, timeout=1000)
@@ -98,7 +102,8 @@ def test_codewiz_fill_key_and_validate_writes_credentials(qtbot, tmp_path: Path,
     qtbot.waitUntil(page.isComplete, timeout=1000)
     data = json.loads((store.home / "codewiz.json").read_text(encoding="utf-8"))
     assert data == {"apiKey": "QST-abc123", "email": "me@xiaohongshu.com"}
-    assert store.default_model() == ("codewiz", "kimi-k3")
+    # 0.6.2-beta.3：codewiz 默认模型切为 deepseek-v4-flash-0731-baidu（实测最快档）
+    assert store.default_model() == ("codewiz", "deepseek-v4-flash-0731-baidu")
 
 
 def test_codewiz_gemini_selection_validates_via_openai_and_routes(qtbot, tmp_path: Path, monkeypatch) -> None:
@@ -161,6 +166,10 @@ def test_permissions_are_requested_only_by_separate_user_actions(qtbot, tmp_path
 def test_interrupted_wizard_resumes_and_completion_persists(qtbot, tmp_path: Path) -> None:
     store, _credentials = make_store(tmp_path)
     store.set_key("deepseek", "existing-private-value")
+    # 0.6.2-beta.3：默认档是 codewiz 内网；本用例只有 deepseek Key，把默认模型设为
+    # deepseek 使 Key 页完整（否则恢复逻辑会按 codewiz 未配置把人留在 Key 页——这也是
+    # 期望行为，但本用例测的是「页面位置恢复」）。
+    store.set_default_model("deepseek", "deepseek-v4-flash")
     wizard = onboarding.OnboardingWizard(store)
     qtbot.addWidget(wizard)
     wizard.show()

@@ -55,6 +55,8 @@ def test_key_authorization_is_explicit_retryable_and_session_scoped(qtbot, tmp_p
     store._save("auth.json", {"deepseek": {"type": "api_key", "key": "$HAOCHEN_DEEPSEEK_API_KEY"}})
     page = KeyPage(store, lambda *_: key_validation.ValidationResult(True, "ok"))
     qtbot.addWidget(page)
+    # 0.6.2-beta.3：默认档是 codewiz 内网；本用例测 deepseek 的 Keychain 授权，显式选档。
+    page.mode_combo.setCurrentIndex(page.mode_combo.findData("deepseek"))
     page.show()
     assert page.verify_button.text() == "连接模型"
     assert not hasattr(page, "authorize_button")
@@ -108,6 +110,8 @@ def test_onboarding_save_explicitly_allows_keychain_authorization(qtbot, tmp_pat
     monkeypatch.setattr(store, "set_key", save)
     page = KeyPage(store, lambda *_: key_validation.ValidationResult(True, "ok"))
     qtbot.addWidget(page)
+    # 0.6.2-beta.3：默认档是 codewiz 内网；本用例测 deepseek 的授权写钥，显式选档。
+    page.mode_combo.setCurrentIndex(page.mode_combo.findData("deepseek"))
     page.key_edit.setText("test-only-credential")
     page.verify_button.click()
     qtbot.waitUntil(page.isComplete)

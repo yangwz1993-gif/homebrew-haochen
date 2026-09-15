@@ -335,6 +335,8 @@ def test_custom_mode_never_reuses_deepseek_verification(qtbot, tmp_path: Path) -
         verifier=lambda *_args: validation_module.ValidationResult(True, "ok"),
     )
     qtbot.addWidget(page)
+    # 0.6.2-beta.3：默认档是 codewiz 内网；本用例测 deepseek→custom 的验证隔离，显式选档。
+    page.mode_combo.setCurrentIndex(page.mode_combo.findData("deepseek"))
     assert page.isComplete()
 
     page.mode_combo.setCurrentIndex(page.mode_combo.findData("custom"))

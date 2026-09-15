@@ -88,8 +88,9 @@ def test_default_model_roundtrip_and_effect(tmp_path: Path) -> None:
     store, _ = make_store(tmp_path)
     store.ensure_initialized()
     provider, model = store.default_model()
-    assert provider == "deepseek"
-    assert store.set_default_model("deepseek", "deepseek-v4-pro") == config_module.EFFECT_IMMEDIATE
+    # 0.6.2-beta.3 行为变更：默认模型切换为内网 deepseek-v4-flash-0731-baidu（实测 0.8s）
+    assert (provider, model) == ("codewiz", "deepseek-v4-flash-0731-baidu")
+    assert store.set_default_model("codewiz", "kimi-k3") == config_module.EFFECT_IMMEDIATE
     assert store.set_default_model("moonshot", "k1") == config_module.EFFECT_RESTART
     assert store.default_model() == ("moonshot", "k1")
 
@@ -97,7 +98,8 @@ def test_default_model_roundtrip_and_effect(tmp_path: Path) -> None:
 def test_thinking_level_and_theme(tmp_path: Path) -> None:
     store, _ = make_store(tmp_path)
     store.ensure_initialized()
-    assert store.thinking_level() == "high"
+    # 0.6.2-beta.3 行为变更：默认思考档从 high 调低为 low（桌面伙伴要「快」）
+    assert store.thinking_level() == "low"
     assert store.set_thinking_level("medium") == config_module.EFFECT_IMMEDIATE
     assert store.thinking_level() == "medium"
     with pytest.raises(ValueError):
