@@ -560,6 +560,8 @@ class SettingsWindow(QWidget):
         pid = self._key_pid
         if not pid or self._working:
             return
+        if self._key_edit.isReadOnly() and not self._key_editing:
+            return  # 防窥占位态没有合法保存路径，杜绝占位符被当成真 Key
         candidate = self._key_edit.text().strip()
         if not candidate:
             if self._key_editing:

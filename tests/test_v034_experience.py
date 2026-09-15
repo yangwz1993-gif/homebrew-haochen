@@ -33,6 +33,16 @@ def store_at(tmp_path):
     return store
 
 
+def select_family(window, pid: str) -> None:
+    """把供应商下拉切到包含 pid 的家族项（浏览不写盘）。"""
+    combo = window._provider_combo
+    for i in range(combo.count()):
+        if any(p.id == pid for p in combo.itemData(i)):
+            combo.setCurrentIndex(i)
+            return
+    raise AssertionError(f"family containing {pid} not found")
+
+
 class LockedTestBackend:
     def __init__(self):
         self.calls = 0
@@ -88,6 +98,7 @@ def test_settings_new_key_validation_never_authorizes_old_key(qtbot, tmp_path, m
         calls.append((provider, key))
         return key_validation.ValidationResult(False, "test rejection")
     monkeypatch.setattr(settings_module, "validate_api_key", validate)
+    select_family(window, "deepseek")
     edit, _badge, button = window._key_widgets["deepseek"]
     edit.setText("unsaved-test-draft")
     button.click()
@@ -160,6 +171,7 @@ def test_key_save_does_not_block_gui_and_survives_runtime_refresh(qtbot, tmp_pat
     monkeypatch.setattr(store, "set_key", slow_save)
     monkeypatch.setattr(settings_module, "validate_api_key",
                         lambda *_: key_validation.ValidationResult(True, "ok"))
+    select_family(window, "deepseek")
     edit, badge, button = window._key_widgets["deepseek"]
     edit.setText("test-only-credential")
     window.show()

@@ -269,6 +269,11 @@ def test_settings_does_not_show_connected_until_runtime_ready(qtbot, tmp_path, m
     window = SettingsWindow(store=store, activate=lambda p, m, done: callbacks.append(done))
     qtbot.addWidget(window)
     monkeypatch.setattr(module, "validate_api_key", lambda *_: ValidationResult(True, "ok"))
+    combo = window._provider_combo
+    for i in range(combo.count()):
+        if any(p.id == "deepseek" for p in combo.itemData(i)):
+            combo.setCurrentIndex(i)
+            break
     edit, badge, button = window._key_widgets["deepseek"]
     edit.setText("test-only-key")
     button.click()
@@ -277,10 +282,12 @@ def test_settings_does_not_show_connected_until_runtime_ready(qtbot, tmp_path, m
     assert button.text() == "连接中…" and badge.objectName() != "badgeOk"
     callbacks[0](False, "模型尚未就绪")
     assert not window._working and button.text() == "连接模型"
-    button.click()
+    # Key 已保存但模型未就绪 → 走「重新连接」（授权 + 验证已保存的 Key）
+    reconnect = next(a for a in window._key_more_menu.actions() if a.text() == "重新连接")
+    reconnect.trigger()
     qtbot.waitUntil(lambda: len(callbacks) == 2)
     callbacks[1](True, "ready")
-    assert button.text() == "已连接 ✓" and badge.objectName() == "badgeOk"
+    assert badge.objectName() == "badgeOk" and "已连接" in badge.text()
 
 
 def test_no_prompt_can_bypass_configuration_gate(tmp_path, monkeypatch):

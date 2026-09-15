@@ -8,7 +8,6 @@ import threading
 from pathlib import Path
 
 import pytest
-from PyQt6.QtWidgets import QPushButton, QToolButton
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
@@ -16,7 +15,7 @@ from haochen_app import permissions
 from haochen_app.app_shell import AppShell
 from haochen_app.key_validation import ValidationResult
 from haochen_app.keychain import KeychainError, KeychainInteractionRequired, KeychainStore, MemoryCredentialStore
-from haochen_app.model_connection import CONNECT, CONNECTED, CONNECTING, existing_key_for_connection
+from haochen_app.model_connection import CONNECTED, CONNECTING, existing_key_for_connection
 from haochen_app.onboarding import KeyPage, PermissionPage
 from haochen_app.settings.config_store import ConfigStore
 from haochen_app.settings.settings_window import SettingsWindow
