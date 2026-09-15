@@ -48,7 +48,17 @@ def make_store(tmp_path, backend=None):
     return store
 
 
-def test_same_button_authorizes_then_validates_without_rewriting_old_key(qtbot, tmp_path, monkeypatch):
+def _select_family(window, pid: str) -> None:
+    """把供应商下拉切到包含 pid 的家族项（浏览不写盘）。"""
+    combo = window._provider_combo
+    for i in range(combo.count()):
+        if any(p.id == pid for p in combo.itemData(i)):
+            combo.setCurrentIndex(i)
+            return
+    raise AssertionError(f"family containing {pid} not found")
+
+
+def test_reconnect_authorizes_then_validates_without_rewriting_old_key(qtbot, tmp_path, monkeypatch):
     backend = LockedBackend()
     store = make_store(tmp_path, backend)
     calls = []
@@ -56,33 +66,34 @@ def test_same_button_authorizes_then_validates_without_rewriting_old_key(qtbot, 
     monkeypatch.setattr(store, "set_key", lambda *_a, **_kw: pytest.fail("existing key must not be rewritten"))
     window = SettingsWindow(store=store)
     qtbot.addWidget(window)
-    edit, badge, button = window._key_widgets["deepseek"]
+    _select_family(window, "deepseek")
     assert backend.calls == 0
-    assert button.text() == CONNECT and badge.objectName() != "badgeOk"
-    assert not any("授权" in b.text() for b in window.findChildren(QPushButton))
-    button.click()
+    assert "授权" in window._key_badge.text()  # 待授权状态如实透出
+    window._key_save_button.click()  # 空输入 + 已有 Key 引用 → 授权并连接
     qtbot.waitUntil(lambda: not window._working)
     assert backend.calls == 1 and calls == [("deepseek", "test-only-existing-key")]
-    assert button.text() == CONNECTED and not button.isEnabled()
-    assert edit.text() == "" and badge.objectName() == "badgeOk"
+    assert window._key_badge.text() == "已连接 · 安全存储"
+    assert window._key_badge.objectName() == "badgeOk"
 
 
-def test_cancel_stops_chain_and_same_button_retries(qtbot, tmp_path, monkeypatch):
+def test_cancel_stops_chain_and_reconnect_retries(qtbot, tmp_path, monkeypatch):
     backend = LockedBackend(False)
     store = make_store(tmp_path, backend)
     calls = []
     monkeypatch.setattr(settings, "validate_api_key", lambda *_: calls.append(True) or ValidationResult(True, "ok"))
     window = SettingsWindow(store=store)
     qtbot.addWidget(window)
-    _, badge, button = window._key_widgets["deepseek"]
-    button.click()
+    _select_family(window, "deepseek")
+    window._key_save_button.click()
     qtbot.waitUntil(lambda: not window._working)
-    assert not calls and button.text() == CONNECT and button.isEnabled()
-    assert "系统授权未完成" in window._status.text() and badge.objectName() != "badgeOk"
+    assert not calls
+    assert "系统授权未完成" in window._status.text()
+    assert window._key_badge.objectName() != "badgeOk"
     backend.allowed = True
-    button.click()
+    window._key_save_button.click()
     qtbot.waitUntil(lambda: not window._working)
-    assert calls == [True] and backend.calls == 2 and button.text() == CONNECTED
+    assert calls == [True] and backend.calls == 2
+    assert window._key_badge.text() == "已连接 · 安全存储"
 
 
 def test_authorized_but_invalid_is_not_connected(qtbot, tmp_path, monkeypatch):
@@ -90,15 +101,15 @@ def test_authorized_but_invalid_is_not_connected(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "validate_api_key", lambda *_: ValidationResult(False, "凭据无效"))
     window = SettingsWindow(store=store)
     qtbot.addWidget(window)
-    _, badge, button = window._key_widgets["deepseek"]
-    button.click()
+    _select_family(window, "deepseek")
+    window._key_save_button.click()
     qtbot.waitUntil(lambda: not window._working)
     assert store.key_status("deepseek")[0]
-    assert button.text() == CONNECT and badge.objectName() != "badgeOk"
+    assert window._key_badge.objectName() != "badgeOk"
     assert "凭据无效" in window._status.text()
 
 
-def test_save_failure_retains_draft_and_same_retry_button(qtbot, tmp_path, monkeypatch):
+def test_save_failure_retains_draft_and_retry(qtbot, tmp_path, monkeypatch):
     store = make_store(tmp_path)
     store.set_key("deepseek", "test-only-old-key")
     monkeypatch.setattr(settings, "validate_api_key", lambda *_: ValidationResult(True, "ok"))
@@ -108,18 +119,20 @@ def test_save_failure_retains_draft_and_same_retry_button(qtbot, tmp_path, monke
     monkeypatch.setattr(store, "set_key", failed_save)
     window = SettingsWindow(store=store)
     qtbot.addWidget(window)
-    edit, badge, button = window._key_widgets["deepseek"]
-    edit.setText("test-only-new-key")
-    button.click()
+    _select_family(window, "deepseek")
+    window._key_edit_button.click()
+    window._key_edit.setText("test-only-new-key")
+    window._key_save_button.click()
     qtbot.waitUntil(lambda: not window._working)
-    assert button.text() == CONNECT and edit.text() == "test-only-new-key"
-    assert badge.objectName() != "badgeOk" and "保存未完成" in window._status.text()
+    assert window._key_edit.text() == "test-only-new-key"  # 草稿保留，可原样重试
+    assert "保存未完成" in window._status.text()
     assert "test-only-sensitive-error" not in window._status.text()
     assert store.keychain.get("deepseek") == "test-only-old-key"
     monkeypatch.setattr(store, "set_key", original)
-    button.click()
+    window._key_save_button.click()
     qtbot.waitUntil(lambda: not window._working)
-    assert button.text() == CONNECTED and store.keychain.get("deepseek") == "test-only-new-key"
+    assert store.keychain.get("deepseek") == "test-only-new-key"
+    assert window._key_badge.text() == "已连接 · 安全存储"
 
 
 def test_runtime_old_key_success_cannot_mark_new_draft_as_connected(qtbot, tmp_path):
@@ -127,22 +140,19 @@ def test_runtime_old_key_success_cannot_mark_new_draft_as_connected(qtbot, tmp_p
     store.set_key("deepseek", "test-only-old-key")
     window = SettingsWindow(store=store)
     qtbot.addWidget(window)
-    edit, badge, button = window._key_widgets["deepseek"]
-    edit.setText("test-only-draft")
+    _select_family(window, "deepseek")
+    window._key_edit_button.click()
+    window._key_edit.setText("test-only-draft")
     window.set_runtime_key_validation("deepseek", True, "old key works")
-    assert button.text() == CONNECT and button.isEnabled()
-    assert badge.objectName() == "badgeOff" and "尚未连接" in badge.text()
-    edit.clear()
-    assert button.text() == CONNECTED and badge.objectName() == "badgeOk"
-    provider_name = next(p.name for p in store.providers() if p.id == "deepseek")
-    more = next(b for b in window.findChildren(QToolButton) if b.accessibleName() == f"{provider_name} 的更多操作")
-    assert [a.text() for a in more.menu().actions()] == ["更换 Key", "删除 Key…"]
-    assert not any(b.text() == "删除 Key" for b in window.findChildren(QPushButton))
+    # 编辑中的草稿不被后台结果刷掉，也绝不会被标成「已连接」
+    assert window._key_edit.text() == "test-only-draft"
+    assert window._key_badge.text() != "已连接 · 安全存储"
+    window._key_cancel_button.click()  # 退出编辑后如实显示运行时已验证
+    assert window._key_badge.text() == "已连接 · 安全存储"
 
 
 def test_duplicate_click_during_connection_does_not_start_another_job(qtbot, tmp_path, monkeypatch):
     store = make_store(tmp_path)
-    store.set_key("deepseek", "test-only-key")
     entered, release = threading.Event(), threading.Event()
     calls = []
     def verify(*_):
@@ -153,12 +163,13 @@ def test_duplicate_click_during_connection_does_not_start_another_job(qtbot, tmp
     monkeypatch.setattr(settings, "validate_api_key", verify)
     window = SettingsWindow(store=store)
     qtbot.addWidget(window)
-    _, _, button = window._key_widgets["deepseek"]
-    button.click()
+    _select_family(window, "deepseek")  # 未配置 → 「连接模型」按钮可见
+    window._key_edit.setText("test-only-key")
+    window._key_save_button.click()
     try:
         qtbot.waitUntil(entered.is_set)
-        button.click()
-        assert button.text() == CONNECTING and not button.isEnabled() and calls == [True]
+        window._key_save_button.click()  # working 锁期间重击 → 不发起第二个任务
+        assert window._key_save_button.text() == CONNECTING and calls == [True]
     finally:
         release.set()
     qtbot.waitUntil(lambda: not window._working)
@@ -222,7 +233,7 @@ def test_changed_custom_url_never_reads_or_sends_previous_key(qtbot, tmp_path, m
     assert store.keychain.get(provider_id) == "test-only-old-key"
 
 
-def test_custom_reconnect_preserves_protocol_and_has_one_active_button(qtbot, tmp_path, monkeypatch):
+def test_custom_reconnect_preserves_protocol_and_switches_default(qtbot, tmp_path, monkeypatch):
     store = make_store(tmp_path)
     provider_id, _ = store.upsert_custom_model(base_url="https://original.example/v1", model_id="test-model",
                                              key="test-only-old-key", api="openai-responses")
@@ -234,15 +245,15 @@ def test_custom_reconnect_preserves_protocol_and_has_one_active_button(qtbot, tm
     monkeypatch.setattr(settings, "validate_custom_model", validate)
     window = SettingsWindow(store=store)
     qtbot.addWidget(window)
-    window._connect_custom_model(provider, provider.models[0])
+    # 重连 = 编辑该模型后保存（Key 留空 → 沿用旧 Key 验证）
+    window._edit_custom_model(provider, provider.models[0])
     assert window._custom_list.isHidden() and not window._custom_form.isHidden()
+    window._custom_save_button.click()
     qtbot.waitUntil(lambda: not window._working)
     assert calls == [(provider.base_url, "test-model", "test-only-old-key", "openai-responses")]
     assert window._custom_form.isHidden()
-    # 模板现在内置 codewiz* 内网 provider（供分发自填 key），它们在列表中以未连接的
-    # 「连接模型」出现；本用例只关心「刚重连的这个模型是唯一处于已连接态的」。
-    buttons = [b.text() for b in window._custom_list.findChildren(QPushButton)]
-    assert buttons.count(CONNECTED) == 1
+    # 重连成功后默认模型已切到该自定义模型（upsert 的保存并切换语义）
+    assert store.default_model() == (provider_id, "test-model")
 
 
 def test_onboarding_reconnect_existing_custom_keeps_responses_api(qtbot, tmp_path, monkeypatch):

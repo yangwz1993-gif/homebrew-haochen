@@ -331,3 +331,90 @@ def test_list_sessions_skips_unreadable(tmp_path: Path) -> None:
     assert len(result) == 1
     assert result[0]["id"] == "g"
     assert result[0]["preview"] == "你好世界的问题"
+
+
+# ── models.json 模板合并迁移（0.6.2-beta.3：运行时目录不再与模板失联）──────
+
+
+def _write_templates(directory: Path, providers: dict) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "models.json").write_text(
+        json.dumps({"providers": providers}, ensure_ascii=False), encoding="utf-8")
+    (directory / "settings.json").write_text("{}", encoding="utf-8")
+    (directory / "auth.json.template").write_text("{}", encoding="utf-8")
+    return directory
+
+
+class _hold_templates:
+    """在整个迁移生命周期内钉住 TEMPLATE_DIR（make_store 会在构造后立即恢复，
+    不适合需要多次 ensure_initialized 的迁移测试）。"""
+
+    def __init__(self, templates: Path):
+        self._original = config_module.TEMPLATE_DIR
+        config_module.TEMPLATE_DIR = templates
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        config_module.TEMPLATE_DIR = self._original
+
+
+def test_template_models_merge_into_runtime_catalog(tmp_path: Path) -> None:
+    """模板升级带来新模型 → 再次 ensure_initialized 时并入运行时目录，追加在末尾。"""
+    templates = _write_templates(tmp_path / "tpl", {
+        "codewiz": {"name": "codewiz", "baseUrl": "https://gw.example/v1",
+                    "models": [{"id": "m-old"}]},
+    })
+    with _hold_templates(templates):
+        store, _ = make_store(tmp_path)
+        store.ensure_initialized()
+        # 模板升级：新增 m-new
+        _write_templates(templates, {
+            "codewiz": {"name": "codewiz", "baseUrl": "https://gw.example/v1",
+                        "models": [{"id": "m-old"}, {"id": "m-new"}]},
+        })
+        store.ensure_initialized()
+        providers = {p.id: p for p in store.providers()}
+        assert [m["id"] for m in providers["codewiz"].models] == ["m-old", "m-new"]
+
+
+def test_template_merge_preserves_runtime_only_providers_and_order(tmp_path: Path) -> None:
+    """运行时独有的 custom provider、用户重排过的模型顺序：合并一概不动。"""
+    templates = _write_templates(tmp_path / "tpl", {
+        "codewiz": {"name": "codewiz", "models": [{"id": "m1"}, {"id": "m2"}]},
+    })
+    with _hold_templates(templates):
+        store, _ = make_store(tmp_path)
+        store.ensure_initialized()
+        catalog_path = store.agent_dir / "models.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog["providers"]["codewiz"]["models"] = [{"id": "m2"}, {"id": "m1"}]  # 用户重排
+        catalog["providers"]["custom-mine"] = {"name": "Mine", "baseUrl": "https://x/v1",
+                                               "api": "openai-completions",
+                                               "models": [{"id": "mine-1"}]}
+        catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        store.ensure_initialized()
+        providers = {p.id: p for p in store.providers()}
+        assert [m["id"] for m in providers["codewiz"].models] == ["m2", "m1"]  # 顺序未被打乱
+        assert "custom-mine" in providers  # 运行时独有的不被删
+
+
+def test_template_merge_never_overwrites_existing_entries(tmp_path: Path) -> None:
+    """用户改过的已有条目（如显示名）不被模板覆盖；整个缺失的 provider 才按模板补入。"""
+    templates = _write_templates(tmp_path / "tpl", {
+        "codewiz": {"name": "codewiz", "models": [{"id": "m1", "name": "模板名"}]},
+        "gemini": {"name": "gemini", "models": [{"id": "g1"}]},
+    })
+    with _hold_templates(templates):
+        store, _ = make_store(tmp_path)
+        store.ensure_initialized()
+        catalog_path = store.agent_dir / "models.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        del catalog["providers"]["gemini"]  # 模拟旧运行时还没有这个 provider
+        catalog["providers"]["codewiz"]["models"][0]["name"] = "用户改的名"
+        catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        store.ensure_initialized()
+        providers = {p.id: p for p in store.providers()}
+        assert providers["codewiz"].models[0]["name"] == "用户改的名"  # 已有条目不被覆盖
+        assert "gemini" in providers  # 缺失的 provider 按模板补入

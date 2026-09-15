@@ -114,8 +114,54 @@ class ConfigStore:
             else:
                 ensure_private_file(target)
         self._seed_indirect_providers()
+        self._merge_template_models()
         self._migrate_plaintext_keys()
         return created
+
+    def _merge_template_models(self) -> None:
+        """把模板 models.json 里新增的 provider / 模型并入运行时目录。
+
+        只增不改不删：运行时已有的 provider / 模型条目原样保留（含用户改过的字段、
+        手动加的 custom-* provider、模型顺序），模板里多出来的才追加。这样版本升级
+        带来新模型时，运行时目录不会再和模板失联（0.6.2-beta.3 的教训：只 seed
+        auth.json 不 seed models.json，新模型永远到不了用户机器）。
+        """
+        target = self.agent_dir / MODELS_FILE
+        template = TEMPLATE_DIR / MODELS_FILE
+        if not target.exists() or not template.exists():
+            return
+        try:
+            runtime = json.loads(target.read_text(encoding="utf-8"))
+            tmpl = json.loads(template.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return  # 损坏交给 _load 的 ConfigCorruptError 路径，迁移不背锅
+        if not isinstance(runtime, dict) or not isinstance(tmpl, dict):
+            return
+        providers = runtime.setdefault("providers", {})
+        tmpl_providers = tmpl.get("providers", {})
+        if not isinstance(providers, dict) or not isinstance(tmpl_providers, dict):
+            return
+        changed = False
+        for pid, tmpl_provider in tmpl_providers.items():
+            if not isinstance(tmpl_provider, dict):
+                continue
+            runtime_provider = providers.get(pid)
+            if not isinstance(runtime_provider, dict):
+                providers[pid] = tmpl_provider  # 整个 provider 缺失 → 按模板补入
+                changed = True
+                continue
+            models = runtime_provider.setdefault("models", [])
+            if not isinstance(models, list):
+                continue
+            have = {m.get("id") for m in models if isinstance(m, dict)}
+            for model in tmpl_provider.get("models", []):
+                if isinstance(model, dict) and model.get("id") and model["id"] not in have:
+                    models.append(model)  # 只补缺的，不覆盖已有条目、不动既有顺序
+                    changed = True
+        if changed:
+            self._save(MODELS_FILE, runtime)
+            logging.getLogger("haochen.config").info(
+                "merged new template models into runtime models.json")
 
     def _seed_indirect_providers(self) -> None:
         """Merge env-ref providers shipped in the auth template (e.g. CodeWiz 内网) into an

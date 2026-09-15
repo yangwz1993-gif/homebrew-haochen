@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "project": "haochen",
+  "note": "passes 只在验证证据存在时置 true（v4 准出）",
+  "features": [
+    {"id": "F1", "title": "用户真机冒烟总验收", "acceptance": "evidence/真机冒烟清单_0.6.2-beta.3.md 逐项签字", "module": "release", "passes": false, "createdAt": "2026-09-16 11:05"},
+    {"id": "F2", "title": "chrome://extensions 手动刷新 haochen 扩展（B-16 生效前置）", "acceptance": "用户操作后复测：删除追踪不复活", "module": "browser", "passes": false, "createdAt": "2026-09-16 11:05"},
+    {"id": "F3", "title": "授权后推送 GitHub + Release + cask", "acceptance": "release 页面可下载且 sha256 与 cask 一致", "module": "release", "passes": false, "createdAt": "2026-09-16 11:05"}
+  ]
+}
