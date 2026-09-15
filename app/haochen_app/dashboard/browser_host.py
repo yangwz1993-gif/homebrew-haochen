@@ -234,6 +234,10 @@ class BrowserStore:
                 id TEXT PRIMARY KEY, session TEXT NOT NULL, target TEXT NOT NULL,
                 deadline REAL NOT NULL, state TEXT NOT NULL, result TEXT
             );
+            CREATE TABLE IF NOT EXISTS untrack_commands (
+                id TEXT PRIMARY KEY, session TEXT NOT NULL, source_id TEXT NOT NULL,
+                state TEXT NOT NULL, created REAL NOT NULL
+            );
         """)
 
     def close(self):
@@ -296,6 +300,48 @@ class BrowserStore:
     def forget(self, source: str, client: str):
         with self.db:
             self.db.execute("DELETE FROM sources WHERE id=? AND client=?", (identifier(source), client))
+
+    # ── 主动停止追踪（B-11 完整版：总览忽略动态 → 扩展同步停追）──────────
+
+    def queue_untrack(self, source: str) -> str | None:
+        """删除来源记录并排队一条 untrack 命令给拥有该来源的扩展会话。
+
+        源记录先删（死会话也要清账）；命令尽力投递——扩展收到后从自己的追踪
+        名单同步移除，之后不再为该页面上报观察。返回命令 id；来源不存在返回 None。
+        """
+        source_id = identifier(source)
+        with self.db:
+            row = self.db.execute("SELECT session FROM sources WHERE id=?", (source_id,)).fetchone()
+            # 源记录总是删掉（就算在）；来源不在册则无事可干。
+            self.db.execute("DELETE FROM sources WHERE id=?", (source_id,))
+            if not row:
+                return None
+            command_id = identifier("untrack-" + uuid.uuid4().hex[:16])
+            self.db.execute(
+                "INSERT INTO untrack_commands VALUES (?, ?, ?, 'queued', ?)",
+                (command_id, row["session"], source_id, time.time()),
+            )
+        notify_signal(self.path.parent, "host-" + row["session"])
+        return command_id
+
+    def take_untrack(self, session: str) -> list[dict]:
+        """取出该会话待投递的 untrack 命令（标为已发送，等 ack）。"""
+        commands = []
+        with self.db:
+            for row in self.db.execute(
+                "SELECT * FROM untrack_commands WHERE session=? AND state='queued' LIMIT ?",
+                (session, MAX_FOCUS_COMMANDS),
+            ).fetchall():
+                self.db.execute("UPDATE untrack_commands SET state='sent' WHERE id=?", (row["id"],))
+                commands.append({"type": "untrack", "commandId": row["id"], "sourceId": row["source_id"]})
+        return commands
+
+    def finish_untrack(self, command_id: str, session: str) -> None:
+        with self.db:
+            self.db.execute(
+                "UPDATE untrack_commands SET state='done' WHERE id=? AND session=?",
+                (identifier(command_id), session),
+            )
 
     def observe(self, value: dict, session: str, client: str, now: float | None = None):
         now = time.time() if now is None else now
@@ -531,6 +577,8 @@ def run_browser_host(
             if message is None:
                 for command in store.take_focus(session):
                     write_frame(stdout, command)
+                for command in store.take_untrack(session):
+                    write_frame(stdout, command)
                 continue
             operation = message.get("type")
             if operation == "hello" and session is None:
@@ -549,6 +597,8 @@ def run_browser_host(
                 store.forget(message.get("sourceId"), client)
             elif operation == "focus_result":
                 store.finish_focus(message.get("commandId"), session, message.get("status"))
+            elif operation == "untrack_result":
+                store.finish_untrack(message.get("commandId"), session)
             else:
                 raise ValueError("unsupported browser bridge operation")
             reply = {"type": "ack", "operation": operation, "ok": True, "version": 1}
@@ -558,6 +608,8 @@ def run_browser_host(
                 reply["sessionId"] = session
             write_frame(stdout, reply)
             for command in store.take_focus(session):
+                write_frame(stdout, command)
+            for command in store.take_untrack(session):
                 write_frame(stdout, command)
         return 0
     except (OSError, ValueError, TypeError, sqlite3.Error, UnicodeError):

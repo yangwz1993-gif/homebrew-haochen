@@ -139,8 +139,21 @@ svg { width:17px; height:17px; flex-shrink:0; vertical-align:middle; }
 .event-row { display:flex; align-items:stretch; gap:0; position:relative; }
 /* 入场动画只给新出现的卡片（.is-new）：增量渲染下复用的节点不再重播，消除整列表抖动。 */
 .event-row.is-new { animation:card-in .32s cubic-bezier(.2,.8,.25,1) both; }
-.event-jump { flex-shrink:0; width:0; overflow:hidden; display:grid; place-items:center; color:var(--muted); border-radius:0 var(--radius) var(--radius) 0; border:1px solid transparent; border-left:0; transition:width .16s,background .16s,color .16s; }
-.event-row:hover .event-jump, .event-row:focus-within .event-jump { width:40px; background:var(--soft); color:var(--accent); border-color:var(--line); }
+/* 收起态 visibility:hidden：0 宽下右侧圆角仍会漏两个像素点（B-15）；
+   隐藏时延迟 transition 保证展开动画连续、收起结束时才消失。 */
+.event-jump { flex-shrink:0; width:0; overflow:hidden; display:grid; place-items:center; color:var(--muted); border-radius:0 var(--radius) var(--radius) 0; border:1px solid transparent; border-left:0; visibility:hidden; transition:width .16s,background .16s,color .16s,visibility 0s .16s; }
+.event-row:hover .event-jump, .event-row:focus-within .event-jump, .event-row.is-hover .event-jump { width:40px; visibility:visible; background:var(--soft); color:var(--accent); border-color:var(--line); transition:width .16s,background .16s,color .16s; }
+.event-row.is-hover .event-card { border-radius:var(--radius) 0 0 var(--radius); }
+/* B-11：忽略按钮与跳转箭头同款悬停露出（收起态 visibility 隐藏，防像素点漏出）。 */
+.event-dismiss { flex-shrink:0; width:0; overflow:hidden; display:grid; place-items:center; color:var(--muted); border-radius:0; border:0; visibility:hidden; transition:width .16s,color .16s,visibility 0s .16s; }
+.event-row:hover .event-dismiss, .event-row:focus-within .event-dismiss, .event-row.is-hover .event-dismiss { width:36px; visibility:visible; transition:width .16s,color .16s; }
+.event-dismiss:hover { color:var(--err); }
+.event-dismiss svg { width:14px; height:14px; }
+/* B-14：占位卡（如 Hi 空占位）是背景提示不是事项——弱化、不可点、无状态点。 */
+.event-row.is-placeholder { opacity:.75; }
+.event-card.is-placeholder { background:transparent; box-shadow:none; border-style:dashed; border-left-width:1px; cursor:default; min-height:44px; padding:8px 12px; }
+.event-card.is-placeholder:hover { background:transparent; box-shadow:none; transform:none; }
+.event-card.is-placeholder .event-title, .event-card.is-placeholder .event-summary { color:var(--muted); font-weight:500; }
 .event-jump svg { width:16px; height:16px; }
 .event-card { flex:1; min-width:0; display:flex; align-items:center; gap:11px; padding:12px 13px; width:100%; min-height:62px; border:1px solid var(--line); border-left:3px solid var(--line); border-radius:var(--radius); text-align:left; background:var(--surface); box-shadow:var(--elev-1); transition:background .16s,box-shadow .16s,transform .16s,border-color .16s; }
 .event-card:hover { background:var(--hover); box-shadow:var(--elev-2); transform:translateY(-1px); }

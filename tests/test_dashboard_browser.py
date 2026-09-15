@@ -571,3 +571,24 @@ def test_aged_closed_tab_archives_and_stops_downgrading_connection(tmp_path, mon
         assert not {e["sourceId"]: e for e in result["events"]}["synthetic-fresh"].get("archived")
     finally:
         store.close()
+
+
+def test_queue_untrack_removes_source_and_queues_command(tmp_path):
+    """B-11 完整版：停止追踪 = 桥存储删记录 + 排队通知扩展同步移除。"""
+    store = BrowserStore(tmp_path)
+    session = store.connect(CLIENT)
+    try:
+        store.observe(observation(), session, CLIENT)
+        assert store.records(), "前提：有追踪记录"
+        command_id = store.queue_untrack(SOURCE)
+        assert command_id and store.records() == [], "源记录应立即删除"
+        commands = store.take_untrack(session)
+        assert len(commands) == 1 and commands[0]["sourceId"] == SOURCE
+        assert commands[0]["type"] == "untrack"
+        # 重复取不再返回（已标 sent）
+        assert store.take_untrack(session) == []
+        store.finish_untrack(command_id, session)
+        # 不存在的来源返回 None，不排队
+        assert store.queue_untrack("notexist1") is None
+    finally:
+        store.close()

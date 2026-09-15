@@ -120,6 +120,31 @@ class DashboardStore:
             result["events"] = decorate(result["events"], result["readVersions"])
             return result
 
+    def dismiss_event(self, identifier, fingerprint=None):
+        """忽略一条动态（B-11）：立即从列表移除并持久化；同指纹不再出现，
+        内容真变（新指纹）允许重现——「关掉这条提醒」而不是「永久屏蔽这件事」。"""
+        with self.lock:
+            if not isinstance(identifier, str) or not identifier or len(identifier) > 300:
+                raise ValueError("这条动态已不可用，请刷新后查看")
+            dismissed = self.data.setdefault("dismissed", {})
+            if len(dismissed) >= 200:  # 有界：最老的忽略记录先出列
+                dismissed.pop(next(iter(dismissed)), None)
+            dismissed[identifier] = fingerprint if isinstance(fingerprint, str) else None
+            self.data["events"] = [e for e in self.data["events"] if e.get("id") != identifier]
+            self._save()
+
+    def _is_dismissed(self, event) -> bool:
+        """事件是否已被忽略（指纹不变仍忽略；指纹变了视为新内容，清记录并放行）。"""
+        dismissed = self.data.get("dismissed") or {}
+        event_id = event.get("id")
+        if event_id not in dismissed:
+            return False
+        saved = dismissed[event_id]
+        if saved is None or saved == event.get("fingerprint"):
+            return True
+        del dismissed[event_id]
+        return False
+
     def mark_read(self, identifier, expected_version):
         with self.lock:
             event = next((item for item in self.data["events"] if item["id"] == identifier), None)
@@ -308,6 +333,8 @@ class DashboardStore:
                 # rows, not proof of disappearance. Preserve them as stale.
                 events.extend({**event, "incomplete": True, "stale": True}
                               for identifier, event in old.items() if identifier not in seen)
+            # B-11：被忽略的动态不再入库（内容真变者除外，见 _is_dismissed）
+            events = [e for e in events if not self._is_dismissed(e)]
             others = [e for e in self.data["events"] if e.get("source") != source]
             self.data["events"] = others + events
             reads = self.data["readVersions"]

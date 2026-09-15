@@ -391,6 +391,22 @@ class DashboardService(QObject):
                 self._current_cancel.set()
             self.summarizer.cancel()
 
+    def dismiss_event(self, event_id):
+        """忽略一条动态（B-11）：从列表移除并持久化；浏览器来源同时停止追踪。"""
+        snapshot = self.store.snapshot()
+        event = next((e for e in snapshot["events"] if e.get("id") == event_id), None)
+        if event is None:
+            raise ValueError("此动态已不存在，请刷新后查看")
+        if event.get("source") == "otty":
+            raise ValueError("Agent 实时状态不可忽略（它反映当前实况）")
+        self.store.dismiss_event(event_id, event.get("fingerprint"))
+        if event.get("source") == "browser" and event.get("sourceId"):
+            try:
+                self.adapters["browser"].untrack(event["sourceId"])
+            except Exception:  # noqa: BLE001 — 桥不可用不阻塞忽略动作
+                pass
+        self.changed.emit()
+
     def report(self, date):
         report = daily_report(self.store.snapshot(), date)
         self.store.put_report(report)

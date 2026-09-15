@@ -376,6 +376,15 @@ class BrowserAdapter:
             path.unlink(missing_ok=True)
         return {"status": "removed", "message": "已移除当前 haochen 的 Chrome 桥接；可重新安装，既有观测未删除"}
 
+    def untrack(self, source_id: str) -> str | None:
+        """停止追踪某个来源：桥存储删记录 + 尽力通知扩展同步移除（B-11 完整版）。"""
+        from ..browser_host import BrowserStore
+        store = BrowserStore(self.home)
+        try:
+            return store.queue_untrack(source_id)
+        finally:
+            store.close()
+
     def open_target(self, target: dict) -> dict:
         # Return a validated intent for the app's URL opener, not an unverifiable
         # assertion that we focused an exact tab from a different browser profile.

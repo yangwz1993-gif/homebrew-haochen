@@ -7,7 +7,7 @@
   'use strict';
   const PALETTES = Object.freeze({glass:'玻璃质感', sage:'浅雾绿', stone:'暖白石墨', mist:'冷白雾蓝', carbon:'中性炭灰'});
   const FREQUENCIES = Object.freeze({manual:'仅手动', quarter:'每 15 分钟', hourly:'每小时', daily:'每天'});
-  const ACTIONS = new Set(['ready','refresh','openSource','trackCreate','trackUpdate','trackPause','trackRefresh','trackDelete','reportGet','pickFolder','fileRemove','askHaochen','openSettings','collapse','connectorEnable','settingsUpdate','browserInstall','browserExtensionFolder','calendarList','calendarSelect','ottyCheck','ottySetup','eventRead']);
+  const ACTIONS = new Set(['ready','refresh','openSource','trackCreate','trackUpdate','trackPause','trackRefresh','trackDelete','reportGet','pickFolder','fileRemove','askHaochen','openSettings','collapse','connectorEnable','settingsUpdate','browserInstall','browserExtensionFolder','calendarList','calendarSelect','ottyCheck','ottySetup','eventRead','eventDismiss']);
   const STATUS = Object.freeze({connected:'已连接', disconnected:'连接已断开', not_connected:'尚未连接', disabled:'未开启', available:'内容可用', permission_required:'需要授权', limited:'能力受限', partial:'内容不完整', unavailable:'暂不可用', not_running:'应用未运行', tab_closed:'标签页已关闭', target_changed:'原标签页已切换', suspended:'标签页已休眠', reading:'读取中', error:'检查失败', failed:'检查失败', running:'进行中', processing:'处理中', working:'进行中', busy:'检查中', checking:'检查中', awaiting:'等待确认', waiting:'等待确认', needs_attention:'需要关注', completed:'已完成', complete:'已完成', success:'已更新', changed:'有变化', unchanged:'未发现变化', idle:'就绪', paused:'已暂停', pending:'等待检查', unknown:'状态未知', unavailable_source:'来源不可用', stale:'状态已过期', unsupported:'暂不支持', warning:'需要关注', ready:'就绪'});
   const list = (value, limit = 1000) => Array.isArray(value) ? value.filter(item => item && typeof item === 'object' && !Array.isArray(item)).slice(0, limit) : [];
   // Back-end source snapshots can contain 48,000 characters. Preserve their
@@ -443,6 +443,16 @@
     const buildRow = (event) => {
       const id = text(event.id,200), kind = sourceKind(event.source || event.sourceId);
       const row = node('div','event-row');
+      // B-14：占位卡（reasonCode=empty，如 Hi 空占位）是背景提示不是事项——
+      // 用弱化的 div 呈现，不可点、无跳转、无状态点/时间，避免被误认为可操作事项。
+      if (event.reasonCode === 'empty') {
+        row.classList.add('is-placeholder');
+        const elp = node('div','event-card is-placeholder');
+        const glyphP = node('span',`source-glyph${kind === 'terminal' ? ' agent' : ''}`); glyphP.append(icon(kind));
+        const copyP = node('span','event-copy'); copyP.append(node('span','event-title',event.title || ''),node('span','event-summary',text(event.summary || event.description)));
+        elp.append(glyphP,copyP); row.append(elp);
+        return row;
+      }
       const el = button('','event',{className:'event-card',id,key:`event-${id}`});
       el.classList.toggle('is-unread',event.unread===true);
       const pr = priorityOf(event); if (pr) el.dataset.priority = pr;
@@ -458,6 +468,12 @@
         const jump = button('','event-source',{className:'event-jump',id,key:`jump-${id}`});
         jump.append(icon('arrow-up-right')); jump.title = '跳转到来源'; jump.setAttribute('aria-label',`跳转到来源：${text(event.title) || '动态'}`);
         row.append(jump);
+      }
+      // B-11：iPhone 式忽略按钮（悬停露出，紧邻跳转箭头）；实时状态源（otty）不可忽略。
+      if (text(event.source || '') !== 'otty') {
+        const dismiss = button('','event-dismiss',{className:'event-dismiss',id,key:`dismiss-${id}`});
+        dismiss.append(icon('x')); dismiss.title = '忽略这条动态'; dismiss.setAttribute('aria-label',`忽略这条动态：${text(event.title) || '动态'}`);
+        row.append(dismiss);
       }
       return row;
     };
@@ -515,7 +531,14 @@
         } else {
           const row = buildRow(event);
           if (existing) {
+            // B-12：刷新撞悬停——内容真变换节点时把悬停状态带到新节点，
+            // 否则新节点丢失 hover，跳转/忽略按钮瞬间收起又展开（间歇闪烁）。
+            const keepHover = existing.row.matches(':hover');
             existing.row.remove();  // 内容真变：换新节点，但不加 is-new（不重播动画）
+            if (keepHover) {
+              row.classList.add('is-hover');
+              row.addEventListener('mouseleave', () => row.classList.remove('is-hover'), {once:true});
+            }
           } else {
             // 只有新出现的卡片播入场动画；播完即摘除，避免后续移动重放。
             row.classList.add('is-new');
@@ -1048,6 +1071,10 @@
     else if (action === 'track-new') openModal('edit',null,el);
     else if (action === 'track-edit') openModal('edit',id,el);
     else if (action === 'modal-back') closeModal();
+    else if (action === 'event-dismiss') {
+      // 忽略这条动态（B-11）：从列表移除并持久化；浏览器来源同时停止追踪。
+      perform('eventDismiss',{eventId:id},el);
+    }
     else if (action === 'event-source') {
       // Going to handle it counts as handled: mark read so a Hi message drops
       // from the feed when you come back (other sources just lose the dot).

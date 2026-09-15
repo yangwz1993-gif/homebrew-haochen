@@ -1065,3 +1065,45 @@ def test_connection_dimensions_cover_disabled_and_unavailable(service_setup):
     state = controller.state()
     hi = next(c for c in state["connectors"] if c["id"] == "hi")
     assert hi["connection"] == "unavailable" and hi["coverage"]["level"] == "empty"
+
+
+def test_dismiss_removes_event_and_filters_until_fingerprint_changes(store):
+    """B-11：忽略后立即消失、持久化；同指纹的后续观察不再出现；内容真变允许重现。"""
+    store.enable("hi", True)
+    snapshot = {"status": "ready", "checkedAt": "now", "events": [
+        {"id": "hi:msg:1", "state": "available", "fingerprint": "fp1", "title": "旧消息"},
+    ]}
+    store.observe("hi", snapshot)
+    assert [e["id"] for e in store.snapshot()["events"]] == ["hi:msg:1"]
+
+    store.dismiss_event("hi:msg:1", "fp1")
+    assert store.snapshot()["events"] == []  # 立即移除
+
+    store.observe("hi", snapshot)  # 同指纹再来 → 仍被忽略
+    assert store.snapshot()["events"] == []
+
+    # 内容真变（新指纹）→ 视为新动态，允许重现
+    store.observe("hi", {"status": "ready", "checkedAt": "now", "events": [
+        {"id": "hi:msg:1", "state": "available", "fingerprint": "fp2", "title": "内容更新了"},
+    ]})
+    assert [e["id"] for e in store.snapshot()["events"]] == ["hi:msg:1"]
+
+
+def test_dismiss_persists_across_store_reopen(store, tmp_path):
+    store.enable("hi", True)
+    store.observe("hi", {"status": "ready", "checkedAt": "now", "events": [
+        {"id": "hi:msg:9", "state": "available", "fingerprint": "fp", "title": "t"}]})
+    store.dismiss_event("hi:msg:9", "fp")
+    reopened = type(store)(tmp_path / "profile")
+    reopened.enable("hi", True)
+    reopened.observe("hi", {"status": "ready", "checkedAt": "now", "events": [
+        {"id": "hi:msg:9", "state": "available", "fingerprint": "fp", "title": "t"}]})
+    assert reopened.snapshot()["events"] == []
+
+
+def test_dismiss_rejects_invalid_id(store):
+    import pytest
+    with pytest.raises(ValueError):
+        store.dismiss_event("")
+    with pytest.raises(ValueError):
+        store.dismiss_event(None)

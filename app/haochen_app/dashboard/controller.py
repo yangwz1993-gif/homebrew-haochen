@@ -19,7 +19,7 @@ ACTIONS = {
     "ready", "refresh", "openSource", "trackCreate", "trackUpdate", "trackPause", "trackRefresh", "trackDelete",
     "reportGet", "pickFolder", "fileRemove", "askHaochen", "openSettings", "collapse", "connectorEnable",
     "settingsUpdate", "browserInstall", "browserExtensionFolder", "calendarList", "calendarSelect",
-    "eventRead", "ottyCheck", "ottySetup",
+    "eventRead", "eventDismiss", "ottyCheck", "ottySetup",
 }
 HELP_URLS = {"https://docs.otty.sh/agents/setup", "https://docs.otty.sh/reference/cli",
              "https://cowork.xiaohongshu.com/s/teach-2-v3/#daily"}
@@ -58,10 +58,10 @@ class DashboardController(QObject):
         self.window.set_settings(self.service.store.snapshot()["settings"])
         self.window.start()
 
-    def show(self, report=False):
+    def show(self, report=False, *, activate: bool = True):
         if not self.shell._interaction_allowed():
             return
-        self.window.show()
+        self.window.show(activate=activate)
         self.push()
         if report:
             date = datetime.now().astimezone().date().isoformat()
@@ -108,6 +108,10 @@ class DashboardController(QObject):
             self.push()
         elif action == "eventRead":
             result = store.mark_read(payload.get("eventId"), payload.get("version"))
+            self.push()
+            return result
+        elif action == "eventDismiss":
+            result = self.service.dismiss_event(payload.get("eventId"))
             self.push()
             return result
         elif action == "refresh":

@@ -165,6 +165,14 @@ async function connect() {
       } else if (message.type === "ack" && message.operation === "forget") {
         pendingForgets = pendingForgets.filter(id => id !== message.sourceId);
         save();
+      } else if (message.type === "untrack") {
+        // haochen 总览侧忽略动态时同步停止追踪（B-11 完整版）：从扩展自己的追踪
+        // 名单移除该来源并持久化，之后不再为它上报观察。
+        const sid = typeof message.sourceId === "string" ? message.sourceId : "";
+        if (sid && sources[sid]) { delete sources[sid]; save(); }
+        if (message.commandId && port === next && connected) {
+          send({type: "untrack_result", commandId: message.commandId, status: "done"});
+        }
       } else if (message.type === "focus") {
         // Native-only operation. Content scripts and popup runtime messages have
         // no route to this handler. No URL opening or arbitrary script commands.

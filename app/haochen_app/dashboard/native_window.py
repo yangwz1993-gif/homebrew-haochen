@@ -448,7 +448,9 @@ class NativeDashboard(QObject):
         self._animation = animation
         animation.start()
 
-    def show(self):
+    def show(self, *, activate: bool = True):
+        """展开总览。activate=False 用于启动自动弹出等场景：只显示，绝不抢键盘焦点
+        （B-13：抢焦点会把用户正在进行的输入法组词撕碎）。"""
         import AppKit as AK
         if self.closed:
             return
@@ -464,15 +466,22 @@ class NativeDashboard(QObject):
                 self.panel.setAlphaValue_(1.0)
             self.expanded = True
             self.handle.hide()
-            self.panel.makeKeyAndOrderFront_(None)
-            self.panel.makeFirstResponder_(self.webview)
-            AK.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            if activate:
+                self.panel.makeKeyAndOrderFront_(None)
+                self.panel.makeFirstResponder_(self.webview)
+                AK.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            else:
+                # 只陈列、不激活：窗口出现但键盘焦点留在用户当前应用。
+                self.panel.orderFrontRegardless()
             self._animate(target, True)
             self.evaluate("window.haochenVisibilityChanged?.(true)")
             self.visibility_changed.emit(True)
         else:
-            self.panel.makeKeyAndOrderFront_(None)
-            AK.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            if activate:
+                self.panel.makeKeyAndOrderFront_(None)
+                AK.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            else:
+                self.panel.orderFrontRegardless()
 
     def hide(self):
         if self.closed or not self.expanded:

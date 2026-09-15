@@ -116,11 +116,11 @@ class AppShell:
             self.chat.show_normal()
         self._keep_pet_beside_chat()
 
-    def show_dashboard(self) -> None:
+    def show_dashboard(self, *, activate: bool = True) -> None:
         if self._stopped or not self._interaction_allowed():
             return
         if self._ensure_dashboard():
-            self.dashboard.show()
+            self.dashboard.show(activate=activate)
 
     def collapse_dashboard(self) -> None:
         """The native Cmd-M menu only collapses an active overview window."""
@@ -362,7 +362,8 @@ class AppShell:
         if not getattr(self.supervisor.client, "_mock", False):
             self._ensure_dashboard()
             if not hasattr(self, "onboarding") or self.onboarding.state.completed:
-                QTimer.singleShot(600, self.show_dashboard)
+                # 启动自动弹出绝不抢焦点（B-13）：抢键盘会把用户正在打字的输入法组词撕碎
+                QTimer.singleShot(600, lambda: self.show_dashboard(activate=False))
         if hasattr(self, "onboarding") and not self.onboarding.state.completed:
             # pet.start() shows its always-on-top window after first_run_setup().
             # Re-present once the event loop starts so the wizard cannot end up behind it.
