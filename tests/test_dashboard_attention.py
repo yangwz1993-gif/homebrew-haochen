@@ -292,3 +292,30 @@ def test_lit_card_survives_restart_unread(tmp_path):
     store2 = Store(tmp_path)
     rows = observe(store2, event("otty:p_1"), source="otty")
     assert rows[0]["unread"] is True
+
+
+def test_otty_new_result_label_names_the_session(tmp_path):
+    """「有新结果」太含蓄：Otty 跑完一轮的提醒要指名到具体会话。"""
+    store = Store(tmp_path)
+    observe(store, event("otty:p_1", title="π - 开源阅读集成 - yangwenzhu1"), source="otty")
+    rows = observe_with_changes(
+        store, [event("otty:p_1", title="π - 开源阅读集成 - yangwenzhu1")], [change_event("p_1")])
+    label = attention.activity(rows, [])["label"]
+    assert label == "Otty · 开源阅读集成 跑完了", label
+
+
+def test_otty_new_result_label_counts_multiple_sessions(tmp_path):
+    store = Store(tmp_path)
+    cards = [event("otty:p_1", title="π - 甲 - u"), event("otty:p_2", title="π - 乙 - u")]
+    observe(store, *cards, source="otty")
+    rows = observe_with_changes(store, cards, [change_event("p_1"), change_event("p_2")])
+    label = attention.activity(rows, [])["label"]
+    assert label == "Otty 有 2 个会话跑完了", label
+
+
+def test_otty_new_result_label_falls_back_on_messy_title(tmp_path):
+    store = Store(tmp_path)
+    observe(store, event("otty:p_1", title=""), source="otty")
+    rows = observe_with_changes(store, [event("otty:p_1", title="")], [change_event("p_1")])
+    label = attention.activity(rows, [])["label"]
+    assert label == "Otty · 有会话 跑完了", label

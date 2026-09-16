@@ -64,6 +64,20 @@
     return list(events,200).filter(item => item && item.type !== 'calendar' && item.kind !== 'calendar'
       && !(String(item.id || '').startsWith('hi:msg:') && item.unread === false));
   }
+  function feedPriorityOf(event) {
+    const st = text(event.status || event.state);
+    return event.stale ? '' : ['error','failed','permission_required'].includes(st) ? 'err'
+      : ['waiting','awaiting','needs_attention','warning','awaiting_input'].includes(st) ? 'attn'
+      : (event.unread===true && ['available','idle','completed','done','upcoming','ongoing','scheduled'].includes(st)) ? 'new'
+      : ['running','processing','working','checking','reading','busy'].includes(st) ? 'run' : '';
+  }
+  function feedCompare(a, b) {
+    // 待处理（错误/等待）最前，其次是未读新结果，最后其余；同档按时间从新到旧——
+    // 待处理事项永远不用往前翻（用户反馈）。
+    const rank = (e) => { const p = feedPriorityOf(e); return ['err','attn'].includes(p) ? 0 : (isNotifiableUnread(e) ? 1 : 2); };
+    const time = (e) => Date.parse(text(e.updatedAt || e.observedAt)) || 0;
+    return (rank(a) - rank(b)) || (time(b) - time(a));
+  }
   function isNotifiableUnread(event) {
     // 未读且值得提醒：Otty 的常态实时状态卡不算「新内容」——除非被 turn_finished
     // 点亮过（带 alertVersion，即「本轮处理已结束」）。
@@ -312,7 +326,7 @@
       this.pending.clear();
     }
   }
-  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,feedEmptyState,injectClearedPlaceholders,injectConnectedEmptySlots,isNotifiableUnread,feedTimeBucket,feedEventSignature,computeFeedDiff,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
+  const core = {PALETTES,FREQUENCIES,ACTIONS,normalizeState,validateTrackDraft,safeURL,localDate,validDate,statusLabel,eventStateLabel,floatingGeometry,mayEscape,eventReceipt,detailEvent,eventDetailState,modalStateSignature,visibleConnectors,feedEvents,feedEmptyState,injectClearedPlaceholders,injectConnectedEmptySlots,isNotifiableUnread,feedCompare,feedTimeBucket,feedEventSignature,computeFeedDiff,connectorLabel,browserSteps,eventCoverage,wechatControls,NativeBridge};
   if (typeof module === 'object' && module.exports) module.exports = core;
   global.HaochenDashboardCore = core;
   if (typeof document === 'undefined') return;
@@ -472,13 +486,6 @@
     // app, flowed into a 2-column masonry so the whole feed fits one screen.
     const shown = injectConnectedEmptySlots(
       injectClearedPlaceholders(events, ui.state.events), ui.state.connectors).slice(0,80);
-    const priorityOf = (event) => {
-      const st = text(event.status || event.state);
-      return event.stale ? '' : ['error','failed','permission_required'].includes(st) ? 'err'
-        : ['waiting','awaiting','needs_attention','warning','awaiting_input'].includes(st) ? 'attn'
-        : (event.unread===true && ['available','idle','completed','done','upcoming','ongoing','scheduled'].includes(st)) ? 'new'
-        : ['running','processing','working','checking','reading','busy'].includes(st) ? 'run' : '';
-    };
     const buildRow = (event) => {
       const id = text(event.id,200), kind = sourceKind(event.source || event.sourceId);
       const row = node('div','event-row');
@@ -494,7 +501,7 @@
       }
       const el = button('','event',{className:'event-card',id,key:`event-${id}`});
       el.classList.toggle('is-unread',isNotifiableUnread(event));
-      const pr = priorityOf(event); if (pr) el.dataset.priority = pr;
+      const pr = feedPriorityOf(event); if (pr) el.dataset.priority = pr;
       if (event.unread===true) el.setAttribute('aria-label',`未读 · ${text(event.title) || '应用动态'}`);
       const glyph = node('span',`source-glyph${kind === 'terminal' ? ' agent' : ''}`); glyph.append(icon(kind));
       const copy = node('span','event-copy'); copy.append(node('span','event-title',event.title || '未命名动态'),node('span','event-summary',text(event.summary || event.description)));
@@ -533,7 +540,7 @@
     const ORDER = ['otty','hi','browser','wechat','calendar'];
     const rank = (s) => { const i = ORDER.indexOf(text(s)); return i < 0 ? ORDER.length : i; };
     groups.sort((a,b) => (rank(a.source) - rank(b.source)) || text(a.source).localeCompare(text(b.source)));
-    const attnRank = (e) => ['err','attn'].includes(priorityOf(e)) ? 0 : 1;
+    // 排序比较器与 core.feedCompare 同一套（纯函数，已被单测钉死）
     // 渲染差分与被单测钉死的 core.computeFeedDiff 是同一套逻辑（测的就是跑的）。
     const known = {};
     for (const [id, entry] of ui.feedRows) known[id] = entry.sig;
@@ -565,7 +572,7 @@
         if (mod.unreadEl.textContent !== unreadText) mod.unreadEl.textContent = unreadText;
       }
       const ordered = g.items.map((item, i) => [item, i]);
-      ordered.sort((a,b) => (attnRank(a[0]) - attnRank(b[0])) || (a[1] - b[1]));
+      ordered.sort((a,b) => feedCompare(a[0], b[0]) || (a[1] - b[1]));
       for (const [event] of ordered) {
         const id = text(event.id,200), sig = diff.signatures[id];
         const existing = ui.feedRows.get(id);

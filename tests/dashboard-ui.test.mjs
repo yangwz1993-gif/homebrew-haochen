@@ -393,3 +393,19 @@ test('未读红点口径：Otty 常态卡不打点，真新内容才打点',() =
   assert.equal(ui.isNotifiableUnread({unread:true, source:'otty', kind:'turn_finished'}), true);
   assert.equal(ui.isNotifiableUnread({unread:false, source:'hi'}), false);
 });
+
+test('feed sorts pending first then unread then rest, newest first within tier',() => {
+  const waiting={id:'w',status:'awaiting',updatedAt:'2026-09-16T08:00:00Z'};
+  const unreadOld={id:'u1',source:'otty',kind:'turn_finished',unread:true,status:'idle',updatedAt:'2026-09-16T09:00:00Z'};
+  const unreadNew={id:'u2',source:'otty',kind:'turn_finished',unread:true,status:'idle',updatedAt:'2026-09-16T10:00:00Z'};
+  const plainNew={id:'p1',status:'idle',updatedAt:'2026-09-16T11:00:00Z'};
+  const plainOld={id:'p2',status:'idle',updatedAt:'2026-09-16T07:00:00Z'};
+  const sorted=[plainOld,unreadOld,waiting,plainNew,unreadNew].sort(ui.feedCompare);
+  assert.deepEqual(sorted.map(e=>e.id),['w','u2','u1','p1','p2']);
+});
+
+test('feedCompare keeps otty idle pane cards out of the unread tier',() => {
+  const flipped={id:'p',source:'otty',unread:true,status:'idle',updatedAt:'2026-09-16T10:00:00Z'}; // 无 kind/alertVersion：翻转不算
+  const lit={id:'q',source:'otty',unread:true,status:'idle',alertVersion:'v1',updatedAt:'2026-09-16T09:00:00Z'};
+  assert.ok(ui.feedCompare(lit,flipped)<0);
+});

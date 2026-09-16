@@ -42,6 +42,18 @@ def decorate(events, read_versions):
 _SOURCE_NAMES = {"hi": "Hi 消息", "otty": "Otty", "browser": "网页", "wechat": "微信", "calendar": "日历"}
 
 
+def _short_session_name(title: str) -> str:
+    """Otty 会话卡标题「π - 项目名 - 用户名」→ 项目名；解析不出就给保底文案。"""
+    text = (title or "").strip()
+    for prefix in ("π - ", "✳ "):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    head, sep, _tail = text.rpartition(" - ")
+    if sep and head.strip():
+        text = head.strip()
+    return text or "有会话"
+
+
 def _source_names(events) -> list[str]:
     """事件中涉及的来源名（去重、保序、最多两个）。"""
     names: list[str] = []
@@ -84,8 +96,14 @@ def activity(events, connectors):
         kind, count, label = "error", len(errors), "有连接需处理"
     elif unread:
         kind, count = "new", len(unread)
-        names = _source_names(unread)
-        label = f"{'、'.join(names)}有新结果" if names else "有新结果"
+        otty_cards = [event for event in unread if event.get("source") == "otty"]
+        if otty_cards and len(otty_cards) == len(unread):
+            # Otty 一轮跑完：指名到具体会话，别只说「有新结果」（用户反馈看不懂）
+            label = (f"Otty · {_short_session_name(otty_cards[0].get('title'))} 跑完了"
+                     if count == 1 else f"Otty 有 {count} 个会话跑完了")
+        else:
+            names = _source_names(unread)
+            label = f"{'、'.join(names)}有新结果" if names else "有新结果"
     elif running:
         kind, count, label = "running", len(running), "正在处理"
     else:
