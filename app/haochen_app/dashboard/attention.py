@@ -28,8 +28,14 @@ def decorate(events, read_versions):
     result = []
     for event in events:
         fingerprint = version(event)
-        result.append({**event, "attentionVersion": fingerprint,
-                       "unread": read_versions.get(event["id"]) != fingerprint})
+        alert = event.get("alertVersion")
+        if event.get("source") == "otty" and not event.get("kind"):
+            # Otty 常态会话卡：未读只由「跑完一轮」点亮（alertVersion）；状态翻转
+            # （开始干活/回到空闲）和心跳永不产生未读，避免假红点与计数污染。
+            unread = bool(alert) and read_versions.get(event["id"]) != alert
+        else:
+            unread = read_versions.get(event["id"]) != (alert or fingerprint)
+        result.append({**event, "attentionVersion": alert or fingerprint, "unread": unread})
     return result
 
 
@@ -47,10 +53,11 @@ def _source_names(events) -> list[str]:
 
 
 def _is_notifiable_unread(event) -> bool:
-    """未读且值得提醒：Otty 的常态实时状态卡（无 kind）不算「新内容」，不打红点。"""
+    """未读且值得提醒：Otty 常态实时状态卡不算「新内容」——除非它被 turn_finished
+    点亮过（带 alertVersion，即「本轮处理已结束」）。"""
     if not event.get("unread"):
         return False
-    if event.get("source") == "otty" and not event.get("kind"):
+    if event.get("source") == "otty" and not event.get("kind") and not event.get("alertVersion"):
         return False
     return True
 

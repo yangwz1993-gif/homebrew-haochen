@@ -19,10 +19,10 @@ from .attention import ERRORS, WAITING, decorate, version
 
 FREQUENCIES = {"manual": 0, "quarter": 900, "hourly": 3600, "daily": 86400}
 
-# 一次性变化事件（如 Otty turn_finished/state_changed）：适配器只在状态跃迁当次
-# 返回，store 负责保留到 TTL，让读者有机会看到；读完或过期即清。
+# 一次性变化事件（Otty turn_finished/state_changed）不单独成卡：同名混淆且刷屏。
+# turn_finished 点亮所属会话卡（写 alertVersion）；state_changed（开始干活）不提醒。
+# 这里只保留 kind 集合，供迁移清理 beta.3 早期单独成卡的残留。
 ONE_SHOT_KINDS = {"turn_finished", "state_changed"}
-ONE_SHOT_TTL = timedelta(hours=12)
 PALETTES = {"glass", "sage", "stone", "mist", "carbon"}
 MAX_STATE_BYTES = 32 * 1024 * 1024
 
@@ -155,7 +155,8 @@ class DashboardStore:
             event = next((item for item in self.data["events"] if item["id"] == identifier), None)
             if event is None or not isinstance(expected_version, str):
                 raise ValueError("这条动态已不可用，请刷新后查看")
-            current = version(event)
+            # 与 decorate 同一口径：被点亮的卡（alertVersion）按提醒版本核对
+            current = event.get("alertVersion") or version(event)
             if current != expected_version:
                 return {"acknowledged": False, "reason": "动态已更新，未将新内容误标已读"}
             if self.data["readVersions"].get(identifier) != current:
@@ -317,6 +318,10 @@ class DashboardStore:
                 if changed:
                     self._record_observation(event, "changed")
                     substantive_change = True
+                # alertVersion 是 store 侧的点亮状态，适配器不带——合并时必须保留，
+                # 否则每轮轮询都会把「跑完未读」冲掉
+                if "alertVersion" not in event and old.get(event["id"], {}).get("alertVersion"):
+                    event["alertVersion"] = old[event["id"]]["alertVersion"]
                 if previous is not None and reliable:
                     baseline[event["id"]] = copy.deepcopy(event)
                 events.append(event)
@@ -336,37 +341,30 @@ class DashboardStore:
             elif not disconnected:
                 # Missing rows in a partial/error response are still last-known
                 # rows, not proof of disappearance. Preserve them as stale.
+                # 一次性变化卡不在此保留（已并入会话卡的 alertVersion 机制）。
                 events.extend({**event, "incomplete": True, "stale": True}
-                              for identifier, event in old.items() if identifier not in seen)
-            # 一次性变化事件合并 + 保留（见 ONE_SHOT_* 常量；这类事件在 0.6.2-beta.3
-            # 之前算完就被丢弃，Otty 因此从未在刘海上提醒过）。
-            incoming_ids = {e["id"] for e in events}
-            reliable_snapshot = status in {"ready", "connected", "partial"}
+                              for identifier, event in old.items()
+                              if identifier not in seen and event.get("kind") not in ONE_SHOT_KINDS)
+            # Otty 变化事件并入所属会话卡：turn_finished（一轮跑完）点亮该卡——
+            # 摘要换成「本轮处理已结束」并写入 alertVersion（未读提醒只认它，
+            # 之后「开始干活」等状态翻转不会误点亮）。state_changed 不提醒。
             for change in result.get("changes") or []:
-                if (not isinstance(change, dict) or not isinstance(change.get("id"), str)
-                        or not change["id"] or change["id"] in incoming_ids):
+                if not isinstance(change, dict) or change.get("kind") != "turn_finished":
                     continue
-                if change.get("kind") not in ONE_SHOT_KINDS:
+                pane_id = (change.get("target") or {}).get("paneId", "")
+                card_id = f"{source}:{pane_id}" if pane_id else ""
+                target_card = next((e for e in events if e["id"] == card_id), None)
+                if target_card is None:
                     continue
-                event = copy.deepcopy(change)
-                event.update(source=source, status=event.get("status", event.get("state", "unknown")),
-                             occurredAt=event.get("updatedAt", result.get("checkedAt", now())))
-                event["evidence"] = evidence_preview(event.get("evidence", []))
-                if not reliable_snapshot:
-                    event["stale"] = True
-                events.append(event)
-                incoming_ids.add(event["id"])
+                if change.get("summary"):
+                    target_card["summary"] = change["summary"]
+                if change.get("updatedAt"):
+                    target_card["updatedAt"] = change["updatedAt"]
+                    target_card["occurredAt"] = change["updatedAt"]
+                target_card["alertVersion"] = version(target_card)
                 substantive_change = True
-            cutoff_one_shot = (datetime.now().astimezone() - ONE_SHOT_TTL).isoformat()
-            for prior in old.values():
-                if prior.get("kind") not in ONE_SHOT_KINDS or prior["id"] in incoming_ids:
-                    continue
-                occurred = prior.get("occurredAt") or prior.get("updatedAt") or ""
-                if occurred and occurred < cutoff_one_shot:
-                    substantive_change = True  # 过期清理本身是一次状态变化
-                    continue
-                events.append(prior)
-                incoming_ids.add(prior["id"])
+            # 迁移清理：beta.3 早期把变化事件单独成卡（同名混淆 + 刷屏），不再保留
+            events = [e for e in events if e.get("kind") not in ONE_SHOT_KINDS]
             # B-11：被忽略的动态不再入库（内容真变者除外，见 _is_dismissed）
             events = [e for e in events if not self._is_dismissed(e)]
             others = [e for e in self.data["events"] if e.get("source") != source]
@@ -374,8 +372,9 @@ class DashboardStore:
             reads = self.data["readVersions"]
             if baseline is None:
                 for event in events:
-                    if event.get("kind") in ONE_SHOT_KINDS:
-                        continue  # 一次性变化事件是「有事发生」的记录，不参与首基线静默
+                    if event.get("alertVersion"):
+                        # 已被点亮的卡不参与首基线静默——它是「有事发生」的明确记录
+                        continue
                     if event.get("status") not in WAITING | ERRORS and not event.get("unreadCount"):
                         reads.setdefault(event["id"], version(event))
             # Bound bookkeeping to current events; no growing tombstone map.

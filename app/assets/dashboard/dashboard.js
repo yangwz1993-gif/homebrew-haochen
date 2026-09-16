@@ -65,9 +65,10 @@
       && !(String(item.id || '').startsWith('hi:msg:') && item.unread === false));
   }
   function isNotifiableUnread(event) {
-    // 未读且值得提醒：Otty 的常态实时状态卡（无 kind）不算「新内容」，不打红点。
+    // 未读且值得提醒：Otty 的常态实时状态卡不算「新内容」——除非被 turn_finished
+    // 点亮过（带 alertVersion，即「本轮处理已结束」）。
     if (!event || event.unread !== true) return false;
-    if (text(event.source)==='otty' && !event.kind) return false;
+    if (text(event.source)==='otty' && !event.kind && !event.alertVersion) return false;
     return true;
   }
   function injectConnectedEmptySlots(events, connectors) {
@@ -546,18 +547,16 @@
         const section = node('section','feed-module');
         const head = node('div','module-head');
         const badge = node('span',`group-glyph${sourceKind(g.source) === 'terminal' ? ' agent' : ''}`); badge.append(icon(sourceKind(g.source)));
-        const countEl = node('span','module-count','');
         const unreadEl = node('span','module-unread');
         unreadEl.hidden = true;
-        head.append(badge,node('span','module-name',appLabel(g.source)),unreadEl,countEl);
+        // 不再显示条目总数 pill：它只是个计数，没有行动信息，还和未读数打架
+        head.append(badge,node('span','module-name',appLabel(g.source)),unreadEl);
         const rows = node('div','module-rows');
         section.append(head,rows);
-        mod = {mod:section, rows, countEl, unreadEl};
+        mod = {mod:section, rows, countEl:null, unreadEl};
         ui.feedModules.set(g.key, mod);
       }
       target.append(mod.mod);  // 按固定顺序归位：已有节点是移动不是重建，不触发动画
-      const countText = String(g.items.length);
-      if (mod.countEl.textContent !== countText) mod.countEl.textContent = countText;
       // 模块标题的未读红点：让「哪个应用有新内容」一眼可见（Otty 常态卡不算）。
       const unreadN = g.items.filter(isNotifiableUnread).length;
       if (mod.unreadEl) {
