@@ -24,7 +24,9 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from .background import run_in_background
 from .engine_client import EngineClient
+from .key_validation import ServingProbe, probe_serving_model_for
 
 SUMMARY_KICK_PREFIX = "haochen-summary-phase"
 # 配对标记：兼容模型的错误闭合——==answer==/==/answer==、==summary==/==/summary== 等
@@ -53,6 +55,57 @@ _FOLLOW_UP_AFTER_ABORT = re.compile(
 _RESUME_CONTEXT_PREFIX = "<haochen_resume_context>"
 _RESUME_CONTEXT_SUFFIX = "</haochen_resume_context>"
 _VISIBLE_USER_MARKER = "<haochen_user_message>"
+
+
+# ── 身份问题拦截（「你是什么模型」绝不让模型用嘴答）────────────────────
+#
+# 模型自报身份不可信：它看得到对话历史里的旧答案就会照抄（2026-09-16 实测：会话里
+# 14 号切走 glm-5.3-flash 后，16 号问依然答 glm-5.3-flash，thinking 里明写
+# "Answer identically"）。身份问题由 App 用三层事实直接回答：
+#   引擎实况（get_state）→ 服务方实测（真实 API 回包的 model 字段）→ 磁盘默认配置
+_IDENTITY_RE = re.compile(
+    r"你(现在|目前)?(是|用的?|接入的?是?)(什么|啥|哪个)模型"
+    r"|你的模型(是|叫)(什么|啥)"
+    r"|what model are you",
+    re.IGNORECASE,
+)
+
+
+def is_identity_question(text: str) -> bool:
+    """用户是否在问「你是什么模型」这类身份问题。"""
+    return bool(_IDENTITY_RE.search(text.strip()))
+
+
+def compose_identity_answer(
+    engine: dict,
+    probe: ServingProbe | None,
+    default: tuple[str, str],
+) -> tuple[str, str]:
+    """(brief, detail)：三层事实对齐的身份回答。全部来自结构化数据，一个字都不编造。"""
+    model = (engine.get("model") or {}) if isinstance(engine, dict) else {}
+    live_model = model.get("id") or "未知"
+    live_provider = model.get("provider") or "未知"
+    thinking = engine.get("thinkingLevel") or "未知"
+    lines = [f"引擎实况：{live_provider} / {live_model}（推理档 {thinking}）"]
+    consistent = None
+    if probe is not None:
+        if probe.ok:
+            consistent = probe.served in (live_model, probe.requested)
+            mark = "✅ 与实况一致" if consistent else f"⚠️ 与实况（{live_model}）不一致，以服务方为准"
+            lines.append(f"服务方实测：{probe.served}（刚发真实请求，回包确认）{mark}")
+        else:
+            lines.append(f"服务方实测未完成：{probe.message}（以上以引擎实况为准）")
+    default_provider, default_model = default
+    if default_model and (default_provider, default_model) != (live_provider, live_model):
+        lines.append(
+            f"注意：默认配置是 {default_provider} / {default_model}，与当前会话实况不一致——"
+            "到设置里点「应用切换」即可对齐。")
+    brief = f"{live_model}（{live_provider}）"
+    if consistent:
+        brief += " · 实测一致"
+    elif consistent is False:
+        brief += " · 实测不一致"
+    return brief, "\n".join(lines)
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +406,8 @@ class ConversationController(QObject):
         if self.busy:
             self.failed.emit("上一轮尚未结束")
             return None
+        if is_identity_question(text):
+            return self._send_identity_turn(text)
         self._phase = "answer"
         self._answer_buf = ""
         self._current_user_text = text
@@ -393,12 +448,74 @@ class ConversationController(QObject):
         if self.busy:
             self.client.abort()
 
+    # ── 身份回合（不经引擎，三层事实直接回答）─────────────────────
+
+    def _send_identity_turn(self, text: str) -> str:
+        self._phase = "answer"
+        self._answer_buf = ""
+        self._current_user_text = text
+        self._identity_engine: dict = {}
+        self._identity_probe: ServingProbe | None = None
+        self.busy_changed.emit(True)
+        rid = self.client.get_state()
+        self._requests[rid] = "identity_state"
+        self.request_accepted.emit(rid)
+        self.request_committed.emit(rid)
+        return rid
+
+    def _on_identity_state(self, data: dict) -> None:
+        self._identity_engine = data
+        model = data.get("model") or {}
+        provider, model_id = model.get("provider", ""), model.get("id", "")
+        if not provider or not model_id:
+            self._finish_identity_turn()
+            return
+        from .settings.config_store import ConfigStore
+        store = ConfigStore(home=self.client.home, keychain=self.client.credentials)
+
+        def work():
+            return probe_serving_model_for(store, provider, model_id)
+
+        def done(result, error):
+            if self._phase != "answer":
+                return  # 回合已被中断/出错，不再发信号
+            self._identity_probe = result if error is None else ServingProbe(
+                False, model_id, "", "实测过程出错")
+            self._finish_identity_turn()
+
+        run_in_background(self, work, done)
+
+    def _finish_identity_turn(self) -> None:
+        if self._phase != "answer":
+            return
+        try:
+            from .settings.config_store import ConfigStore
+            default = ConfigStore(
+                home=self.client.home, keychain=self.client.credentials).default_model()
+        except Exception:  # noqa: BLE001 - 配置损坏时身份回答仍要给出实况
+            default = ("", "")
+        brief, detail = compose_identity_answer(
+            self._identity_engine, self._identity_probe, default)
+        self._answer_text = detail
+        self.answer_done.emit(detail)
+        self.summarizing.emit()
+        self._phase = ""
+        self.busy_changed.emit(False)
+        self.summary_done.emit(brief)
+        self.turn_done.emit(TurnResult(brief=brief, detail=detail, raw=detail))
+
     # ── 引擎事件 ──────────────────────────────────────────────
 
     def _on_response(self, resp: dict) -> None:
         request_id = str(resp.get("id", ""))
         phase = self._requests.pop(request_id, None)
         if phase is None:
+            return
+        if phase == "identity_state":
+            if resp.get("success"):
+                self._on_identity_state(resp.get("data") or {})
+            else:
+                self._finish_identity_turn()  # 拿不到实况也如实回答（标注未知）
             return
         if resp.get("success"):
             self.request_accepted.emit(request_id)

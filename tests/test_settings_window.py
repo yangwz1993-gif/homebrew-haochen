@@ -320,3 +320,26 @@ def test_codewiz_key_area_is_managed_readonly(qtbot, tmp_path: Path) -> None:
     assert "托管" in window._key_edit.placeholderText()
     assert window._key_peek_button.isHidden()
     assert window._key_edit_button.isHidden()
+
+
+def test_apply_switch_always_activates_even_when_same_as_default(qtbot, tmp_path: Path) -> None:
+    """A 修复回归：所选等于磁盘默认也要真激活——磁盘配置 ≠ 引擎实况
+    （会话跨重启记着旧模型），「应用切换」就是让实况追上配置的自愈入口。"""
+    window, store, _cred = make_window(qtbot, tmp_path)
+    emitted: list[tuple[str, str]] = []
+    window.modelChanged.connect(lambda p, m: emitted.append((p, m)))
+
+    current = store.default_model()  # 所选即默认，不做任何改动
+    window._apply_button.click()
+
+    assert emitted == [current]  # 不再被「已是默认」守卫跳过
+
+
+def test_custom_card_lists_only_user_added_endpoints(qtbot, tmp_path: Path) -> None:
+    """D 修复回归：codewiz 家族（带 baseUrl 的内置内网 provider）不得出现在
+    「自定义模型 → 已添加」——只有 custom- 前缀的真·用户端点才列出。"""
+    window, _store, _cred = make_window(qtbot, tmp_path)
+    labels = [label.text() for label in window._custom_list.findChildren(settings_module.QLabel)]
+    joined = " ".join(labels)
+    assert "codewiz" not in joined  # 那坨内置模型不见了
+    assert "Kimi K3" not in joined

@@ -46,6 +46,99 @@ def validate_api_key(provider: str, key: str, *, timeout: float = 10.0) -> Valid
     return ValidationResult(False, f"服务返回 HTTP {status}")
 
 
+@dataclass(frozen=True)
+class ServingProbe:
+    """服务方实测结果：向真实 API 发一个最小请求，回包里的 model 字段才是真相。"""
+
+    ok: bool
+    requested: str   # 请求时声明的模型
+    served: str      # 服务方回包 model 字段（空 = 没拿到）
+    message: str
+
+
+def probe_serving_model(
+    base_url: str,
+    model_id: str,
+    *,
+    key: str | None = None,
+    extra_headers: dict | None = None,
+    timeout: float = 12.0,
+) -> ServingProbe:
+    """向 OpenAI 兼容端点发 max_tokens=8 的 ping，读回包的 model 字段。
+
+    这是「我到底在跟哪个模型说话」的唯一可信来源：引擎目录/配置文件都是声明，
+    只有服务方回包是事实。
+    """
+    base = (base_url or "").strip().rstrip("/")
+    if not base or not model_id:
+        return ServingProbe(False, model_id or "", "", "缺少服务地址或模型 ID")
+    payload = json.dumps({
+        "model": model_id,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 8,
+        "stream": False,
+    }).encode("utf-8")
+    headers = {"Content-Type": "application/json", "User-Agent": "haochen/0.6"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    for name, value in (extra_headers or {}).items():
+        headers[name] = value
+    request = urllib.request.Request(
+        f"{base}/chat/completions", data=payload, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read(65536)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return ServingProbe(False, model_id, "", "凭据无效或无权限（HTTP 401/403）")
+        return ServingProbe(False, model_id, "", f"服务返回 HTTP {exc.code}")
+    except (OSError, urllib.error.URLError):
+        return ServingProbe(False, model_id, "", "网络连接失败")
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return ServingProbe(False, model_id, "", "回包不是合法 JSON")
+    served = str(data.get("model") or "").strip()
+    if not served:
+        return ServingProbe(False, model_id, "", "回包缺少 model 字段，无法证实")
+    return ServingProbe(True, model_id, served, "ok")
+
+
+# 内建 provider 的默认服务地址（models.json 里 baseUrl 为空时用）
+_BUILTIN_BASE_URLS = {"deepseek": "https://api.deepseek.com"}
+
+
+def probe_serving_model_for(store, provider_id: str, model_id: str, *, timeout: float = 12.0) -> ServingProbe:
+    """按 provider 解析真实凭证并实测服务方模型。
+
+    codewiz 家族用 codewiz.json + SSO 会话头；其余用 Keychain 免 UI 读取；
+    Gemini 协议端点暂不支持实测，如实告知。
+    """
+    catalog = {p.id: p for p in store.providers()}
+    info = catalog.get(provider_id)
+    base_url = (info.base_url if info else "") or _BUILTIN_BASE_URLS.get(provider_id, "")
+    if not base_url:
+        return ServingProbe(False, model_id, "", "找不到该供应商的服务地址")
+    if info is not None and info.api == "google-generative-ai":
+        return ServingProbe(False, model_id, "", "该供应商是 Gemini 协议，暂不支持实测")
+    if provider_id.startswith("codewiz"):
+        from . import codewiz
+        env = codewiz.codewiz_env(store.home)
+        key = env.get("CODEWIZ_API_KEY", "")
+        headers = codewiz.validation_headers(env.get("CODEWIZ_USER_EMAIL", ""))
+        if not key or headers is None:
+            return ServingProbe(False, model_id, "", "内网凭证未就绪（请先在向导连接内网）")
+        return probe_serving_model(base_url, model_id, key=key, extra_headers=headers, timeout=timeout)
+    from .keychain import KeychainError, KeychainInteractionRequired, read_credential_without_ui
+    try:
+        key = read_credential_without_ui(store.keychain, provider_id)
+    except (KeychainInteractionRequired, KeychainError):
+        key = None
+    if not key:
+        return ServingProbe(False, model_id, "", "本地没有可读出的 Key，无法实测")
+    return probe_serving_model(base_url, model_id, key=key, timeout=timeout)
+
+
 def normalize_model_base_url(value: str) -> str:
     """Validate and normalize a user-owned model endpoint without accepting embedded secrets."""
     raw = value.strip().rstrip("/")

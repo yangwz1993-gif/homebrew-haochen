@@ -42,6 +42,7 @@ class AppShell:
     def __init__(self, mock: bool | None = None, home: Path | None = None):
         self.supervisor = EngineSupervisor(mock=mock, home=home)
         self.store = ConfigStore(home, keychain=self.supervisor.client.credentials)
+        self._probe_after_apply = False
         self.chat = ChatWindow(client=self.supervisor.client, supervisor=self.supervisor)
         self.chat.setStyleSheet(app_stylesheet())
         self.pet = PetApp(client=self.supervisor.client, supervisor=self.supervisor)
@@ -197,9 +198,11 @@ class AppShell:
     # ── 配置生效链 ─────────────────────────────────────────────
 
     def _on_model_changed(self, provider: str, model_id: str) -> None:
+        self._probe_after_apply = True  # 用户发起的切换：成功后实测服务方模型并回报
         self._activate_config(provider, model_id, self._settings_config_done, reload=False)
 
     def _on_restart_required(self, reason: str) -> None:
+        self._probe_after_apply = True
         provider, model = self.store.default_model()
         self._activate_config(provider, model, self._settings_config_done)
 
@@ -212,6 +215,39 @@ class AppShell:
             return
         self.settings._finish_working()
         self.settings._set_status(message, ok=ok)
+        if ok and getattr(self, "_probe_after_apply", False):
+            self._probe_after_apply = False
+            provider, model = self.store.default_model()
+            if provider and model:
+                self._run_serving_probe(provider, model)
+
+    def _run_serving_probe(self, provider: str, model: str) -> None:
+        """切换成功后向服务方发真实请求，回包 model 字段才是「切换真生效」的铁证。"""
+        from .key_validation import probe_serving_model_for
+        self.settings._set_status("已生效，正在向服务方实测确认…", ok=True)
+
+        def work():
+            return probe_serving_model_for(self.store, provider, model)
+
+        def done(result, error):
+            from PyQt6.sip import isdeleted
+            if isdeleted(self.settings):
+                return
+            if error is not None:
+                self.settings._set_status("已生效；服务方实测未完成（网络异常）", ok=True)
+                return
+            if result.ok:
+                if result.served == model:
+                    self.settings._set_status(f"已生效 · 服务方实测确认：{result.served}", ok=True)
+                else:
+                    self.settings._set_status(
+                        f"已生效但服务方实测为 {result.served}（与所选 {model} 不一致，请以实测为准）",
+                        ok=False)
+            else:
+                self.settings._set_status(f"已生效；服务方实测未完成：{result.message}", ok=True)
+
+        from .background import run_in_background
+        run_in_background(self.settings, work, done)
 
     # ── 首启引导 ───────────────────────────────────────────────
 

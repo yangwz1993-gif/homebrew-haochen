@@ -388,9 +388,8 @@ class SettingsWindow(QWidget):
         if (provider, model) == self._missing_default:
             self._set_status("该模型不在当前目录，请换选其他模型后再应用。", ok=False)
             return
-        if (provider, model) == self.store.default_model():
-            self._set_status("所选已是当前默认模型。", ok=True)
-            return
+        # 即使所选等于磁盘默认也照常激活：磁盘配置 ≠ 引擎实况（会话跨重启记着自己的
+        # 旧模型），点「应用切换」就是让实况追上配置的自愈入口，绝不能被跳过。
         effect = self.store.set_default_model(provider, model)
         if self.activate:
             self._set_working(True)
@@ -639,7 +638,9 @@ class SettingsWindow(QWidget):
         self._custom_list = QWidget()
         custom_list = QVBoxLayout(self._custom_list)
         custom_list.setContentsMargins(0, 0, 0, 0)
-        custom = [p for p in providers if not p.builtin]
+        custom = [p for p in providers if p.id.startswith("custom-")]
+        # 注意：不能用 not p.builtin——codewiz 家族带 baseUrl 会被误判成自定义端点，
+        # 全部列进「已添加」（2026-09-16 用户看到的「一坨模型」就是这么来的）。
         if custom:
             custom_list.addWidget(QLabel("已添加", objectName="cardTitle"))
         for provider in custom:
