@@ -145,7 +145,7 @@ def test_attention_label_names_the_source_app():
     assert state["kind"] == "attention" and "Hi" in state["label"]
     state = attention.activity(
         [{"status": "awaiting", "unread": True, "source": "otty"}], [])
-    assert "Agent" in state["label"]
+    assert "Otty" in state["label"]
     state = attention.activity(
         [{"status": "awaiting", "unread": True, "source": "hi"},
          {"status": "needs_attention", "unread": True, "source": "calendar"}], [])
@@ -201,4 +201,77 @@ def test_otty_idle_status_card_is_not_a_new_result():
     assert state["kind"] == "idle"
     state = attention.activity(
         [{"status": "idle", "unread": True, "source": "otty", "kind": "turn_finished"}], [])
-    assert state["kind"] == "new" and "Agent" in state["label"]
+    assert state["kind"] == "new" and "Otty" in state["label"]
+
+
+def change_event(identifier="otty:p_1:turn_finished:20260916180208", **extra):
+    """Otty 适配器在状态跃迁当次返回的一次性变化事件（下一轮询不再携带）。"""
+    return {"id": identifier, "title": "π - 测试会话", "state": "idle", "kind": "turn_finished",
+            "summary": "本轮处理已结束；事项是否完成仍由你确认。", "previousState": "processing",
+            "updatedAt": "2026-09-16T10:02:08+00:00", **extra}
+
+
+def observe_with_changes(store, events, changes):
+    store.observe("otty", {"status": "ready", "events": events, "changes": changes})
+    return store.snapshot()["events"]
+
+
+def test_turn_finished_change_card_alerts_and_names_otty(tmp_path):
+    """一轮跑完 → 变化卡进事件流 → 未读 → 刘海提醒并指名「Otty」。"""
+    store = Store(tmp_path)
+    observe(store, event())  # 常态卡基线
+    rows = observe_with_changes(store, [event()], [change_event()])
+    card = next(r for r in rows if r.get("kind") == "turn_finished")
+    assert card["unread"] is True
+    activity = attention.activity(rows, [])
+    assert activity["kind"] == "new" and "Otty" in activity["label"]
+
+
+def test_one_shot_change_card_survives_following_polls(tmp_path):
+    """适配器只在跃迁当次返回变化卡；store 负责保留，下一轮不带走就消失是 bug。"""
+    store = Store(tmp_path)
+    observe(store, event())
+    observe_with_changes(store, [event()], [change_event()])
+    rows = observe(store, event())  # 下一轮不带 changes
+    assert any(r.get("kind") == "turn_finished" for r in rows)
+    assert any(r.get("kind") == "turn_finished" for r in observe(store, event()))
+
+
+def test_one_shot_read_ack_silences_alert(tmp_path):
+    store = Store(tmp_path)
+    observe(store, event())
+    rows = observe_with_changes(store, [event()], [change_event()])
+    card = next(r for r in rows if r.get("kind") == "turn_finished")
+    assert store.mark_read(card["id"], card["attentionVersion"]) == {"acknowledged": True}
+    rows = store.snapshot()["events"]
+    assert attention.activity(rows, [])["kind"] != "new"
+
+
+def test_one_shot_change_card_expires_after_ttl(tmp_path):
+    store = Store(tmp_path)
+    observe(store, event())
+    observe_with_changes(store, [event()], [change_event()])
+    # 把时间改老（13h 前）后直接改库，再跑一轮普通轮询触发保留判定
+    for row in store.data["events"]:
+        if row.get("kind") == "turn_finished":
+            row["occurredAt"] = "2026-09-15T20:00:00+00:00"
+            row["updatedAt"] = row["occurredAt"]
+    rows = observe(store, event())
+    assert not any(r.get("kind") == "turn_finished" for r in rows)
+
+
+def test_one_shot_survives_restart_unread(tmp_path):
+    """变化卡持久化：重启 App 后未读仍在（readVersions 不落库的项不被首基线静默）。"""
+    store = Store(tmp_path)
+    observe(store, event())
+    observe_with_changes(store, [event()], [change_event()])
+    reloaded = Store(tmp_path)
+    rows = reloaded.snapshot()["events"]
+    card = next(r for r in rows if r.get("kind") == "turn_finished")
+    assert card["unread"] is True
+    # 重启后第一轮普通轮询（store 基线丢失）也不得把它静默成已读
+    store2 = Store(tmp_path)
+    observe(store2, event())
+    rows = store2.snapshot()["events"]
+    card = next(r for r in rows if r.get("kind") == "turn_finished")
+    assert card["unread"] is True

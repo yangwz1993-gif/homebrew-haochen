@@ -33,7 +33,7 @@ def decorate(events, read_versions):
     return result
 
 
-_SOURCE_NAMES = {"hi": "Hi 消息", "otty": "Agent", "browser": "网页", "wechat": "微信", "calendar": "日历"}
+_SOURCE_NAMES = {"hi": "Hi 消息", "otty": "Otty", "browser": "网页", "wechat": "微信", "calendar": "日历"}
 
 
 def _source_names(events) -> list[str]:

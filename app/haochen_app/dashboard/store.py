@@ -18,6 +18,11 @@ from ..secure_storage import atomic_write_private, ensure_private_directory, ens
 from .attention import ERRORS, WAITING, decorate, version
 
 FREQUENCIES = {"manual": 0, "quarter": 900, "hourly": 3600, "daily": 86400}
+
+# 一次性变化事件（如 Otty turn_finished/state_changed）：适配器只在状态跃迁当次
+# 返回，store 负责保留到 TTL，让读者有机会看到；读完或过期即清。
+ONE_SHOT_KINDS = {"turn_finished", "state_changed"}
+ONE_SHOT_TTL = timedelta(hours=12)
 PALETTES = {"glass", "sage", "stone", "mist", "carbon"}
 MAX_STATE_BYTES = 32 * 1024 * 1024
 
@@ -333,6 +338,35 @@ class DashboardStore:
                 # rows, not proof of disappearance. Preserve them as stale.
                 events.extend({**event, "incomplete": True, "stale": True}
                               for identifier, event in old.items() if identifier not in seen)
+            # 一次性变化事件合并 + 保留（见 ONE_SHOT_* 常量；这类事件在 0.6.2-beta.3
+            # 之前算完就被丢弃，Otty 因此从未在刘海上提醒过）。
+            incoming_ids = {e["id"] for e in events}
+            reliable_snapshot = status in {"ready", "connected", "partial"}
+            for change in result.get("changes") or []:
+                if (not isinstance(change, dict) or not isinstance(change.get("id"), str)
+                        or not change["id"] or change["id"] in incoming_ids):
+                    continue
+                if change.get("kind") not in ONE_SHOT_KINDS:
+                    continue
+                event = copy.deepcopy(change)
+                event.update(source=source, status=event.get("status", event.get("state", "unknown")),
+                             occurredAt=event.get("updatedAt", result.get("checkedAt", now())))
+                event["evidence"] = evidence_preview(event.get("evidence", []))
+                if not reliable_snapshot:
+                    event["stale"] = True
+                events.append(event)
+                incoming_ids.add(event["id"])
+                substantive_change = True
+            cutoff_one_shot = (datetime.now().astimezone() - ONE_SHOT_TTL).isoformat()
+            for prior in old.values():
+                if prior.get("kind") not in ONE_SHOT_KINDS or prior["id"] in incoming_ids:
+                    continue
+                occurred = prior.get("occurredAt") or prior.get("updatedAt") or ""
+                if occurred and occurred < cutoff_one_shot:
+                    substantive_change = True  # 过期清理本身是一次状态变化
+                    continue
+                events.append(prior)
+                incoming_ids.add(prior["id"])
             # B-11：被忽略的动态不再入库（内容真变者除外，见 _is_dismissed）
             events = [e for e in events if not self._is_dismissed(e)]
             others = [e for e in self.data["events"] if e.get("source") != source]
@@ -340,6 +374,8 @@ class DashboardStore:
             reads = self.data["readVersions"]
             if baseline is None:
                 for event in events:
+                    if event.get("kind") in ONE_SHOT_KINDS:
+                        continue  # 一次性变化事件是「有事发生」的记录，不参与首基线静默
                     if event.get("status") not in WAITING | ERRORS and not event.get("unreadCount"):
                         reads.setdefault(event["id"], version(event))
             # Bound bookkeeping to current events; no growing tombstone map.
