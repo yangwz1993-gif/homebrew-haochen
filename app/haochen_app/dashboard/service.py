@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from datetime import datetime
@@ -13,12 +14,16 @@ from .adapters.browser import BrowserAdapter
 from .adapters.calendar import CalendarAdapter
 from .adapters.hi import HiAdapter
 from .adapters.otty import OttyAdapter
+from .adapters.tianti import TiantiAdapter
 from .adapters.wechat import WeChatAdapter
 from .attention import activity
 from .store import FREQUENCIES, DashboardStore, now
 from .tracking import SummaryWorker, daily_report, refresh_track
 
-NAMES = {"otty": "Otty", "browser": "Chrome", "calendar": "日历", "wechat": "微信", "hi": "Hi"}
+log = logging.getLogger("haochen.dashboard")
+
+NAMES = {"otty": "Otty", "browser": "Chrome", "calendar": "日历", "wechat": "微信", "hi": "Hi",
+         "tianti": "天梯日报"}
 
 # C-11 二维状态：内容态的「失效」按来源定义（连接态由适配器 status 映射）。
 # 归档（archived，如关闭超 12h 的旧追踪页）与过期（stale）不参与失效计数。
@@ -41,7 +46,8 @@ class DashboardService(QObject):
         settings = self.store.snapshot()["settings"]
         self.adapters = {"otty": OttyAdapter(), "browser": BrowserAdapter(config.home),
                          "calendar": CalendarAdapter(settings.get("calendarIds")), "wechat": WeChatAdapter(),
-                         "hi": HiAdapter()}
+                         "hi": HiAdapter(),
+                         "tianti": TiantiAdapter(config.home, keychain=getattr(config, "keychain", None))}
         self.adapters["browser"].set_enabled(settings["connectors"].get("browser", False))
         self.summarizer = SummaryWorker(config)
         self.connectors = {}
@@ -151,6 +157,14 @@ class DashboardService(QObject):
                 ):
                     self._cancel_for_source(identifier)
                 self.store.observe(identifier, result, revision=source_revision)
+                # 天梯日报：核心事实卡全自动同步到「我在追踪」（连接成功且有项目数据时）
+                if identifier == "tianti" and result.get("status") == "ready" and result.get("projects"):
+                    try:
+                        created, updated = self.store.sync_tianti_tracks(result["projects"])
+                        if created or updated:
+                            self.notice.emit(f"天梯日报：已同步 {created + updated} 个核心事实卡到「我在追踪」")
+                    except Exception:  # noqa: BLE001 - 同步失败不影响主快照入库
+                        log.exception("tianti track sync failed")
             return result
 
         def done(result, error):
@@ -232,6 +246,12 @@ class DashboardService(QObject):
                 if not enabled:
                     connector["summary"] = ("可按需聚合 Hi 的今日待跟进日程与待处理任务；"
                                             "只读、不发消息，不代表真实未读数。")
+            if identifier == "tianti":
+                connector["reasonCode"] = raw.get("reasonCode")
+                connector["capabilities"] = ["只读拉取你的日报与核心事实卡", "cookie 存 Keychain、不过第三方",
+                                             "失效时点一下即可重连，不用手动找 cookie"]
+                if not enabled:
+                    connector["summary"] = "连接后每天自动读你的天梯日报，核心事实卡自动进追踪。"
             connectors.append(connector)
         connectors.extend([
             {"id": "lark", "name": "飞书", "enabled": False, "status": "disabled", "summary": "按计划延期接入。"},

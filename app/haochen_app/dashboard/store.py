@@ -59,10 +59,10 @@ class DashboardStore:
         self._revoked_sources = set()
         self.data = {
             "schema": 1, "events": [], "history": [], "tracks": [], "files": [], "reports": [],
-            "readVersions": {}, "entranceRevision": 5,
+            "readVersions": {}, "entranceRevision": 5, "tiantiTombstones": [],
             "settings": {"palette": "glass", "motion": "system", "dock": "notch", "aiDaily": False,
                          "connectors": {"otty": True, "browser": True, "calendar": False, "wechat": False,
-                                        "hi": True}},
+                                        "hi": True, "tianti": True}},
         }
         migrate_reads = False
         if self.path.exists():
@@ -186,7 +186,7 @@ class DashboardStore:
             self._save()
 
     def enable(self, connector, enabled):
-        if connector not in ("otty", "browser", "calendar", "wechat", "hi"):
+        if connector not in ("otty", "browser", "calendar", "wechat", "hi", "tianti"):
             raise ValueError("此来源尚无可靠连接器")
         with self.lock:
             self._source_versions[connector] = self._source_versions.get(connector, 0) + 1
@@ -424,7 +424,10 @@ class DashboardStore:
                         raise ValueError("网页渠道需要不含账号密码的 http/https 地址")
                 cleaned.append({"id": short_text(source.get("id") or uuid.uuid4().hex, 80),
                                 "type": source["type"], "label": short_text(source.get("label") or locator, 120),
-                                "locator": locator})
+                                "locator": locator,
+                                # 天梯同步来源的标记必须随编辑保留，否则同步会误判失踪而重建重复事项
+                                **({"tiantiPid": short_text(source.get("tiantiPid"), 80)}
+                                   if source.get("tiantiPid") else {})})
             if create:
                 if len(self.data["tracks"]) >= 60:
                     raise ValueError("最多同时保留 60 个事项，请归档或删除不再需要的事项")
@@ -457,9 +460,76 @@ class DashboardStore:
 
     def track_delete(self, identifier):
         with self.lock:
-            self._track(identifier)
+            track = self._track(identifier)
+            # 天梯同步建立的事项被用户删除 → 记 tombstone，后续同步不再复活
+            for source in track.get("sources", []):
+                tianti_pid = source.get("tiantiPid")
+                if tianti_pid:
+                    self.data.setdefault("tiantiTombstones", []).append(tianti_pid)
             self.data["tracks"] = [t for t in self.data["tracks"] if t["id"] != identifier]
             self._save()
+
+    def sync_tianti_tracks(self, projects):
+        """天梯核心事实卡全自动同步到「我在追踪」（用户选定的语义）：
+
+        - 新 active 项目 → 自动建追踪（daily 频率，渠道 = 事实卡独立链接）
+        - 已同步的 → 只更新目标/链接/项目名变化，不动用户勾选的频率等
+        - 用户手动删过的（tombstone）→ 永不复活
+        返回 (新建数, 更新数)。
+        """
+        if not isinstance(projects, list):
+            return (0, 0)
+        created = updated = 0
+        with self.lock:
+            tombstones = set(self.data.setdefault("tiantiTombstones", []))
+            for project in projects:
+                if not isinstance(project, dict):
+                    continue
+                pid = str(project.get("id") or "").strip()
+                name = str(project.get("name") or "").strip()
+                if not pid or not name or project.get("status") != "active":
+                    continue
+                if pid in tombstones:
+                    continue
+                link = str(project.get("link") or "").strip()
+                goal = str(project.get("goal") or "").strip()
+                existing = next(
+                    (t for t in self.data["tracks"]
+                     if any(s.get("tiantiPid") == pid for s in t.get("sources", []))),
+                    None)
+                if existing is not None:
+                    changed = False
+                    if goal and existing.get("goal") != goal:
+                        existing["goal"] = goal
+                        changed = True
+                    for source in existing.get("sources", []):
+                        if source.get("tiantiPid") == pid:
+                            if link and source.get("locator") != link:
+                                source["locator"] = link
+                                changed = True
+                            if source.get("label") != f"{name} · 核心事实卡":
+                                source["label"] = f"{name} · 核心事实卡"
+                                changed = True
+                    if changed:
+                        existing["updatedAt"] = now()
+                        existing["revision"] = uuid.uuid4().hex
+                        updated += 1
+                    continue
+                if len(self.data["tracks"]) >= 60:
+                    continue  # 达到上限时静默跳过，详情见仪表盘连接卡文案
+                track = {"id": uuid.uuid4().hex, "createdAt": now(), "paused": False,
+                         "completed": False, "status": "pending", "conclusion": "尚未检查",
+                         "evidence": [], "title": name, "goal": goal,
+                         "frequency": "daily", "aiEnabled": False,
+                         "sources": [{"id": uuid.uuid4().hex, "type": "url",
+                                      "label": f"{name} · 核心事实卡", "locator": link,
+                                      "tiantiPid": pid}],
+                         "updatedAt": now(), "nextCheckAt": "", "revision": uuid.uuid4().hex}
+                self.data["tracks"].append(track)
+                created += 1
+            if created or updated:
+                self._save()
+        return (created, updated)
 
     def track_result(self, identifier, result, *, revision=None):
         with self.lock:

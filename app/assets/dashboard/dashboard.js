@@ -7,7 +7,7 @@
   'use strict';
   const PALETTES = Object.freeze({glass:'玻璃质感', sage:'浅雾绿', stone:'暖白石墨', mist:'冷白雾蓝', carbon:'中性炭灰'});
   const FREQUENCIES = Object.freeze({manual:'仅手动', quarter:'每 15 分钟', hourly:'每小时', daily:'每天'});
-  const ACTIONS = new Set(['ready','refresh','openSource','trackCreate','trackUpdate','trackPause','trackRefresh','trackDelete','reportGet','pickFolder','fileRemove','askHaochen','openSettings','collapse','connectorEnable','settingsUpdate','browserInstall','browserExtensionFolder','calendarList','calendarSelect','ottyCheck','ottySetup','eventRead','eventDismiss']);
+  const ACTIONS = new Set(['ready','refresh','openSource','trackCreate','trackUpdate','trackPause','trackRefresh','trackDelete','reportGet','pickFolder','fileRemove','askHaochen','openSettings','collapse','connectorEnable','settingsUpdate','browserInstall','browserExtensionFolder','calendarList','calendarSelect','ottyCheck','ottySetup','eventRead','eventDismiss','tiantiConnect']);
   const STATUS = Object.freeze({connected:'已连接', disconnected:'连接已断开', not_connected:'尚未连接', disabled:'未开启', available:'内容可用', permission_required:'需要授权', limited:'能力受限', partial:'内容不完整', unavailable:'暂不可用', not_running:'应用未运行', tab_closed:'标签页已关闭', target_changed:'原标签页已切换', suspended:'标签页已休眠', reading:'读取中', error:'检查失败', failed:'检查失败', running:'进行中', processing:'处理中', working:'进行中', busy:'检查中', checking:'检查中', awaiting:'等待确认', waiting:'等待确认', needs_attention:'需要关注', completed:'已完成', complete:'已完成', success:'已更新', changed:'有变化', unchanged:'未发现变化', idle:'就绪', paused:'已暂停', pending:'等待检查', unknown:'状态未知', unavailable_source:'来源不可用', stale:'状态已过期', unsupported:'暂不支持', warning:'需要关注', ready:'就绪'});
   const list = (value, limit = 1000) => Array.isArray(value) ? value.filter(item => item && typeof item === 'object' && !Array.isArray(item)).slice(0, limit) : [];
   // Back-end source snapshots can contain 48,000 characters. Preserve their
@@ -252,6 +252,7 @@
     if (/chrome|browser|浏览器|safari/.test(name)) return 'globe';
     if (/calendar|日历/.test(name)) return 'calendar';
     if (/^hi$|hi:|hi 待|hi消息/.test(name)) return 'hi';
+    if (/tianti|天梯|日报|daily/.test(name)) return 'notebook';
     if (/wechat|微信/.test(name)) return 'wechat';
     if (/飞书|feishu|lark/.test(name)) return 'message';
     if (/file|folder|文件/.test(name)) return 'folder';
@@ -261,7 +262,7 @@
     const key = text(source,60);
     const connector = (ui.state?.connectors || []).find(item => item.id === key);
     if (connector && connector.name) return connector.name;
-    return {otty:'Otty', browser:'Chrome', wechat:'微信', calendar:'日历', hi:'Hi'}[key] || key || '其他';
+    return {otty:'Otty', browser:'Chrome', wechat:'微信', calendar:'日历', hi:'Hi', tianti:'天梯日报'}[key] || key || '其他';
   }
   function validateTrackDraft(value) {
     const raw = record(value);
@@ -537,7 +538,7 @@
     }
     // Fixed module order so modules never swap places as events refresh; only a
     // brand-new app appends after the known ones (then alphabetical, stable).
-    const ORDER = ['otty','hi','browser','wechat','calendar'];
+    const ORDER = ['otty','hi','tianti','browser','wechat','calendar'];
     const rank = (s) => { const i = ORDER.indexOf(text(s)); return i < 0 ? ORDER.length : i; };
     groups.sort((a,b) => (rank(a.source) - rank(b.source)) || text(a.source).localeCompare(text(b.source)));
     // 排序比较器与 core.feedCompare 同一套（纯函数，已被单测钉死）
@@ -850,7 +851,7 @@
     const actions = node('div','detail-actions');
     actions.append(button('现在检查','track-refresh',{className:'primary-button',icon:'refresh',id:view.id,key:'track-refresh',disabled:['checking','busy'].includes(track.status)}),button('编辑','track-edit',{icon:'edit',id:view.id,key:'track-edit'}),button(track.paused?'恢复追踪':'暂停追踪','track-pause',{icon:track.paused?'play':'pause',id:view.id,key:'track-pause'}),button('问 haochen','track-ask',{icon:'sparkles',id:view.id,key:'track-ask'})); body.append(actions);
     const sources = section('沿着这些渠道追踪');
-    for (const source of list(track.sources,12)) { const line = node('div','source-line'), copy = node('div'); copy.append(node('strong','',source.label || '追踪渠道'),node('small','',source.locator)); line.append(icon(source.type === 'url' ? 'globe' : source.type === 'file' ? 'folder' : 'link'),copy); sources.append(line); }
+    for (const source of list(track.sources,12)) { const line = node('div','source-line'), copy = node('div'); copy.append(node('strong','',source.label || '追踪渠道'),node('small','',source.locator)); line.append(icon(source.type === 'url' ? 'globe' : source.type === 'file' ? 'folder' : 'link'),copy); if (source.type === 'url' && safeURL(source.locator)) { const open = button('打开','evidence-open',{className:'text-button',icon:'arrow-up-right'}); open.dataset.url = safeURL(source.locator); line.append(open); } sources.append(line); }
     if (!list(track.sources).length) sources.append(paragraph('尚未添加渠道，请编辑事项补充。')); body.append(sources);
     const evidence = section('检查依据'); if (list(track.evidence).length) renderEvidence(track.evidence,evidence); else evidence.append(paragraph('还没有可展示的来源快照。')); body.append(evidence);
     const remove = section('事项管理');
@@ -987,6 +988,12 @@
       if (safeURL(connector.helpUrl)) { const help = button('连接帮助','evidence-open',{icon:'arrow-up-right',className:'text-button'}); help.dataset.url = safeURL(connector.helpUrl); actions.append(help); }
       if (actions.childNodes.length) card.append(actions);
       if (/otty/.test(id)) renderOttyConnection(connector,card);
+      if (id==='tianti' && connector.status==='permission_required') {
+        const tiantiActions = node('div','detail-actions');
+        tiantiActions.append(button('一键连接天梯日报','tianti-connect',{className:'primary-button',icon:'link',key:'tianti-connect'}));
+        card.append(tiantiActions);
+        card.append(paragraph('点一下即可：装了扩展走扩展弹窗，没装弹登录小窗——都不用手动找 cookie。','field-help'));
+      }
       if (/wechat/.test(id)) {
         const diagnosis = record(connector.diagnostics);
         if (diagnosis.message) card.append(paragraph(diagnosis.message,'connector-help'));
@@ -1122,6 +1129,7 @@
     else if (action === 'calendar') { if ([...ui.state.calendar,...ui.state.events].some(item=>text(item.id)===id)) openModal('calendar',id,el); else toast('这条日程已不在当前列表。'); }
     else if (action === 'track') { if (ui.state.tracks.some(item=>text(item.id)===id)) openModal('track',id,el); else toast('这个事项已移除，其他事项没有变化。'); }
     else if (action === 'track-new') openModal('edit',null,el);
+    else if (action === 'tianti-connect') await perform('tiantiConnect',{},el);
     else if (action === 'track-edit') openModal('edit',id,el);
     else if (action === 'modal-back') closeModal();
     else if (action === 'event-dismiss') {

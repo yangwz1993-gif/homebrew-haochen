@@ -19,7 +19,7 @@ ACTIONS = {
     "ready", "refresh", "openSource", "trackCreate", "trackUpdate", "trackPause", "trackRefresh", "trackDelete",
     "reportGet", "pickFolder", "fileRemove", "askHaochen", "openSettings", "collapse", "connectorEnable",
     "settingsUpdate", "browserInstall", "browserExtensionFolder", "calendarList", "calendarSelect",
-    "eventRead", "eventDismiss", "ottyCheck", "ottySetup",
+    "eventRead", "eventDismiss", "ottyCheck", "ottySetup", "tiantiConnect",
 }
 HELP_URLS = {"https://docs.otty.sh/agents/setup", "https://docs.otty.sh/reference/cli",
              "https://cowork.xiaohongshu.com/s/teach-2-v3/#daily"}
@@ -45,6 +45,7 @@ class DashboardController(QObject):
         self.window = NativeDashboard(paths.dashboard_assets(), self)
         self._seen = []
         self._picker = None
+        self._tianti_login = None
         self.window.ready.connect(self.push)
         self.window.message.connect(self.handle)
         self.window.files_dropped.connect(self.add_files)
@@ -147,6 +148,8 @@ class DashboardController(QObject):
             self.pick_files()
         elif action == "fileRemove":
             store.remove_file(payload.get("id"))
+        elif action == "tiantiConnect":
+            return self._tianti_connect()
         elif action == "openSource":
             self.open_source(payload)
         elif action == "askHaochen":
@@ -232,6 +235,34 @@ class DashboardController(QObject):
             self._picker = None
 
         picker.beginSheetModalForWindow_completionHandler_(self.window.panel, done)
+
+    def _tianti_connect(self):
+        """天梯日报一键连接：扩展在 → 引导扩展弹窗两下；扩展不在 → 内嵌登录窗。"""
+        adapter = self.service.adapters["tianti"]
+        if adapter.cookie_present():
+            self.service._collect("tianti")
+            return {"message": "天梯日报已有登录态，正在刷新…"}
+        browser = self.service.connectors.get("browser", {})
+        if browser.get("status") in ("connected", "ready"):
+            return {"message": "请点 Chrome 右上角的 haochen 扩展图标，再点「一键连接天梯日报」——"
+                              "点两下就好，不用找 cookie。"}
+        from .tianti_auth import TiantiLoginWindow
+
+        def done(cookie):
+            if cookie:
+                try:
+                    adapter.save_cookie(cookie)
+                except Exception:  # noqa: BLE001
+                    self.window.send({"ok": False, "error": "登录态保存失败，请重试"})
+                    return
+                self.window.send({"ok": True, "message": "已连接天梯日报 ✅ 首次读取进行中"})
+                self.service._collect("tianti")
+            else:
+                self.window.send({"ok": False, "error": "已取消连接；什么时候想连，再点一次就好。"})
+
+        self._tianti_login = TiantiLoginWindow(done)
+        self._tianti_login.show()
+        return {"message": "在弹出的小窗里登录一次即可——全程不用找 cookie。"}
 
     def open_source(self, payload):
         if payload.get("connectorId") == "wechat":

@@ -12,6 +12,9 @@
     "nativeMessaging",
     "alarms"
   ],
+  "optional_permissions": [
+    "cookies"
+  ],
   "optional_host_permissions": [
     "https://*/*",
     "http://*/*"

@@ -11,7 +11,11 @@
   <section><h2>当前页面</h2><p id="page-title">正在获取当前页面…</p>
     <button id="track" disabled>授权此网站并追踪当前页</button>
     <button id="cancel-track" class="subtle" hidden>取消这次选择</button>
-    <p class="hint">授权后定期读取此页文字，只发送到本机 haochen。不读取输入框、密码、Cookie、无痕页面；不会追踪同站点的其他页面。图片和跨域框架暂不包含。</p></section>
+    <p class="hint">授权后定期读取此页文字，只发送到本机 haochen。不读取输入框、密码、无痕页面；不会追踪同站点的其他页面。图片和跨域框架暂不包含。Cookie 仅在你点「连接天梯日报」时读取 cowork 的登录态，别处一律不碰。</p></section>
+  <section><h2>天梯日报</h2>
+    <p class="hint">点一下即完成连接：仅读取 cowork 登录 cookie（web_session）并传给本机 haochen；别的域名、别的 cookie 一律不碰。</p>
+    <button id="tianti-connect">一键连接天梯日报</button>
+    <p id="tianti-status" class="hint" role="status"></p></section>
   <p id="notice" role="status" aria-live="polite"></p>
   <section><h2>正在关注 <span id="count">0</span></h2><div id="sources"></div></section>
   <footer>切换到其他网址不会被偷偷改读。<br>移除来源立即停止追踪；可在扩展设置撤回站点权限。</footer>

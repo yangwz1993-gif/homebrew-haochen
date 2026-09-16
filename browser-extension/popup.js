@@ -67,6 +67,29 @@ $("copy-id").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(chrome.runtime.id); notify("扩展 ID 已复制。"); }
   catch (_) { notify("请手动选择并复制上方扩展 ID。"); }
 });
+// 天梯日报一键连接：只在点击这一刻、只对 cowork 域名请求 cookies 权限，
+// 只读 web_session 一个 cookie，经本机桥接交给 haochen（不落盘到扩展存储）。
+$("tianti-connect").addEventListener("click", async () => {
+  const button = $("tianti-connect"), status = $("tianti-status");
+  button.disabled = true;
+  status.textContent = "正在请求 cowork 域名的读取授权…";
+  try {
+    const granted = await chrome.permissions.request({
+      permissions: ["cookies"], origins: ["https://cowork.xiaohongshu.com/*"]});
+    if (!granted) { status.textContent = "未授权，未连接。授权只在点击时请求、仅用于这一次连接。"; return; }
+    const cookie = await chrome.cookies.get({url: "https://cowork.xiaohongshu.com", name: "web_session"});
+    if (!cookie?.value) {
+      status.textContent = "没有读到 cowork 登录态：请先在 Chrome 里登录 cowork，再点这里。";
+      return;
+    }
+    await command({type: "tiantiCookie", value: cookie.value});
+    status.textContent = "已连接天梯日报 ✅ haochen 会每天自动读取你的日报。";
+  } catch (error) {
+    status.textContent = error.message || "连接失败，请重试。";
+  } finally {
+    button.disabled = false;
+  }
+});
 $("track").addEventListener("click", async () => {
   if (!active || !connected) return;
   tracking = true;

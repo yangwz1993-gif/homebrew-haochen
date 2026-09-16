@@ -370,6 +370,15 @@ async function handle(message, sender) {
     if (port) port.disconnect(); port = null; connecting = false; connected = false;
     await connect(); return {ok: true};
   }
+  // 天梯日报一键连接：popup 已拿到 cowork 域名的 cookies 授权与 web_session，
+  // 这里只校验形状并经本机桥接转发给 haochen（host 侧落 handoff 文件，主进程收进 Keychain）。
+  if (message.type === "tiantiCookie") {
+    const value = typeof message.value === "string" ? message.value.trim() : "";
+    if (!value || value.length > 4096) return {ok: false, message: "读取到的登录态无效，请重试。"};
+    if (!connected) return {ok: false, message: "本机桥接未连接，请先在 haochen 完成本机连接。"};
+    if (!send({type: "tianti_cookie", value})) return {ok: false, message: "本机桥接发送失败，请重试。"};
+    return {ok: true};
+  }
   const source = sources[message.sourceId];
   if (!source) throw new Error("该页面已不在追踪列表中。");
   if (message.type === "refresh") { await refresh(source); return {ok: true}; }
