@@ -244,8 +244,8 @@ class DashboardController(QObject):
             return {"message": "天梯日报已有登录态，正在刷新…"}
         browser = self.service.connectors.get("browser", {})
         if browser.get("status") in ("connected", "ready"):
-            return {"message": "请点 Chrome 右上角的 haochen 扩展图标，再点「一键连接天梯日报」——"
-                              "点两下就好，不用找 cookie。"}
+            return {"message": "两步：① 点 Chrome 右上角 haochen 扩展图标 →「一键连接天梯日报」。"
+                              "② 如果弹窗里没有这个按钮，先到 chrome://extensions 给 haochen 点一次 🔄 重新加载。"}
         from .tianti_auth import TiantiLoginWindow
 
         def done(cookie):

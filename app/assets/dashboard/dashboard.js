@@ -1129,7 +1129,10 @@
     else if (action === 'calendar') { if ([...ui.state.calendar,...ui.state.events].some(item=>text(item.id)===id)) openModal('calendar',id,el); else toast('这条日程已不在当前列表。'); }
     else if (action === 'track') { if (ui.state.tracks.some(item=>text(item.id)===id)) openModal('track',id,el); else toast('这个事项已移除，其他事项没有变化。'); }
     else if (action === 'track-new') openModal('edit',null,el);
-    else if (action === 'tianti-connect') await perform('tiantiConnect',{},el);
+    else if (action === 'tianti-connect') {
+      const result = await perform('tiantiConnect',{},el);
+      if (result?.message) toast(result.message);
+    }
     else if (action === 'track-edit') openModal('edit',id,el);
     else if (action === 'modal-back') closeModal();
     else if (action === 'event-dismiss') {
