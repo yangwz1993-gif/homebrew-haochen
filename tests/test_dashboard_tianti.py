@@ -6,6 +6,8 @@ import importlib
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
@@ -137,3 +139,29 @@ def test_sync_never_resurrects_user_deleted_track(tmp_path):
     created, _ = store.sync_tianti_tracks(adapter.snapshot()["projects"])
     assert created == 0
     assert not any(t["title"] == "开源阅读集成" for t in store.snapshot()["tracks"])
+
+
+def test_handoff_roundtrip_extension_to_keychain(tmp_path):
+    """扩展→host→handoff 文件→主进程收进 Keychain 的完整换手链路。"""
+    from haochen_app.dashboard import browser_host
+    bridge = browser_host.bridge_directory(tmp_path)
+    browser_host._tianti_cookie_handoff(bridge, "  test-web-session-cookie  ")
+    handoff = bridge / "tianti-cookie.handoff"
+    assert handoff.exists()
+    import os
+    assert oct(handoff.stat().st_mode & 0o777) == "0o600"  # 私有权限
+
+    adapter, creds = make_adapter(tmp_path, with_cookie=False)
+    assert not adapter.cookie_present()
+    adapter._drain_handoff()
+    assert creds.get("tianti") == "test-web-session-cookie"  # 已收进 Keychain
+    assert not handoff.exists()  # handoff 已清
+
+
+def test_handoff_rejects_invalid_values(tmp_path):
+    from haochen_app.dashboard import browser_host
+    bridge = browser_host.bridge_directory(tmp_path)
+    for bad in ("", "   ", None, 123, "x" * 5000):
+        with pytest.raises(ValueError):
+            browser_host._tianti_cookie_handoff(bridge, bad)
+    assert not (bridge / "tianti-cookie.handoff").exists()
