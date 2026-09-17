@@ -93,6 +93,11 @@ class TiantiLoginWindow:
         def handle(cookies):
             if self._done:
                 return
+            names = sorted({str(c.name()) for c in cookies or []
+                            if str(c.domain()).endswith(_COOKIE_DOMAIN_SUFFIX)})
+            self._poll_ticks = getattr(self, "_poll_ticks", 0) + 1
+            if self._poll_ticks % 10 == 1:  # 每 10s 打一条，只看名字不看值
+                log.info("tianti_auth poll: cowork 域 cookie 名 %s", names or "（一个都没有）")
             for cookie in cookies or []:
                 if (cookie.name() == _COOKIE_NAME
                         and str(cookie.domain()).endswith(_COOKIE_DOMAIN_SUFFIX)):
