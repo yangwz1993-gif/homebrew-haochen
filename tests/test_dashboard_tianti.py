@@ -145,3 +145,39 @@ def test_snapshot_never_mentions_extension_after_extension_channel_removed(tmp_p
     result = adapter.snapshot()
     assert "扩展" not in result["message"]
     assert "chrome" not in result["message"].lower()
+
+
+def test_cookie_header_from_builds_full_jar_header():
+    """登录窗捕获的是整套会话 cookie（实测单个 token 会被服务器拒收）。"""
+    from haochen_app.dashboard.tianti_auth import cookie_header_from
+
+    class C:  # 模拟 NSHTTPCookie
+        def __init__(self, n, v, d): self._n, self._v, self._d = n, v, d
+        def name(self): return self._n
+        def value(self): return self._v
+        def domain(self): return self._d
+
+    jar = [C("b", "2", "cowork.xiaohongshu.com"), C("a", "1", ".xiaohongshu.com"),
+           C("x", "9", "other.com"), C("empty", "", ".xiaohongshu.com")]
+    header = cookie_header_from(jar)
+    assert header == "a=1; b=2"  # 排序稳定 + 只留 xiaohongshu 域 + 空值剔除
+
+
+def test_http_get_sends_full_cookie_header_verbatim(monkeypatch):
+    """适配器把登录窗捕获的完整 Cookie 头原样发出（不再包成 web_session=）。"""
+    seen = {}
+
+    class Resp:
+        def read(self, n): return b'{"projects": []}'
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(request, timeout=0):
+        seen["cookie"] = request.get_header("Cookie")
+        seen["key"] = request.get_header("X-api-key")  # urllib 规范化后首字母大写
+        return Resp()
+
+    monkeypatch.setattr(tianti.urllib.request, "urlopen", fake_urlopen)
+    tianti._http_get("https://example.com/api", cookie="a=1; b=2")
+    assert seen["cookie"] == "a=1; b=2"
+    assert seen["key"] == tianti._API_KEY

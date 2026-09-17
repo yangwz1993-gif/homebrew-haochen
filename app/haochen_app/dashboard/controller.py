@@ -256,7 +256,7 @@ class DashboardController(QObject):
                     self.window.send({"ok": False, "error": "登录态保存失败，请重试"})
                     return
                 self.window.send({"ok": True, "message": "已连接天梯日报 ✅ 首次读取进行中"})
-                self.service._collect("tianti")
+                self.service._collect("tianti", force=True)
             else:
                 self.window.send({"ok": False, "error": "已取消连接；什么时候想连，再点一次就好。"})
 

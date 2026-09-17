@@ -44,9 +44,10 @@ def fact_card_url(project_id: str) -> str:
 
 
 def _http_get(url: str, *, cookie: str, timeout: float = _TIMEOUT) -> dict:
+    # cookie 形参 = 完整 Cookie 头（登录窗捕获的整套会话 cookie；单个 token 会被服务器拒）
     request = urllib.request.Request(url, headers={
         "X-API-Key": _API_KEY,
-        "Cookie": f"web_session={cookie}",
+        "Cookie": cookie,
         "User-Agent": "haochen/0.6",
     })
     try:

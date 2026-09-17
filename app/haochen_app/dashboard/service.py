@@ -114,11 +114,13 @@ class DashboardService(QObject):
         for identifier in self.adapters:
             self._collect(identifier)
 
-    def _collect(self, identifier):
+    def _collect(self, identifier, *, force=False):
         if self.stopped or identifier in self.active:
             return
-        # 日报类内容 15 分钟一轮足够；跟 Otty 的 4 秒节奏跑会把日志和服务器都刷爆
-        if identifier == "tianti" and time.monotonic() - self.last_poll.get("tianti", -900) < 900:
+        # 日报类内容 15 分钟一轮足够；跟 Otty 的 4 秒节奏跑会把日志和服务器都刷爆。
+        # force=True 用于用户刚连上/手动刷新等明确时机，不受节流限制。
+        if (identifier == "tianti" and not force
+                and time.monotonic() - self.last_poll.get("tianti", -900) < 900):
             return
         if identifier == "calendar" and (
             self._calendar_selection_generation is not None or self._calendar_selection_error

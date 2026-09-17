@@ -14,10 +14,21 @@ from PyQt6.QtCore import QTimer
 log = logging.getLogger("haochen.tianti.auth")
 
 LOGIN_URL = "https://cowork.xiaohongshu.com/s/teach-2-v3/#daily"
-_COOKIE_NAME = "web_session"
+_LOGIN_MARK = "common-internal-access-token-prod"  # SSO 会话落地的标志 cookie（出现即已登录）
 _COOKIE_DOMAIN_SUFFIX = "xiaohongshu.com"
 _POLL_MS = 1000
 _TIMEOUT_MS = 5 * 60 * 1000  # 5 分钟没登录成功就自动关窗，不挂着吓人
+
+
+def cookie_header_from(jar) -> str:
+    """把 xiaohongshu 域的 cookie 罐拼成完整 Cookie 头（浏览器怎么发我们就怎么发——
+    实测服务器要整套会话 cookie，单个 token 会被拒）。只含域名匹配项，顺序稳定。"""
+    pairs = sorted(
+        (str(c.name()), str(c.value()))
+        for c in jar
+        if str(c.domain()).endswith(_COOKIE_DOMAIN_SUFFIX)
+    )
+    return "; ".join(f"{name}={value}" for name, value in pairs if name and value)
 
 
 class TiantiLoginWindow:
@@ -71,8 +82,7 @@ class TiantiLoginWindow:
 
         def purge(cookies):
             for cookie in cookies or []:
-                if (cookie.name() == _COOKIE_NAME
-                        and str(cookie.domain()).endswith(_COOKIE_DOMAIN_SUFFIX)):
+                if str(cookie.domain()).endswith(_COOKIE_DOMAIN_SUFFIX):
                     store.deleteCookie_(cookie, lambda: None)
 
         store.getAllCookies_(purge)
@@ -93,18 +103,15 @@ class TiantiLoginWindow:
         def handle(cookies):
             if self._done:
                 return
-            names = sorted({str(c.name()) for c in cookies or []
-                            if str(c.domain()).endswith(_COOKIE_DOMAIN_SUFFIX)})
+            jar = [c for c in cookies or [] if str(c.domain()).endswith(_COOKIE_DOMAIN_SUFFIX)]
             self._poll_ticks = getattr(self, "_poll_ticks", 0) + 1
             if self._poll_ticks % 10 == 1:  # 每 10s 打一条，只看名字不看值
-                log.info("tianti_auth poll: cowork 域 cookie 名 %s", names or "（一个都没有）")
-            for cookie in cookies or []:
-                if (cookie.name() == _COOKIE_NAME
-                        and str(cookie.domain()).endswith(_COOKIE_DOMAIN_SUFFIX)):
-                    value = str(cookie.value() or "").strip()
-                    if value:
-                        self._finish(value)
-                        return
+                log.info("tianti_auth poll: xiaohongshu 域 cookie 名 %s",
+                         sorted({str(c.name()) for c in jar}) or "（一个都没有）")
+            if any(str(c.name()) == _LOGIN_MARK and str(c.value() or "").strip() for c in jar):
+                header = cookie_header_from(jar)
+                if header:
+                    self._finish(header)
 
         store.getAllCookies_(handle)
 
