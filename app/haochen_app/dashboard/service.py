@@ -117,6 +117,9 @@ class DashboardService(QObject):
     def _collect(self, identifier):
         if self.stopped or identifier in self.active:
             return
+        # 日报类内容 15 分钟一轮足够；跟 Otty 的 4 秒节奏跑会把日志和服务器都刷爆
+        if identifier == "tianti" and time.monotonic() - self.last_poll.get("tianti", -900) < 900:
+            return
         if identifier == "calendar" and (
             self._calendar_selection_generation is not None or self._calendar_selection_error
         ):
