@@ -148,7 +148,6 @@ def test_handoff_roundtrip_extension_to_keychain(tmp_path):
     browser_host._tianti_cookie_handoff(bridge, "  test-web-session-cookie  ")
     handoff = bridge / "tianti-cookie.handoff"
     assert handoff.exists()
-    import os
     assert oct(handoff.stat().st_mode & 0o777) == "0o600"  # 私有权限
 
     adapter, creds = make_adapter(tmp_path, with_cookie=False)

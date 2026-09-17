@@ -74,6 +74,13 @@ $("tianti-connect").addEventListener("click", async () => {
   button.disabled = true;
   status.textContent = "正在请求 cowork 域名的读取授权…";
   try {
+    // manifest 与后台 service worker 在 Chrome 里不是同时刷新的：先问后台认不认得
+    // tiantiCookie——不认得说明后台还是旧版，引导强制重载，别掉进莫名其妙的报错。
+    const state = await chrome.runtime.sendMessage({type: "state"});
+    if (!(state?.features || []).includes("tiantiCookie")) {
+      status.textContent = "扩展后台还没更新到新版：请到 chrome://extensions 把 haochen 关闭再打开（或点 🔄），然后再来点这里。";
+      return;
+    }
     // manifest 只在扩展重载时重读：升级后未重载就没有 optional_permissions，
     // permissions.request 会被 Chrome 拒绝——自检并给出明确指引，不甩原生报错。
     const manifest = chrome.runtime.getManifest();

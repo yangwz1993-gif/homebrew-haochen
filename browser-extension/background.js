@@ -358,6 +358,7 @@ async function handle(message, sender) {
   if (sender.url !== chrome.runtime.getURL("popup.html")) return {ok: false};
   if (message.type === "state") return {ok: true, sources: Object.values(sources), connected,
     connecting, bridgeReason, bridgeMessage, extensionId: chrome.runtime.id, trackingMessage,
+    features: ["tiantiCookie"],
     pendingTrack: pendingTrack ? {id: pendingTrack.id, tabId: pendingTrack.tabId,
       windowId: pendingTrack.windowId, url: pendingTrack.url, expiresAt: pendingTrack.expiresAt} : null};
   if (message.type === "cancelTrackRequest") {
