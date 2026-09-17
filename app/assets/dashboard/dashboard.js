@@ -992,7 +992,7 @@
         const tiantiActions = node('div','detail-actions');
         tiantiActions.append(button('一键连接天梯日报','tianti-connect',{className:'primary-button',icon:'link',key:'tianti-connect'}));
         card.append(tiantiActions);
-        card.append(paragraph('点一下即可：装了扩展走扩展弹窗，没装弹登录小窗——都不用手动找 cookie。','field-help'));
+        card.append(paragraph('点一下就会弹出登录小窗，登录一次即完成——不用手动找 cookie。','field-help'));
       }
       if (/wechat/.test(id)) {
         const diagnosis = record(connector.diagnostics);

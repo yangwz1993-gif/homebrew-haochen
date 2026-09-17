@@ -242,6 +242,8 @@ class DashboardController(QObject):
         cookie 已失效时也照开——重新登录拿到的才是新鲜有效的；不能因为有旧
         cookie 就只刷新（旧票再刷也进不去门，0.6.2-beta.3 实测踩过）。
         """
+        import logging
+        logging.getLogger("haochen.tianti").info("tiantiConnect clicked")  # 观测点：点击是否到达控制器
         from .tianti_auth import TiantiLoginWindow
 
         adapter = self.service.adapters["tianti"]
