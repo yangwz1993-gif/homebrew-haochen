@@ -74,6 +74,13 @@ $("tianti-connect").addEventListener("click", async () => {
   button.disabled = true;
   status.textContent = "正在请求 cowork 域名的读取授权…";
   try {
+    // manifest 只在扩展重载时重读：升级后未重载就没有 optional_permissions，
+    // permissions.request 会被 Chrome 拒绝——自检并给出明确指引，不甩原生报错。
+    const manifest = chrome.runtime.getManifest();
+    if (!(manifest.optional_permissions || []).includes("cookies")) {
+      status.textContent = "扩展刚升级过：请先到 chrome://extensions 给 haochen 点一次 🔄 重新加载，再回来点这里。";
+      return;
+    }
     const granted = await chrome.permissions.request({
       permissions: ["cookies"], origins: ["https://cowork.xiaohongshu.com/*"]});
     if (!granted) { status.textContent = "未授权，未连接。授权只在点击时请求、仅用于这一次连接。"; return; }
