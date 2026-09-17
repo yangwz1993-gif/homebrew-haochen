@@ -50,6 +50,10 @@ class TiantiLoginWindow:
         self._window.contentView().addSubview_(self._webview)
         self._webview.loadRequest_(
             WK.NSURLRequest.requestWithURL_(AK.NSURL.URLWithString_(LOGIN_URL)))
+        # 先清掉 cookie 仓里残留的旧 web_session：否则轮询会在用户重新登录之前
+        # 就秒抓到旧值（今天 cookie 失效的坑就是这么来的）——只有重新登录产生的新
+        # cookie 才算数。
+        self._purge_stale_cookie()
         # 用户直接关窗 = 取消
         self._window.setReleasedWhenClosed_(False)
         self._window.center()
@@ -60,6 +64,18 @@ class TiantiLoginWindow:
         self._timer.setInterval(_POLL_MS)
         self._timer.timeout.connect(self._poll_cookie)
         self._timer.start()
+
+    def _purge_stale_cookie(self) -> None:
+        import WebKit as WK
+        store = WK.WKWebsiteDataStore.defaultDataStore().httpCookieStore()
+
+        def purge(cookies):
+            for cookie in cookies or []:
+                if (cookie.name() == _COOKIE_NAME
+                        and str(cookie.domain()).endswith(_COOKIE_DOMAIN_SUFFIX)):
+                    store.deleteCookie_(cookie, lambda: None)
+
+        store.getAllCookies_(purge)
 
     def _poll_cookie(self) -> None:
         if self._done:

@@ -1,7 +1,7 @@
 """天梯日报（创能天梯 cowork）只读连接：拉取核心事实卡与每日进展。
 
 鉴权 = 内置只读 API Key（官方 API 文档公开）+ 用户本人的 web_session SSO cookie。
-cookie 只从 Keychain 读，由两条傻瓜通道写入（扩展一键授权 / 内嵌登录窗），
+cookie 只从 Keychain 读，由内嵌登录窗写入（tianti_auth.py），
 本适配器绝不引导用户去 DevTools。
 
 身份邮箱走 hi 的既有流程（hi search:me → xhsContactId），不另建账号体系。
@@ -86,25 +86,11 @@ class TiantiAdapter:
             return False
 
     def save_cookie(self, value: str) -> None:
-        """两条傻瓜通道（扩展/内嵌登录窗）共用的落点。"""
+        """内嵌登录窗的唯一落点（零插件：日报不再需要浏览器扩展）。"""
         value = (value or "").strip()
         if not value:
             raise ValueError("cookie 为空")
         self._keychain.set(COOKIE_PROVIDER, value)
-
-    def _drain_handoff(self) -> None:
-        """扩展一键授权的 cookie 经本机 host 落 handoff 文件；主进程收进 Keychain 后删除。"""
-        from ..browser_host import bridge_directory
-        try:
-            handoff = bridge_directory(self._home) / "tianti-cookie.handoff"
-            if not handoff.is_file():
-                return
-            value = handoff.read_text(encoding="utf-8").strip()[:4096]
-            if value:
-                self.save_cookie(value)
-            handoff.unlink()
-        except OSError:
-            return  # 换手失败不阻断主流程，下一轮快照还会再试
 
     def _cookie(self) -> str:
         try:
@@ -126,8 +112,8 @@ class TiantiAdapter:
 
     def snapshot(self) -> dict:
         checked = now()
-        self._drain_handoff()
         if not self.cookie_present():
+            log.info("tianti: no cookie in keychain")
             return {
                 "status": "permission_required", "checkedAt": checked, "events": [],
                 "reasonCode": "cookie_missing",
@@ -136,6 +122,7 @@ class TiantiAdapter:
         try:
             email = self._email()
         except HiError as exc:
+            log.warning("tianti: email via hi failed: %s", exc.code)
             return {
                 "status": "partial", "checkedAt": checked, "events": [],
                 "reasonCode": exc.code, "message": f"天梯日报连接已建立，但身份邮箱获取失败：{exc}",
@@ -143,12 +130,14 @@ class TiantiAdapter:
         try:
             data = self._fetch(email, self._cookie())
         except CookieExpired:
+            log.info("tianti: cookie rejected by server (401/403)")
             return {
                 "status": "permission_required", "checkedAt": checked, "events": [],
                 "reasonCode": "cookie_expired",
                 "message": "天梯日报登录态已过期，点「连接」一键重新授权即可。",
             }
         except ConnectionError as exc:
+            log.warning("tianti: fetch failed: %s", exc)
             return {"status": "error", "checkedAt": checked, "events": [],
                     "reasonCode": "fetch_failed", "message": str(exc)}
 

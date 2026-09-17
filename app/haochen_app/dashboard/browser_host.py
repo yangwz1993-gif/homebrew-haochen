@@ -125,18 +125,6 @@ class PrivateSignal:
         self.path.unlink(missing_ok=True)
 
 
-def _tianti_cookie_handoff(directory: Path, value: object) -> None:
-    """扩展一键授权的天梯 cookie 落 handoff 文件（0600）；主进程快照时收进 Keychain。
-
-    host 进程由 Chrome 拉起，直接写 haochen 的 Keychain 会触发 ACL 授权弹窗——
-    用文件换手，Keychain 写入永远发生在主进程里。
-    """
-    from ..secure_storage import atomic_write_private
-    if not isinstance(value, str) or not value.strip() or len(value) > 4096:
-        raise ValueError("无效的登录态内容")
-    atomic_write_private(directory / "tianti-cookie.handoff", value.strip())
-
-
 def notify_signal(directory: Path, name: str) -> bool:
     try:
         fd = os.open(
@@ -611,8 +599,6 @@ def run_browser_host(
                 store.finish_focus(message.get("commandId"), session, message.get("status"))
             elif operation == "untrack_result":
                 store.finish_untrack(message.get("commandId"), session)
-            elif operation == "tianti_cookie":
-                _tianti_cookie_handoff(directory, message.get("value"))
             else:
                 raise ValueError("unsupported browser bridge operation")
             reply = {"type": "ack", "operation": operation, "ok": True, "version": 1}
