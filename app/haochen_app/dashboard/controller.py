@@ -237,15 +237,12 @@ class DashboardController(QObject):
         picker.beginSheetModalForWindow_completionHandler_(self.window.panel, done)
 
     def _tianti_connect(self):
-        """天梯日报一键连接：扩展在 → 引导扩展弹窗两下；扩展不在 → 内嵌登录窗。"""
+        """天梯日报一键连接：主通道 = 内嵌登录窗（自包含、不依赖扩展状态）；
+        扩展弹窗的一键连接作为扩展用户的便捷通道依旧保留。"""
         adapter = self.service.adapters["tianti"]
         if adapter.cookie_present():
             self.service._collect("tianti")
             return {"message": "天梯日报已有登录态，正在刷新…"}
-        browser = self.service.connectors.get("browser", {})
-        if browser.get("status") in ("connected", "ready"):
-            return {"message": "两步：① 点 Chrome 右上角 haochen 扩展图标 →「一键连接天梯日报」。"
-                              "② 如果弹窗里没有这个按钮，先到 chrome://extensions 给 haochen 点一次 🔄 重新加载。"}
         from .tianti_auth import TiantiLoginWindow
 
         def done(cookie):
