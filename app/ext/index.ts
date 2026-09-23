@@ -761,6 +761,9 @@ export default function (pi: ExtensionAPI) {
     "end run",
   ].join("\n");
 
+  // 2026-09-17 天梯日报功能暂缓（效果待产品优化）：read_daily 工具默认不注册，代码保留；
+  // 重新开放时在启动环境加 HAOCHEN_ENABLE_TIANTI=1 即可。
+  if (process.env.HAOCHEN_ENABLE_TIANTI === "1") {
   pi.registerTool({
     name: "read_daily",
     label: "日报阅读",
@@ -826,6 +829,7 @@ export default function (pi: ExtensionAPI) {
       };
     },
   });
+  }
 
   pi.registerTool({
     name: "browser_control",

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed — 0.6.2-beta.3 冻结说明（2026-09-17）
+- **天梯日报功能暂缓下线**：用户反馈看板与信息提醒效果不达预期，后续做产品优化后再开放。适配器/内嵌登录窗/追踪同步/read_daily 工具代码全部保留，仅默认不注册、不轮询、不出卡片（`service.ENABLE_TIANTI=False`；引擎侧 `HAOCHEN_ENABLE_TIANTI=1` 可重新打开）。
+- 本轮踩坑实锤（供后续重启时参考）：①API 文档写的 `web_session` cookie 不存在，服务器要整套 xiaohongshu 域会话 cookie（单 token 返回 200 但 body 报无效 accessToken）；②WKWebView cookie 完成回调跑在 WebKit IPC 线程，回调里碰 AppKit/Qt 直接 SIGABRT——已改为回调只发 Qt 信号、收尾经 QueuedConnection 回主线程，本地端到端自测通过；③删除 cookie 的正确选择器是 `deleteCookie_completionHandler_`。
+
 ### Fixed / Added — 0.6.2-beta.3 七项用户视角问题集中修复
 - **默认模型切换为内网 `deepseek-v4-flash-0731-baidu`（实测端到端 0.8s，为内置清单最快档）**，默认思考档从 high 调低为 low——针对「git 类操作慢」的实测改善（此前 glm-5.3-flash 单轮思考 78~136s）。
 - **切换模型失败不再锁死聊天**：配置激活失败时，只要存在已验证过的旧模型就释放发送闸门并回退（热切换直接回退旧就绪态；重启路径清空就绪态交下次重验，不伪装回退）；首次配置失败仍保持安全关闭。重复切换不再硬报「另一个配置正在生效」——排队自动接续，等待中的激活可被新选择零成本取代。

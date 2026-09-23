@@ -25,6 +25,10 @@ log = logging.getLogger("haochen.dashboard")
 NAMES = {"otty": "Otty", "browser": "Chrome", "calendar": "日历", "wechat": "微信", "hi": "Hi",
          "tianti": "天梯日报"}
 
+# 2026-09-17 天梯日报功能暂缓：用户反馈看板与提醒效果不达预期，后续做产品优化后再开放。
+# 代码（适配器/登录窗/追踪同步）全部保留，仅不注册、不轮询、不出卡片；重新开放把开关拨回 True 即可。
+ENABLE_TIANTI = False
+
 # C-11 二维状态：内容态的「失效」按来源定义（连接态由适配器 status 映射）。
 # 归档（archived，如关闭超 12h 的旧追踪页）与过期（stale）不参与失效计数。
 _COVERAGE_BROKEN = {
@@ -46,8 +50,9 @@ class DashboardService(QObject):
         settings = self.store.snapshot()["settings"]
         self.adapters = {"otty": OttyAdapter(), "browser": BrowserAdapter(config.home),
                          "calendar": CalendarAdapter(settings.get("calendarIds")), "wechat": WeChatAdapter(),
-                         "hi": HiAdapter(),
-                         "tianti": TiantiAdapter(config.home, keychain=getattr(config, "keychain", None))}
+                         "hi": HiAdapter()}
+        if ENABLE_TIANTI:
+            self.adapters["tianti"] = TiantiAdapter(config.home, keychain=getattr(config, "keychain", None))
         self.adapters["browser"].set_enabled(settings["connectors"].get("browser", False))
         self.summarizer = SummaryWorker(config)
         self.connectors = {}

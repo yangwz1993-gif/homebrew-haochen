@@ -237,11 +237,9 @@ class DashboardController(QObject):
         picker.beginSheetModalForWindow_completionHandler_(self.window.panel, done)
 
     def _tianti_connect(self):
-        """天梯日报一键连接 = 内嵌登录窗（唯一通道，自包含）。
-
-        cookie 已失效时也照开——重新登录拿到的才是新鲜有效的；不能因为有旧
-        cookie 就只刷新（旧票再刷也进不去门，0.6.2-beta.3 实测踩过）。
-        """
+        """天梯日报一键连接——2026-09-17 功能暂缓（效果待产品优化），入口已下线，防呆守卫。"""
+        if "tianti" not in self.service.adapters:
+            return {"message": "天梯日报功能暂缓开放，后续版本再回来。"}
         import logging
         logging.getLogger("haochen.tianti").info("tiantiConnect clicked")  # 观测点：点击是否到达控制器
         from .tianti_auth import TiantiLoginWindow
