@@ -36,7 +36,7 @@ jobs:
           bun-version-file: .bun-version
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           # Hosted arm64 macOS images don't necessarily carry every patch pinned
           # for local development; CI enforces the project's 3.12 minor line.
